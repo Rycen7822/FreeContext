@@ -1,0 +1,6 @@
+{
+  "name": "freecontext",
+  "version": "0.1.0",
+  "description": "Delegate broad or cold repository exploration to a read-only API-backed subagent and return compact file-and-line evidence.",
+  "skills": "./skills/"
+}

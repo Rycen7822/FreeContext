@@ -1,0 +1,53 @@
+{
+  "name": "freecontext",
+  "version": "0.1.0",
+  "description": "Read-only repository exploration subagent for Codex, built on the Pi agent loop.",
+  "type": "module",
+  "bin": {
+    "freecontext": "./bin/freecontext.mjs"
+  },
+  "exports": {
+    ".": "./src/index.mjs"
+  },
+  "files": [
+    "bin",
+    "src",
+    "prompts",
+    "skills",
+    ".codex-plugin",
+    "docs",
+    "scripts",
+    ".env.example",
+    ".env.sensenova.example",
+    "README.md",
+    "LICENSE",
+    "NOTICE.md"
+  ],
+  "scripts": {
+    "test": "node --test test/*.test.mjs",
+    "test:core": "node --test test/*.test.mjs",
+    "check": "node scripts/static-check.mjs",
+    "smoke:mock": "node scripts/mock-smoke.mjs",
+    "smoke:live": "node scripts/live-smoke.mjs"
+  },
+  "engines": {
+    "node": ">=22.19.0"
+  },
+  "dependencies": {
+    "@earendil-works/pi-agent-core": "0.82.1",
+    "@earendil-works/pi-ai": "0.82.1"
+  },
+  "keywords": [
+    "codex",
+    "coding-agent",
+    "repository-exploration",
+    "subagent",
+    "read-only",
+    "pi-agent"
+  ],
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Rycen7822/FreeContext.git"
+  }
+}
