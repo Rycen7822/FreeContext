@@ -1,16 +1,21 @@
 # Provider configuration
 
-FreeContext supports two wire protocols through Pi's direct provider adapters.
+FreeContext supports Anthropic Messages-compatible and OpenAI Chat Completions-compatible transports through Pi's direct provider adapters. Transport providers, model targets, and routes are declared separately in `config.toml`; credentials are read only from the environment-variable names declared by each provider.
 
 ## Anthropic Messages-compatible
 
-Set:
+```toml
+[providers.anthropic_gateway]
+api = "anthropic"
+base_url = "https://provider.example"
+auth_mode = "auto"
+credential_env = "ANTHROPIC_GATEWAY_KEY"
 
-```dotenv
-FREECONTEXT_API=anthropic
-FREECONTEXT_BASE_URL=https://provider.example
-FREECONTEXT_MODEL=model-id
-FREECONTEXT_API_KEY=secret
+[models.anthropic_model]
+provider = "anthropic_gateway"
+model_id = "model-id"
+context_window = 128000
+max_output_tokens = 4096
 ```
 
 The provider client appends the Anthropic Messages path expected by its SDK. Use the base URL exactly as documented by the provider.
@@ -26,27 +31,37 @@ Custom gateways commonly differ in authentication and feature support. FreeConte
 
 ## OpenAI Chat Completions-compatible
 
-Set:
+```toml
+[providers.openai_gateway]
+api = "openai"
+base_url = "https://provider.example/v1"
+auth_mode = "auto"
+credential_env = "OPENAI_GATEWAY_KEY"
 
-```dotenv
-FREECONTEXT_API=openai
-FREECONTEXT_BASE_URL=https://provider.example/v1
-FREECONTEXT_MODEL=model-id
-FREECONTEXT_API_KEY=secret
+[models.openai_model]
+provider = "openai_gateway"
+model_id = "model-id"
+context_window = 128000
+max_output_tokens = 4096
+
+[models.openai_model.openai_compat]
+supports_developer_role = false
+supports_reasoning_effort = false
+supports_usage_in_streaming = false
+supports_strict_mode = false
+max_tokens_field = "max_tokens"
 ```
 
-`auto` uses the standard Bearer behavior. Compatibility controls are available for gateways that implement different subsets:
+`auto` uses standard Bearer authentication. Compatibility controls belong to each model because one gateway may expose models with different feature subsets.
 
-```dotenv
-FREECONTEXT_OPENAI_SUPPORTS_DEVELOPER_ROLE=false
-FREECONTEXT_OPENAI_SUPPORTS_REASONING_EFFORT=false
-FREECONTEXT_OPENAI_SUPPORTS_USAGE_IN_STREAMING=false
-FREECONTEXT_OPENAI_SUPPORTS_STRICT_MODE=false
-FREECONTEXT_OPENAI_MAX_TOKENS_FIELD=max_tokens
-```
+## Credentials and headers
+
+Export the variable named by `credential_env` before starting FreeContext. The catalog does not accept API-key values, and custom provider headers reject authentication, cookie, and other sensitive header names. Non-sensitive static routing headers may be declared under `[providers.<id>.headers]`.
+
+Every target selected by a route must have its named credential available. The direct `--target` selector chooses one model and disables route fallback. See the root README and [`freecontext.example.toml`](../freecontext.example.toml) for route selection and an ordered multi-provider example.
 
 ## SenseNova profile
 
-`.env.sensenova.example` intentionally leaves the Anthropic-compatible base URL as a placeholder. The public SenseNova examples currently expose an OpenAI-style Chat Completions URL, while account-specific Anthropic-compatible access can use a different gateway and authentication mode. Copy the endpoint from the relevant account documentation rather than deriving it from the public OpenAI URL.
+[`freecontext.sensenova.example.toml`](../freecontext.sensenova.example.toml) intentionally leaves the Anthropic-compatible base URL as a placeholder. Public SenseNova examples may expose an OpenAI-style Chat Completions URL, while account-specific Anthropic-compatible access can use a different gateway and authentication mode. Copy the endpoint from the relevant account documentation rather than deriving it from the public OpenAI URL.
 
-Use `FREECONTEXT_AUTH_MODE=bearer` for the requested SenseNova Anthropic-compatible setup unless the account documentation specifies `x-api-key`.
+The template uses `auth_mode = "bearer"`; change it only when the account documentation requires another supported mode, such as `x-api-key`.

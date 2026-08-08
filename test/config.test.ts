@@ -88,6 +88,20 @@ test("resolveConfig loads TOML catalogs and keeps CLI over environment over file
   });
 });
 
+test("tracked TOML examples remain loadable without embedded credentials", async () => {
+  const general = await resolveConfig({
+    cli: { configFile: new URL("../freecontext.example.toml", import.meta.url).pathname },
+    processEnv: { ANTHROPIC_API_KEY: "example-test-key" },
+  });
+  assert.deepEqual(general.targets.map((target) => target.target), ["claude"]);
+
+  const sensenova = await resolveConfig({
+    cli: { configFile: new URL("../freecontext.sensenova.example.toml", import.meta.url).pathname },
+    processEnv: { SENSENOVA_API_KEY: "example-test-key" },
+  });
+  assert.deepEqual(sensenova.targets.map((target) => target.target), ["sensenova_flash"]);
+});
+
 test("target and route overrides are deterministic", async () => {
   await withConfig(baseToml(), async (configFile) => {
     const target = await resolveConfig({ cli: { configFile, target: "backup" }, processEnv: KEYS });

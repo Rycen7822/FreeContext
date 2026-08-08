@@ -20,8 +20,8 @@
     ".codex-plugin",
     "docs",
     "scripts/install-codex-skill.sh",
-    ".env.example",
-    ".env.sensenova.example",
+    "freecontext.example.toml",
+    "freecontext.sensenova.example.toml",
     "README.md",
     "LICENSE",
     "NOTICE.md"

@@ -1,0 +1,54 @@
+# Copy to ~/.config/freecontext/config.toml.
+# Export the credential variables named below; never put secret values in this file.
+
+version = 1
+default_route = "default"
+
+[runtime]
+max_turns = 8
+max_tool_calls = 32
+request_timeout_ms = 180000
+tool_timeout_ms = 20000
+max_tool_output_bytes = 65536
+max_parallel_tools = 8
+context_compaction_enabled = true
+
+[providers.anthropic]
+api = "anthropic"
+base_url = "https://api.anthropic.com"
+auth_mode = "auto"
+credential_env = "ANTHROPIC_API_KEY"
+
+[providers.openai]
+api = "openai"
+base_url = "https://api.openai.com/v1"
+auth_mode = "auto"
+credential_env = "OPENAI_API_KEY"
+
+[models.claude]
+provider = "anthropic"
+model_id = "claude-model-id"
+context_window = 128000
+max_output_tokens = 4096
+thinking_level = "off"
+
+[models.gpt]
+provider = "openai"
+model_id = "gpt-model-id"
+context_window = 128000
+max_output_tokens = 4096
+thinking_level = "off"
+
+[models.gpt.openai_compat]
+supports_developer_role = false
+supports_reasoning_effort = false
+supports_usage_in_streaming = false
+supports_strict_mode = false
+max_tokens_field = "max_tokens"
+
+[routes.default]
+models = ["claude"]
+
+[routes.resilient]
+models = ["claude", "gpt"]
+fallback_on = ["timeout", "rate_limit", "server_error"]

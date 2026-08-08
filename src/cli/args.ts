@@ -130,4 +130,4 @@ Core options:
   -h, --help                    Show help
   -V, --version                 Show version
 
-The API key is intentionally unavailable as a CLI argument. Store it in the configured .env file or process environment.`;
+API keys are intentionally unavailable as CLI or TOML values. Provide the environment variables named by provider credential_env fields.`;

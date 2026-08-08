@@ -35,7 +35,9 @@ The following are blocked from direct read and recursive search:
 - common private-key/certificate/keystore suffixes;
 - common credential/service-account JSON names.
 
-Directory-level `rg` and `glob` append mandatory deny globs after all model-controlled globs, then filter returned paths again. They exclude all `.env*` and `*.env` files, including examples, so a positive model glob cannot re-include a live dotenv file. Safe examples such as `.env.example` remain visible in the top-level overview and can be inspected through an exact `read` or exact-file `rg` request; direct-path classification still rejects live variants.
+Directory-level `rg` and `glob` append mandatory deny globs after all model-controlled globs, then filter returned paths again. They exclude all `.env*` and `*.env` files, so a positive model glob cannot re-include a live dotenv file. Tracked TOML examples contain no credentials and remain ordinary readable repository files; the default populated catalog lives outside the repository.
+
+The TOML schema accepts only a credential environment-variable name, never a credential value, and rejects sensitive custom-header names. Provider credentials are consumed by the model transport; repository tool subprocesses receive a scrubbed environment and the child has no shell or environment-inspection tool.
 
 Direct `read`, `jq`, and `bat` access is capped at 32 MiB per file. The native reader receives both the parent cancellation signal and a tool timeout.
 

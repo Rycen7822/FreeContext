@@ -1,0 +1,30 @@
+# SenseNova profile. Fill base_url with the Anthropic-compatible gateway URL
+# shown in your account documentation, then export SENSENOVA_API_KEY.
+
+version = 1
+default_route = "default"
+
+[runtime]
+max_turns = 8
+max_tool_calls = 32
+request_timeout_ms = 180000
+tool_timeout_ms = 20000
+max_tool_output_bytes = 65536
+max_parallel_tools = 8
+context_compaction_enabled = true
+
+[providers.sensenova]
+api = "anthropic"
+base_url = "https://YOUR-SENSENOVA-ANTHROPIC-COMPATIBLE-BASE"
+auth_mode = "bearer"
+credential_env = "SENSENOVA_API_KEY"
+
+[models.sensenova_flash]
+provider = "sensenova"
+model_id = "sensenova-6.7-flash-lite"
+context_window = 128000
+max_output_tokens = 4096
+thinking_level = "off"
+
+[routes.default]
+models = ["sensenova_flash"]
