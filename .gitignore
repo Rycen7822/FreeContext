@@ -21,3 +21,9 @@ coverage/
 .DS_Store
 .freecontext/
 *.tgz
+
+# Local agent workspace
+/CODEX_STATE.md
+/AGENTS.md
+/.work/
+dist/

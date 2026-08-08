@@ -7,16 +7,19 @@
     "freecontext": "./bin/freecontext.mjs"
   },
   "exports": {
-    ".": "./src/index.mjs"
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
   },
   "files": [
     "bin",
-    "src",
+    "dist",
     "prompts",
     "skills",
     ".codex-plugin",
     "docs",
-    "scripts",
+    "scripts/install-codex-skill.sh",
     ".env.example",
     ".env.sensenova.example",
     "README.md",
@@ -24,11 +27,17 @@
     "NOTICE.md"
   ],
   "scripts": {
-    "test": "node --test test/*.test.mjs",
-    "test:core": "node --test test/*.test.mjs",
-    "check": "node scripts/static-check.mjs",
-    "smoke:mock": "node scripts/mock-smoke.mjs",
-    "smoke:live": "node scripts/live-smoke.mjs"
+    "typecheck": "tsc -p tsconfig.json",
+    "build": "tsc -p tsconfig.build.json",
+    "test": "node --import tsx --test test/*.test.ts",
+    "test:core": "node --import tsx --test test/*.test.ts",
+    "check": "node --import tsx scripts/static-check.ts",
+    "smoke:mock": "node --import tsx scripts/mock-smoke.ts",
+    "smoke:live": "node --import tsx scripts/live-smoke.ts",
+    "bench:mock": "node --import tsx scripts/benchmark-mock.ts --scenario baseline",
+    "bench:context": "node --import tsx scripts/benchmark-mock.ts --scenario context",
+    "prepare": "npm run build",
+    "prepack": "npm run build"
   },
   "engines": {
     "node": ">=22.19.0"
@@ -49,5 +58,10 @@
   "repository": {
     "type": "git",
     "url": "git+https://github.com/Rycen7822/FreeContext.git"
+  },
+  "devDependencies": {
+    "@types/node": "22.19.19",
+    "tsx": "4.22.1",
+    "typescript": "5.9.3"
   }
 }

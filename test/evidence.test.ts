@@ -1,0 +1,64 @@
+import test from "node:test";
+import assert from "node:assert/strict";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
+import { parseFinalBlock, renderFinalAnswer, validateExplorerOutput } from "../src/output/evidence.js";
+import { createWorkspace } from "../src/tools/workspace.js";
+
+const VALID = `<final_answer>
+summary: The implementation is in the sample module.
+evidence:
+- sample.js:1-2 — Defines and returns the value.
+gaps:
+- none
+</final_answer>`;
+
+test("parseFinalBlock extracts the last valid-shaped block", () => {
+  const parsed = parseFinalBlock(`noise\n${VALID}`);
+  assert.equal(parsed.summary, "The implementation is in the sample module.");
+  assert.deepEqual(parsed.evidence[0], {
+    path: "sample.js",
+    start: 1,
+    end: 2,
+    reason: "Defines and returns the value.",
+  });
+});
+
+test("validator confirms paths and real line ranges", async () => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), "freecontext-evidence-"));
+  try {
+    await writeFile(path.join(directory, "sample.js"), "const x = 1;\nexport { x };\n", "utf8");
+    const workspace = await createWorkspace(directory);
+    const result = await validateExplorerOutput(VALID, workspace);
+    assert.equal(result.valid, true);
+    assert.equal(renderFinalAnswer(result), VALID);
+
+    const invalid = await validateExplorerOutput(VALID.replace("1-2", "1-8"), workspace);
+    assert.equal(invalid.valid, false);
+    assert.match(invalid.problems.join("\n"), /exceeds file length/u);
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("validator rejects fabricated and sensitive paths", async () => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), "freecontext-evidence-"));
+  try {
+    await writeFile(path.join(directory, ".env"), "TOKEN=x\n", "utf8");
+    const workspace = await createWorkspace(directory);
+    const result = await validateExplorerOutput(
+      VALID.replace("sample.js:1-2", ".env:1-1"),
+      workspace,
+    );
+    assert.equal(result.valid, false);
+    assert.match(result.problems.join("\n"), /sensitive/u);
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("parser reports malformed output instead of accepting prose", () => {
+  const parsed = parseFinalBlock("The answer is src/a.js");
+  assert.deepEqual(parsed.problems, ["Missing <final_answer> block."]);
+});
