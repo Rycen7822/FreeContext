@@ -6,6 +6,7 @@ import path from "node:path";
 import type { AgentContext, AgentTool } from "@earendil-works/pi-agent-core";
 import type { AssistantMessage } from "@earendil-works/pi-ai";
 import { Type } from "@earendil-works/pi-ai";
+import { ProviderError } from "../src/errors.js";
 import type { ExplorerDependencies } from "../src/runtime/run.js";
 import { runExplorer } from "../src/runtime/run.js";
 import { createWorkspace } from "../src/tools/workspace.js";
@@ -53,6 +54,11 @@ test("runExplorer returns locally validated evidence", async () => {
     assert.equal(result.summary, "a is exported.");
     assert.equal(result.evidence[0]?.path, "a.js");
     assert.equal(result.metrics.repaired, false);
+    assert.equal(result.metrics.routeAttempts, 1);
+    assert.equal(result.metrics.fallbacks, 0);
+    assert.equal(result.runtime.route, "test-route");
+    assert.equal(result.runtime.target, "test");
+    assert.equal(result.runtime.provider, "test-provider");
     assert.equal(result.metrics.setupMs, 1);
     assert.equal(result.metrics.primarySessionMs, 3);
     assert.equal(result.metrics.primaryValidationMs, 1);
@@ -92,6 +98,50 @@ test("runExplorer performs one no-tool format repair", async () => {
     assert.equal(result.metrics.totalMs, 14);
     assert.equal(result.metrics.primary.sessionMs, 1);
     assert.equal(result.metrics.repair?.sessionMs, 1);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("format repair stays on the selected target and never enters route fallback", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "freecontext-run-"));
+  try {
+    await writeFile(path.join(root, "a.js"), "const a = 1;\n", "utf8");
+    const invalid = assistantText("The answer is a.js.");
+    let invocations = 0;
+    const bindings = fakeBindings(async (prompts, _context, _config, emit) => {
+      invocations += 1;
+      if (invocations === 1) {
+        await emit({ type: "turn_start" });
+        await emit({ type: "turn_end", message: invalid, toolResults: [] });
+        return [...prompts, invalid];
+      }
+      throw Object.assign(new Error("service unavailable"), { status: 503 });
+    });
+    const workspace = await createWorkspace(root);
+
+    await assert.rejects(
+      runExplorer({
+        query: "find a",
+        cwd: root,
+        dependencies: {
+          routeConfig: baseRouteConfig([
+            baseConfig({ target: "selected" }),
+            baseConfig({ target: "unused-backup" }),
+          ]),
+          workspace,
+          bindings,
+          repositoryTools: {
+            tools: [],
+            names: [],
+            executables: { rg: null, jq: null, bat: null },
+          },
+          systemPrompt: "system",
+        },
+      }),
+      (error: unknown) => error instanceof ProviderError,
+    );
+    assert.equal(invocations, 2);
   } finally {
     await rm(root, { recursive: true, force: true });
   }
