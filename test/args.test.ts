@@ -17,16 +17,20 @@ test("argument parser rejects ambiguity and unknown flags", () => {
   assert.throws(() => parseArgs(["--format", "xml"]), /text or json/u);
 });
 
-test("argument parser accepts context compaction controls", () => {
+test("argument parser accepts TOML routing and context controls", () => {
   const parsed = parseArgs([
+    "--config",
+    "/tmp/freecontext.toml",
+    "--route=fast",
     "--no-context-compaction",
-    "--context-reserve-tokens=12000",
-    "--context-keep-recent-tokens",
-    "6000",
     "query",
   ]);
+  assert.equal(parsed.configFile, "/tmp/freecontext.toml");
+  assert.equal(parsed.route, "fast");
   assert.equal(parsed.contextCompactionEnabled, false);
-  assert.equal(parsed.contextReserveTokens, "12000");
-  assert.equal(parsed.contextKeepRecentTokens, "6000");
   assert.equal(parsed.query, "query");
+
+  const direct = parseArgs(["--target", "backup", "query"]);
+  assert.equal(direct.target, "backup");
+  assert.throws(() => parseArgs(["--context-reserve-tokens", "12000"]), /Unknown option/u);
 });

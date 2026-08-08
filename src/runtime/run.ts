@@ -1,28 +1,19 @@
 import type { Usage } from "@earendil-works/pi-ai";
 import type { CliConfigOverrides, FreeContextConfig } from "../config.js";
-import { redactUrl, resolveConfig } from "../config.js";
+import { redactUrl } from "../config.js";
 import { OutputValidationError } from "../errors.js";
 import type { ValidatedEvidenceCitation } from "../output/evidence.js";
 import { renderFinalAnswer, validateExplorerOutput } from "../output/evidence.js";
-import { buildRepairPrompt, buildUserPrompt, loadSystemPrompt } from "../prompt.js";
-import type { RepositoryToolSet, ToolExecutables, Workspace } from "../tools/contracts.js";
-import { createRepositoryTools } from "../tools/index.js";
+import { buildRepairPrompt, buildUserPrompt } from "../prompt.js";
+import type { Workspace } from "../tools/contracts.js";
 import { createWorkspace } from "../tools/workspace.js";
-import type { PiBindings } from "./pi-bindings.js";
-import { loadPiBindings } from "./pi-bindings.js";
-import { createModel, createRequestOptions } from "./model.js";
 import type { PiSessionEventHandler, PiSessionMetrics } from "./pi-session.js";
 import { runPiSession } from "./pi-session.js";
+import type { RouterDependencies } from "./router.js";
+import { runPrimaryRoute } from "./router.js";
 
-export interface ExplorerDependencies {
-  readonly config?: FreeContextConfig;
+export interface ExplorerDependencies extends RouterDependencies {
   readonly workspace?: Workspace;
-  readonly bindings?: PiBindings;
-  readonly repositoryTools?: RepositoryToolSet;
-  readonly executables?: Readonly<ToolExecutables> | null;
-  readonly systemPrompt?: string;
-  readonly clock?: () => number;
-  readonly timestamp?: () => number;
 }
 
 export interface RunExplorerOptions {
@@ -39,6 +30,8 @@ export interface ExplorerMetrics {
   readonly turns: number;
   readonly toolCalls: number;
   readonly repaired: boolean;
+  readonly routeAttempts: number;
+  readonly fallbacks: number;
   readonly primary: PiSessionMetrics;
   readonly repair: PiSessionMetrics | null;
   readonly usage: Readonly<Usage>;
@@ -53,6 +46,9 @@ export interface ExplorerMetrics {
 }
 
 export interface ExplorerRuntime {
+  readonly route: string;
+  readonly target: string;
+  readonly provider: string;
   readonly api: FreeContextConfig["api"];
   readonly authMode: FreeContextConfig["authMode"];
   readonly baseUrl: string;
@@ -126,39 +122,27 @@ export async function runExplorer({
 
   const clock = dependencies.clock ?? performance.now.bind(performance);
   const startedAt = clock();
-  const config = dependencies.config ?? (await resolveConfig({ cli }));
   const workspace = dependencies.workspace ?? (await createWorkspace(cwd));
-  const bindings = await loadPiBindings(config.api, dependencies.bindings ?? null);
-  const repositoryTools = dependencies.repositoryTools ?? (await createRepositoryTools({
-    Type: bindings.Type,
+  const routed = await runPrimaryRoute({
+    cli,
     workspace,
-    config,
-    executables: dependencies.executables ?? null,
-  }));
-  const systemPrompt = dependencies.systemPrompt ?? (await loadSystemPrompt({
-    promptPath: config.promptPath,
-    workspace,
-    toolNames: repositoryTools.names,
-  }));
-  const model = createModel(config);
-  const requestOptions = createRequestOptions(config);
-  const setupMs = Math.max(0, clock() - startedAt);
-
-  const primaryStartedAt = clock();
-  const primary = await runPiSession({
-    bindings,
-    model,
-    requestOptions,
-    config,
-    systemPrompt,
     promptText: buildUserPrompt(query),
-    tools: repositoryTools.tools,
     ...(signal ? { signal } : {}),
     ...(onEvent ? { onEvent } : {}),
-    clock,
-    ...(dependencies.timestamp ? { timestamp: dependencies.timestamp } : {}),
+    startedAt,
+    dependencies,
   });
-  const primarySessionMs = Math.max(0, clock() - primaryStartedAt);
+  const {
+    config,
+    bindings,
+    repositoryTools,
+    systemPrompt,
+    model,
+    requestOptions,
+    primary,
+    setupMs,
+    primarySessionMs,
+  } = routed;
 
   const primaryValidationStartedAt = clock();
   let validation = await validateExplorerOutput(primary.text, workspace);
@@ -209,6 +193,8 @@ export async function runExplorer({
       turns: primary.metrics.turns + (repairRun?.metrics.turns ?? 0),
       toolCalls: primary.metrics.toolCalls + (repairRun?.metrics.toolCalls ?? 0),
       repaired: Boolean(repairRun),
+      routeAttempts: routed.routeAttempts,
+      fallbacks: routed.fallbacks,
       primary: primary.metrics,
       repair: repairRun?.metrics ?? null,
       usage: Object.freeze(addUsage(primaryUsage, repairUsage)),
@@ -226,6 +212,9 @@ export async function runExplorer({
       totalMs: Math.max(0, clock() - startedAt),
     }),
     runtime: Object.freeze({
+      route: routed.route,
+      target: config.target,
+      provider: config.provider,
       api: config.api,
       authMode: config.authMode,
       baseUrl: redactUrl(config.baseUrl),

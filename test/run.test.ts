@@ -9,7 +9,7 @@ import { Type } from "@earendil-works/pi-ai";
 import type { ExplorerDependencies } from "../src/runtime/run.js";
 import { runExplorer } from "../src/runtime/run.js";
 import { createWorkspace } from "../src/tools/workspace.js";
-import { assistantText, baseConfig, fakeBindings } from "./helpers.js";
+import { assistantText, baseConfig, baseRouteConfig, fakeBindings } from "./helpers.js";
 
 async function fakeDependencies(root: string, responses: readonly AssistantMessage[]): Promise<ExplorerDependencies> {
   let index = 0;
@@ -21,7 +21,7 @@ async function fakeDependencies(root: string, responses: readonly AssistantMessa
     return [...prompts, response];
   });
   return {
-    config: baseConfig(),
+    routeConfig: baseRouteConfig(),
     workspace: await createWorkspace(root),
     bindings,
     repositoryTools: {
@@ -168,12 +168,14 @@ test("format repair receives only effective compacted context and no tools", asy
       query: "find a",
       cwd: root,
       dependencies: {
-        config: baseConfig({
-          contextWindow: 1200,
-          contextReserveTokens: 400,
-          contextKeepRecentTokens: 10,
-          maxOutputTokens: 200,
-        }),
+        routeConfig: baseRouteConfig([
+          baseConfig({
+            contextWindow: 1200,
+            contextReserveTokens: 400,
+            contextKeepRecentTokens: 10,
+            maxOutputTokens: 200,
+          }),
+        ]),
         workspace,
         bindings,
         repositoryTools: {

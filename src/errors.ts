@@ -27,9 +27,21 @@ export class SecurityError extends FreeContextError {
   }
 }
 
+export type ProviderFailureCategory = "timeout" | "rate_limit" | "server_error" | "other";
+
+export interface ProviderErrorOptions extends ErrorOptions {
+  readonly category?: ProviderFailureCategory;
+  readonly safeToFallback?: boolean;
+}
+
 export class ProviderError extends FreeContextError {
-  constructor(message: string, options: ErrorOptions = {}) {
+  readonly category: ProviderFailureCategory;
+  readonly safeToFallback: boolean;
+
+  constructor(message: string, options: ProviderErrorOptions = {}) {
     super(message, { code: "PROVIDER_ERROR", exitCode: 4, ...options });
+    this.category = options.category ?? "other";
+    this.safeToFallback = options.safeToFallback ?? false;
   }
 }
 

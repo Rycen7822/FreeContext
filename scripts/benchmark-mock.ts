@@ -2,7 +2,7 @@ import { performance } from "node:perf_hooks";
 import type { AgentMessage } from "@earendil-works/pi-agent-core";
 import { createAssistantMessageEventStream } from "@earendil-works/pi-ai";
 import type { AssistantMessage } from "@earendil-works/pi-ai";
-import { resolveConfig } from "../src/config.js";
+import type { FreeContextConfig } from "../src/config.js";
 import { createModel, createRequestOptions } from "../src/runtime/model.js";
 import { loadPiBindings } from "../src/runtime/pi-bindings.js";
 import type { PiBindings } from "../src/runtime/pi-bindings.js";
@@ -74,20 +74,40 @@ async function main(): Promise<void> {
   const scenario: Scenario = selectedScenario;
   const runs = integerOption("runs", 20, 1);
   const warmup = integerOption("warmup", 3, 0);
-  const config = await resolveConfig({
-    cli: {
-      api: "anthropic",
-      apiKey: "benchmark-key",
-      model: "benchmark-model",
-      maxTurns: 2,
-      maxToolCalls: 1,
-      maxOutputTokens: 256,
-      ...(scenario === "context"
-        ? { contextWindow: 8192, contextReserveTokens: 2048, contextKeepRecentTokens: 1024 }
-        : {}),
+  const config: FreeContextConfig = {
+    target: "benchmark",
+    provider: "benchmark-provider",
+    api: "anthropic",
+    authMode: "auto",
+    apiKey: "benchmark-key",
+    baseUrl: "https://example.invalid",
+    model: "benchmark-model",
+    promptPath: "/dev/null",
+    configFilePath: "/tmp/freecontext-benchmark.toml",
+    maxTurns: 2,
+    maxToolCalls: 1,
+    maxOutputTokens: 256,
+    requestTimeoutMs: 2_000,
+    toolTimeoutMs: 2_000,
+    maxToolOutputBytes: 8_192,
+    maxParallelTools: 1,
+    contextWindow: 8_192,
+    contextCompactionEnabled: true,
+    contextReserveTokens: 2_048,
+    contextKeepRecentTokens: 1_024,
+    effectiveToolOutputBytes: 8_192,
+    temperature: 0,
+    thinkingLevel: "off",
+    headers: {},
+    openAICompat: {
+      supportsDeveloperRole: false,
+      supportsReasoningEffort: false,
+      supportsUsageInStreaming: false,
+      supportsStrictMode: false,
+      supportsStore: false,
+      maxTokensField: "max_tokens",
     },
-    processEnv: {},
-  });
+  };
   const publicBindings = await loadPiBindings("anthropic");
   const final = assistantText("done");
   let summaryCalls = 0;

@@ -51,14 +51,15 @@ try {
     },
   };
   const config: FreeContextConfig = {
+    target: "smoke",
+    provider: "smoke-provider",
     api: "anthropic",
     authMode: "bearer",
     apiKey: "test-key",
     baseUrl: "https://example.invalid",
     model: "test-model",
     promptPath: path.resolve("prompts/explorer.md"),
-    envFilePath: "/tmp/freecontext-smoke.env",
-    envFileLoaded: false,
+    configFilePath: "/tmp/freecontext-smoke.toml",
     maxTurns: 4,
     maxToolCalls: 8,
     maxOutputTokens: 1024,
@@ -87,7 +88,12 @@ try {
     query: "Find answer",
     cwd: root,
     dependencies: {
-      config,
+      routeConfig: {
+        route: "smoke",
+        configFilePath: config.configFilePath,
+        fallbackOn: [],
+        targets: [config],
+      },
       workspace,
       bindings,
       repositoryTools: {

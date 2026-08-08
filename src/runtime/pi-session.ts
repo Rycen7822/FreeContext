@@ -17,6 +17,7 @@ import {
 import { compactContext } from "./context-compaction.js";
 import type { FreeContextModel } from "./model.js";
 import { redactProviderError } from "./model.js";
+import { classifyProviderFailure } from "./provider-failure.js";
 import type { PiBindings } from "./pi-bindings.js";
 
 const FINALIZE_MESSAGE = Object.freeze({
@@ -210,6 +211,16 @@ export async function runPiSession({
   let toolExecutionMsMax = 0;
   const toolStarts = new Map<string, number>();
 
+  const providerError = (value: unknown, allowFallback = false): ProviderError =>
+    new ProviderError(
+      redactProviderError(value instanceof Error ? value.message : value, config),
+      {
+        cause: value,
+        category: classifyProviderFailure(value),
+        safeToFallback: allowFallback && toolCallCount === 0 && !signal?.aborted,
+      },
+    );
+
   const eventState = (): PiSessionEventState => ({ turnCount, toolCallCount, providerAttempts });
   const emitCustom = async (event: Exclude<FreeContextRuntimeEvent, AgentEvent>): Promise<void> => {
     await onEvent?.(event, eventState());
@@ -361,7 +372,7 @@ export async function runPiSession({
     newMessages = await runInitialLoop();
   } catch (error) {
     if (error instanceof FreeContextError) throw error;
-    throw new ProviderError(redactProviderError(error instanceof Error ? error.message : error, config), { cause: error });
+    throw providerError(error, true);
   }
   const allNewMessages = [...newMessages];
   if (!loopReportedContext) {
@@ -369,7 +380,7 @@ export async function runPiSession({
   }
 
   let assistant = lastAssistant(newMessages);
-  if (!assistant) throw new ProviderError("Provider returned no assistant message.");
+  if (!assistant) throw providerError("Provider returned no assistant message.", true);
   const overflow = bindings.isContextOverflow(assistant, model.contextWindow);
   if (overflow && config.contextCompactionEnabled && !overflowRecovered) {
     overflowRecovered = true;
@@ -413,16 +424,16 @@ export async function runPiSession({
       assistant = lastAssistant(continued);
     } catch (error) {
       if (error instanceof FreeContextError) throw error;
-      throw new ProviderError(redactProviderError(error instanceof Error ? error.message : error, config), { cause: error });
+      throw providerError(error);
     }
-    if (!assistant) throw new ProviderError("Provider continuation returned no assistant message.");
+    if (!assistant) throw providerError("Provider continuation returned no assistant message.");
   }
 
   if (bindings.isContextOverflow(assistant, model.contextWindow)) {
-    throw new ProviderError(redactProviderError(assistant.errorMessage || "Provider context overflow persisted after recovery.", config));
+    throw providerError(assistant.errorMessage || "Provider context overflow persisted after recovery.");
   }
   if (assistant.stopReason === "error" || assistant.stopReason === "aborted") {
-    throw new ProviderError(redactProviderError(assistant.errorMessage, config));
+    throw providerError(assistant.errorMessage, assistant.stopReason === "error");
   }
 
   return Object.freeze({

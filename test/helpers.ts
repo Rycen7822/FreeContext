@@ -10,7 +10,7 @@ import {
 } from "@earendil-works/pi-agent-core";
 import type { AssistantMessage } from "@earendil-works/pi-ai";
 import { createAssistantMessageEventStream, isContextOverflow, Type } from "@earendil-works/pi-ai";
-import type { FreeContextConfig } from "../src/config.js";
+import type { FreeContextConfig, ResolvedRouteConfig } from "../src/config.js";
 import type { PiBindings } from "../src/runtime/pi-bindings.js";
 
 export const FakeType = new Proxy(
@@ -22,14 +22,15 @@ export const FakeType = new Proxy(
 
 export function baseConfig(overrides: Partial<FreeContextConfig> = {}): FreeContextConfig {
   return {
+    target: "test",
+    provider: "test-provider",
     api: "anthropic",
     authMode: "auto",
     apiKey: "sk-test-secret",
     baseUrl: "https://example.invalid",
     model: "test-model",
     promptPath: new URL("../prompts/explorer.md", import.meta.url).pathname,
-    envFilePath: "/tmp/freecontext-test.env",
-    envFileLoaded: true,
+    configFilePath: "/tmp/freecontext-test.toml",
     maxTurns: 4,
     maxToolCalls: 8,
     maxOutputTokens: 1024,
@@ -53,6 +54,19 @@ export function baseConfig(overrides: Partial<FreeContextConfig> = {}): FreeCont
       supportsStore: false,
       maxTokensField: "max_tokens",
     },
+    ...overrides,
+  };
+}
+
+export function baseRouteConfig(
+  targets: readonly FreeContextConfig[] = [baseConfig()],
+  overrides: Partial<ResolvedRouteConfig> = {},
+): ResolvedRouteConfig {
+  return {
+    route: "test-route",
+    configFilePath: "/tmp/freecontext-test.toml",
+    fallbackOn: ["timeout", "rate_limit", "server_error"],
+    targets,
     ...overrides,
   };
 }

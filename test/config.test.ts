@@ -3,57 +3,143 @@ import assert from "node:assert/strict";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { parseEnv, redactSecret, redactUrl, resolveConfig } from "../src/config.js";
+import { redactSecret, redactUrl, resolveConfig } from "../src/config.js";
 import { createModel, createRequestOptions, redactProviderError } from "../src/runtime/model.js";
 import { baseConfig } from "./helpers.js";
 
-test("parseEnv handles comments, export, and quoted values", () => {
-  const parsed = parseEnv(`
-# comment
-export A=one
-B="two # kept" # removed
-C='three # kept'
-D=value # trailing
-INVALID LINE
-`);
-  assert.deepEqual(parsed, { A: "one", B: "two # kept", C: "three # kept", D: "value" });
-});
+const KEYS = Object.freeze({ PRIMARY_KEY: "primary-secret", BACKUP_KEY: "backup-secret" });
 
-test("resolveConfig merges env file, process environment, and CLI in precedence order", async () => {
-  const directory = await mkdtemp(path.join(os.tmpdir(), "freecontext-config-"));
+function baseToml(): string {
+  return `
+version = 1
+default_route = "default"
+
+[runtime]
+prompt_path = "prompt.md"
+max_turns = 7
+max_tool_calls = 12
+
+[providers.primary]
+api = "anthropic"
+base_url = "https://primary.example/v1/"
+auth_mode = "bearer"
+credential_env = "PRIMARY_KEY"
+
+[providers.backup]
+api = "openai"
+base_url = "https://backup.example/v1/"
+credential_env = "BACKUP_KEY"
+
+[models.primary]
+provider = "primary"
+model_id = "primary-model"
+context_window = 32768
+max_output_tokens = 1024
+thinking_level = "off"
+
+[models.backup]
+provider = "backup"
+model_id = "backup-model"
+context_window = 128000
+max_output_tokens = 4096
+thinking_level = "high"
+
+[models.backup.openai_compat]
+supports_reasoning_effort = true
+max_tokens_field = "max_completion_tokens"
+
+[routes.default]
+models = ["primary", "backup"]
+fallback_on = ["timeout", "rate_limit", "server_error"]
+
+[routes.backup_only]
+models = ["backup"]
+`;
+}
+
+async function withConfig<T>(source: string, run: (configFile: string, directory: string) => Promise<T>): Promise<T> {
+  const directory = await mkdtemp(path.join(os.tmpdir(), "freecontext-toml-"));
   try {
-    const envFile = path.join(directory, ".env");
-    const prompt = path.join(directory, "prompt.md");
-    await writeFile(prompt, "{{WORKSPACE}} {{TOOLS}} {{OVERVIEW}}", "utf8");
-    await writeFile(
-      envFile,
-      [
-        "FREECONTEXT_API=openai",
-        "FREECONTEXT_AUTH_MODE=auto",
-        "FREECONTEXT_BASE_URL=https://file.example/v1/",
-        "FREECONTEXT_MODEL=file-model",
-        "FREECONTEXT_API_KEY=file-key",
-        `FREECONTEXT_PROMPT_PATH=${prompt}`,
-        "FREECONTEXT_MAX_TURNS=7",
-      ].join("\n"),
-      "utf8",
-    );
-    const config = await resolveConfig({
-      cli: { envFile, model: "cli-model", maxTurns: "5" },
-      processEnv: { FREECONTEXT_BASE_URL: "https://process.example/v1/" },
-    });
-    assert.equal(config.api, "openai");
-    assert.equal(config.model, "cli-model");
-    assert.equal(config.baseUrl, "https://process.example/v1");
-    assert.equal(config.apiKey, "file-key");
-    assert.equal(config.maxTurns, 5);
-    assert.equal(config.promptPath, prompt);
+    await writeFile(path.join(directory, "prompt.md"), "{{WORKSPACE}} {{TOOLS}} {{OVERVIEW}}", "utf8");
+    const configFile = path.join(directory, "config.toml");
+    await writeFile(configFile, source, "utf8");
+    return await run(configFile, directory);
   } finally {
     await rm(directory, { recursive: true, force: true });
   }
+}
+
+test("resolveConfig loads TOML catalogs and keeps CLI over environment over file precedence", async () => {
+  await withConfig(baseToml(), async (configFile, directory) => {
+    const route = await resolveConfig({
+      cli: { configFile, maxTurns: "5" },
+      processEnv: { ...KEYS, FREECONTEXT_MAX_TURNS: "6" },
+    });
+    assert.equal(route.route, "default");
+    assert.deepEqual(route.fallbackOn, ["timeout", "rate_limit", "server_error"]);
+    assert.equal(route.targets.length, 2);
+    assert.equal(route.targets[0]?.target, "primary");
+    assert.equal(route.targets[0]?.provider, "primary");
+    assert.equal(route.targets[0]?.apiKey, KEYS.PRIMARY_KEY);
+    assert.equal(route.targets[0]?.baseUrl, "https://primary.example/v1");
+    assert.equal(route.targets[0]?.maxTurns, 5);
+    assert.equal(route.targets[0]?.promptPath, path.join(directory, "prompt.md"));
+    assert.equal(route.targets[1]?.apiKey, KEYS.BACKUP_KEY);
+  });
 });
 
-test("request authentication modes keep secrets outside model metadata", () => {
+test("target and route overrides are deterministic", async () => {
+  await withConfig(baseToml(), async (configFile) => {
+    const target = await resolveConfig({ cli: { configFile, target: "backup" }, processEnv: KEYS });
+    assert.equal(target.route, "target:backup");
+    assert.deepEqual(target.fallbackOn, []);
+    assert.deepEqual(target.targets.map((item) => item.target), ["backup"]);
+
+    const route = await resolveConfig({
+      cli: { configFile },
+      processEnv: { ...KEYS, FREECONTEXT_ROUTE: "backup_only" },
+    });
+    assert.equal(route.route, "backup_only");
+    assert.deepEqual(route.targets.map((item) => item.target), ["backup"]);
+  });
+});
+
+test("TOML schema rejects unknown fields, sensitive headers, and broken references", async () => {
+  await withConfig(
+    baseToml().replace('credential_env = "PRIMARY_KEY"', 'credential_env = "PRIMARY_KEY"\napi_key = "secret"'),
+    async (configFile) => {
+      await assert.rejects(() => resolveConfig({ cli: { configFile }, processEnv: KEYS }), /unknown key.*api_key/u);
+    },
+  );
+  await withConfig(
+    baseToml().replace(
+      '[providers.backup]',
+      '[providers.primary.headers]\nAuthorization = "secret"\n\n[providers.backup]',
+    ),
+    async (configFile) => {
+      await assert.rejects(() => resolveConfig({ cli: { configFile }, processEnv: KEYS }), /is sensitive/u);
+    },
+  );
+  await withConfig(baseToml().replace('models = ["backup"]', 'models = ["missing"]'), async (configFile) => {
+    await assert.rejects(() => resolveConfig({ cli: { configFile }, processEnv: KEYS }), /unknown model: missing/u);
+  });
+});
+
+test("selected targets require credentials only from named environment variables", async () => {
+  await withConfig(baseToml(), async (configFile) => {
+    await assert.rejects(
+      () => resolveConfig({ cli: { configFile, target: "primary" }, processEnv: {} }),
+      /requires credential environment variable PRIMARY_KEY/u,
+    );
+    const route = await resolveConfig({
+      cli: { configFile, target: "primary" },
+      processEnv: { PRIMARY_KEY: KEYS.PRIMARY_KEY },
+    });
+    assert.equal(route.targets[0]?.apiKey, KEYS.PRIMARY_KEY);
+  });
+});
+
+test("request authentication keeps secrets outside model metadata", () => {
   const automatic = baseConfig();
   const autoModel = createModel(automatic);
   const auto = createRequestOptions(automatic);
@@ -68,156 +154,97 @@ test("request authentication modes keep secrets outside model metadata", () => {
   const xApi = createRequestOptions(baseConfig({ authMode: "x-api-key" }));
   assert.equal(xApi.apiKey, undefined);
   assert.equal(xApi.headers["x-api-key"], "sk-test-secret");
-
-  const both = createRequestOptions(baseConfig({ authMode: "both" }));
-  assert.equal(both.apiKey, "sk-test-secret");
-  assert.equal(both.headers.Authorization, "Bearer sk-test-secret");
 });
 
-test("OpenAI model uses conservative compatibility metadata", () => {
-  const config = baseConfig({ api: "openai", authMode: "auto" });
-  const model = createModel(config);
-  assert.equal(model.api, "openai-completions");
-  assert.equal(model.compat.supportsStore, false);
-  assert.equal(model.compat.supportsStrictMode, false);
-  assert.equal(model.compat.maxTokensField, "max_tokens");
-});
-
-test("invalid OpenAI token field configuration is rejected", async () => {
-  await assert.rejects(
-    () =>
-      resolveConfig({
-        cli: { model: "test", promptPath: new URL("../prompts/explorer.md", import.meta.url).pathname },
-        processEnv: {
-          FREECONTEXT_API: "openai",
-          FREECONTEXT_API_KEY: "test",
-          FREECONTEXT_OPENAI_MAX_TOKENS_FIELD: "tokens",
-        },
-      }),
-    /max_tokens or max_completion_tokens/u,
-  );
-});
-
-test("integer configuration rejects numeric prefixes and suffixes", async () => {
-  await assert.rejects(
-    () =>
-      resolveConfig({
-        cli: { model: "test", promptPath: new URL("../prompts/explorer.md", import.meta.url).pathname },
-        processEnv: {
-          FREECONTEXT_API_KEY: "test",
-          FREECONTEXT_MAX_TURNS: "8turns",
-        },
-      }),
-    /must be an integer/u,
-  );
-});
-
-test("context budget defaults scale at the minimum and normal context windows", async () => {
-  const promptPath = new URL("../prompts/explorer.md", import.meta.url).pathname;
-  const small = await resolveConfig({
-    cli: { model: "test", promptPath, contextWindow: 8192 },
-    processEnv: { FREECONTEXT_API_KEY: "test" },
+test("OpenAI model consumes model-specific compatibility metadata", async () => {
+  await withConfig(baseToml(), async (configFile) => {
+    const route = await resolveConfig({ cli: { configFile, target: "backup" }, processEnv: KEYS });
+    const config = route.targets[0];
+    assert.ok(config);
+    const model = createModel(config);
+    assert.equal(model.api, "openai-completions");
+    assert.equal(model.compat.supportsReasoningEffort, true);
+    assert.equal(model.compat.maxTokensField, "max_completion_tokens");
   });
-  assert.equal(small.contextCompactionEnabled, true);
-  assert.equal(small.contextReserveTokens, 4096);
-  assert.equal(small.contextKeepRecentTokens, 2048);
-  assert.equal(small.effectiveToolOutputBytes, 8192);
-
-  const normal = await resolveConfig({
-    cli: { model: "test", promptPath, contextWindow: 128000 },
-    processEnv: { FREECONTEXT_API_KEY: "test" },
-  });
-  assert.equal(normal.contextReserveTokens, 16384);
-  assert.equal(normal.contextKeepRecentTokens, 20000);
-  assert.equal(normal.effectiveToolOutputBytes, 65536);
 });
 
-test("context budget rejects conflicting enabled overrides", async () => {
-  const promptPath = new URL("../prompts/explorer.md", import.meta.url).pathname;
-  await assert.rejects(
-    () => resolveConfig({
-      cli: {
-        model: "test",
-        promptPath,
-        contextWindow: 8192,
-        maxOutputTokens: 4096,
-        contextReserveTokens: 3000,
-        contextKeepRecentTokens: 1024,
-      },
-      processEnv: { FREECONTEXT_API_KEY: "test" },
-    }),
-    /MAX_OUTPUT_TOKENS=4096.*CONTEXT_RESERVE_TOKENS=3000/u,
-  );
-  await assert.rejects(
-    () => resolveConfig({
-      cli: {
-        model: "test",
-        promptPath,
-        contextWindow: 8192,
-        contextReserveTokens: 4096,
-        contextKeepRecentTokens: 4096,
-      },
-      processEnv: { FREECONTEXT_API_KEY: "test" },
-    }),
-    /CONTEXT_KEEP_RECENT_TOKENS=4096.*CONTEXT_WINDOW=8192/u,
-  );
-});
-
-test("disabled compaction preserves the configured legacy tool output ceiling", async () => {
-  const config = await resolveConfig({
-    cli: {
-      model: "test",
-      promptPath: new URL("../prompts/explorer.md", import.meta.url).pathname,
-      maxToolOutputBytes: 12000,
-      contextReserveTokens: 0,
-      contextKeepRecentTokens: 0,
+test("invalid OpenAI compatibility and integer values are rejected", async () => {
+  await withConfig(
+    baseToml().replace('max_tokens_field = "max_completion_tokens"', 'max_tokens_field = "tokens"'),
+    async (configFile) => {
+      await assert.rejects(
+        () => resolveConfig({ cli: { configFile, target: "backup" }, processEnv: KEYS }),
+        /max_tokens or max_completion_tokens/u,
+      );
     },
-    processEnv: {
-      FREECONTEXT_API_KEY: "test",
-      FREECONTEXT_COMPACTION_ENABLED: "false",
-    },
+  );
+  await withConfig(baseToml(), async (configFile) => {
+    await assert.rejects(
+      () => resolveConfig({ cli: { configFile }, processEnv: { ...KEYS, FREECONTEXT_MAX_TURNS: "8turns" } }),
+      /must be an integer/u,
+    );
   });
-  assert.equal(config.contextCompactionEnabled, false);
-  assert.equal(config.effectiveToolOutputBytes, 12000);
 });
 
-test("provider errors and helper key display are redacted", () => {
+test("context budget defaults are compiled independently for each model", async () => {
+  const source = baseToml()
+    .replace("context_window = 32768", "context_window = 8192")
+    .replace("max_output_tokens = 1024", "max_output_tokens = 4096");
+  await withConfig(source, async (configFile) => {
+    const route = await resolveConfig({ cli: { configFile }, processEnv: KEYS });
+    const small = route.targets[0];
+    const normal = route.targets[1];
+    assert.equal(small?.contextReserveTokens, 4096);
+    assert.equal(small?.contextKeepRecentTokens, 2048);
+    assert.equal(small?.effectiveToolOutputBytes, 8192);
+    assert.equal(normal?.contextReserveTokens, 16384);
+    assert.equal(normal?.contextKeepRecentTokens, 20000);
+    assert.equal(normal?.effectiveToolOutputBytes, 65536);
+  });
+});
+
+test("conflicting model context budgets are rejected", async () => {
+  const source = baseToml().replace(
+    "max_output_tokens = 1024",
+    "max_output_tokens = 4096\ncontext_reserve_tokens = 3000\ncontext_keep_recent_tokens = 1024",
+  );
+  await withConfig(source, async (configFile) => {
+    await assert.rejects(() => resolveConfig({ cli: { configFile }, processEnv: KEYS }), /conflicting context budget/u);
+  });
+});
+
+test("disabled compaction preserves the configured tool output ceiling", async () => {
+  await withConfig(baseToml(), async (configFile) => {
+    const route = await resolveConfig({
+      cli: { configFile, maxToolOutputBytes: 12000 },
+      processEnv: { ...KEYS, FREECONTEXT_COMPACTION_ENABLED: "false" },
+    });
+    assert.equal(route.targets[0]?.contextCompactionEnabled, false);
+    assert.equal(route.targets[0]?.effectiveToolOutputBytes, 12000);
+  });
+});
+
+test("provider errors, helper values, and invalid URLs stay redacted", async () => {
   const config = baseConfig();
   assert.equal(redactProviderError("failed with sk-test-secret", config), "failed with <redacted>");
-  const headerConfig = baseConfig({
-    apiKey: "different-test-key",
-    headers: { Authorization: "Bearer header-only-secret" },
-  });
-  assert.equal(
-    redactProviderError(
-      "request failed: Bearer header-only-secret (credential header-only-secret)",
-      headerConfig,
-    ),
-    "request failed: <redacted> (credential <redacted>)",
-  );
   assert.equal(redactSecret("sk-test-secret"), "<redacted>");
   assert.equal(
     redactUrl("https://user:password@example.invalid/v1?api_key=secret#fragment"),
     "https://redacted:redacted@example.invalid/v1?api_key=redacted",
   );
-});
 
-test("invalid base URL errors do not echo embedded credentials", async () => {
-  await assert.rejects(
-    () =>
-      resolveConfig({
-        cli: {
-          model: "test",
-          promptPath: new URL("../prompts/explorer.md", import.meta.url).pathname,
-          baseUrl: "not-a-url?api_key=embedded-secret",
-        },
-        processEnv: { FREECONTEXT_API_KEY: "test" },
-      }),
-    (error) => {
-      assert.ok(error instanceof Error);
-      assert.match(error.message, /<invalid-url>/u);
-      assert.doesNotMatch(error.message, /embedded-secret/u);
-      return true;
-    },
+  const source = baseToml().replace(
+    "https://primary.example/v1/",
+    "not-a-url?api_key=embedded-secret",
   );
+  await withConfig(source, async (configFile) => {
+    await assert.rejects(
+      () => resolveConfig({ cli: { configFile, target: "primary" }, processEnv: KEYS }),
+      (error) => {
+        assert.ok(error instanceof Error);
+        assert.doesNotMatch(error.message, /embedded-secret/u);
+        return true;
+      },
+    );
+  });
 });

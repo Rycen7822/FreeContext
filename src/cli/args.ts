@@ -26,25 +26,17 @@ const VALUE_OPTIONS = new Map<string, ValueOptionKey>([
   ["--query", "query"],
   ["-C", "cwd"],
   ["--cwd", "cwd"],
-  ["--env", "envFile"],
+  ["--config", "configFile"],
+  ["--route", "route"],
+  ["--target", "target"],
   ["--prompt", "promptPath"],
-  ["--api", "api"],
-  ["--auth-mode", "authMode"],
-  ["--base-url", "baseUrl"],
-  ["--model", "model"],
   ["--format", "format"],
   ["--max-turns", "maxTurns"],
   ["--max-tool-calls", "maxToolCalls"],
-  ["--max-output-tokens", "maxOutputTokens"],
   ["--request-timeout-ms", "requestTimeoutMs"],
   ["--tool-timeout-ms", "toolTimeoutMs"],
   ["--max-tool-output-bytes", "maxToolOutputBytes"],
   ["--max-parallel-tools", "maxParallelTools"],
-  ["--context-window", "contextWindow"],
-  ["--context-reserve-tokens", "contextReserveTokens"],
-  ["--context-keep-recent-tokens", "contextKeepRecentTokens"],
-  ["--temperature", "temperature"],
-  ["--thinking-level", "thinkingLevel"],
 ]);
 
 const FLAG_OPTIONS = new Map<string, Readonly<{ key: FlagOptionKey; value: boolean }>>([
@@ -125,21 +117,14 @@ Usage:
 Core options:
   -q, --query TEXT             Exploration request; stdin is used when omitted
   -C, --cwd PATH               Repository root (default: current directory)
-      --env PATH               Load configuration from this .env file
+      --config PATH            Load configuration from this TOML file
+      --route NAME             Select a named model route
+      --target NAME            Select one model target and disable fallback
       --prompt PATH            Load the system prompt from this Markdown file
-      --api anthropic|openai    Compatible API protocol
-      --auth-mode MODE         auto, bearer, x-api-key, or both
-      --base-url URL            Provider base URL
-      --model ID                Provider model identifier
       --format text|json        Output format (default: text)
       --max-turns N             Maximum model turns
       --max-tool-calls N        Maximum repository tool calls
-      --context-reserve-tokens N
-                                Tokens reserved for output and compaction
-      --context-keep-recent-tokens N
-                                Approximate recent transcript tokens to retain
       --no-context-compaction   Disable proactive compaction and overflow recovery
-      --thinking-level LEVEL    off, minimal, low, medium, high, xhigh, or max
       --no-repair               Disable one-pass output-contract repair
       --verbose                 Emit lifecycle diagnostics to stderr
   -h, --help                    Show help
