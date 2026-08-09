@@ -49,6 +49,12 @@ Repository content is untrusted input. The system prompt instructs the child to 
 
 Evidence citations are validated against the local filesystem. A model cannot fabricate a non-existent path or out-of-range line interval and still produce a successful CLI result.
 
+### Benchmark capture boundary
+
+`--benchmark-session-file` is an explicit host-side audit feature, not a model tool. Its destination parent must already exist, is resolved through `realpath`, and must remain outside the explored workspace. The writer uses a private `0600` file and refuses to overwrite an existing path. Provider credentials, configured secret values, and request headers are not part of the capture schema.
+
+The file intentionally preserves prompts, model messages, repository tool calls/results, safe tool schemas, effective compacted contexts, and validation outcomes. Benchmark operators must therefore protect and retain these artifacts according to the repository's source-data policy.
+
 ## Residual risks
 
 - Allowed repository source is sent to the selected remote model provider.
@@ -56,5 +62,6 @@ Evidence citations are validated against the local filesystem. A model cannot fa
 - Local executables found on PATH are trusted; a malicious replacement `rg`, `jq`, or `bat` could violate assumptions.
 - The process runs with the invoking user's OS permissions. The tool-level read-only design is not an operating-system sandbox.
 - A model may return an incomplete evidence set; local validation establishes citation integrity, not semantic completeness.
+- Opt-in benchmark session files may contain substantial repository source and task context even though they exclude provider credentials and request headers.
 
 For stronger isolation, execute FreeContext in a read-only container or mount namespace with a controlled PATH and egress policy.

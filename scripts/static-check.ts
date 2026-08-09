@@ -28,12 +28,22 @@ const forbidden: readonly (readonly [RegExp, string])[] = [
 ];
 
 const failures: string[] = [];
+const benchmarkPersistenceModules = new Set([
+  path.join("src", "benchmark", "master-context.ts"),
+  path.join("src", "benchmark", "session-file.ts"),
+]);
 for (const file of files) {
   const source = await readFile(file, "utf8");
+  const relative = path.relative(root, file);
   for (const [pattern, label] of forbidden) {
+    if (
+      benchmarkPersistenceModules.has(relative) &&
+      (label === "filesystem mutation API" || label === "persistent transcript path")
+    ) {
+      continue;
+    }
     if (pattern.test(source)) failures.push(`${path.relative(root, file)}: ${label}`);
   }
-  const relative = path.relative(root, file);
   if (relative !== path.join("src", "tools", "process.ts") && /node:child_process|\bspawn\s*\(/u.test(source)) {
     failures.push(`${relative}: child process use outside audited process wrapper`);
   }

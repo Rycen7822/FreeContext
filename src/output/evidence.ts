@@ -59,18 +59,21 @@ function parseEvidenceLine(line: string, evidence: EvidenceCitation[], problems:
     return;
   }
   const content = line.replace(/^[-*]\s+/u, "").trim();
-  const match = content.match(/^(.+):(\d+)(?:-(\d+))?\s+(?:—|–|-)\s+(.+)$/u);
+  const match = content.match(/^(.+):(\d+(?:-\d+)?(?:,\s*\d+(?:-\d+)?)*)\s+(?:—|–|-)\s+(.+)$/u);
   const pathValue = match?.[1];
-  const startValue = match?.[2];
-  const endValue = match?.[3];
-  const reasonValue = match?.[4];
-  if (!pathValue || !startValue || !reasonValue) {
+  const rangesValue = match?.[2];
+  const reasonValue = match?.[3];
+  if (!pathValue || !rangesValue || !reasonValue) {
     problems.push(`Malformed evidence citation: ${content}`);
     return;
   }
-  const start = Number.parseInt(startValue, 10);
-  const end = Number.parseInt(endValue || startValue, 10);
-  evidence.push({ path: cleanPath(pathValue), start, end, reason: reasonValue.trim() });
+  for (const range of rangesValue.split(",").map((value) => value.trim())) {
+    const [startValue, endValue] = range.split("-", 2);
+    if (!startValue) continue;
+    const start = Number.parseInt(startValue, 10);
+    const end = Number.parseInt(endValue || startValue, 10);
+    evidence.push({ path: cleanPath(pathValue), start, end, reason: reasonValue.trim() });
+  }
 }
 
 export function parseFinalBlock(text: unknown): ParsedFinalBlock {

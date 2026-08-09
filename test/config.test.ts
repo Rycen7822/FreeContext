@@ -100,6 +100,13 @@ test("tracked TOML examples remain loadable without embedded credentials", async
     processEnv: { SENSENOVA_API_KEY: "example-test-key" },
   });
   assert.deepEqual(sensenova.targets.map((target) => target.target), ["sensenova_flash"]);
+
+  const benchmark = await resolveConfig({
+    cli: { configFile: new URL("../benchmarks/deepswe/freecontext.toml", import.meta.url).pathname },
+    processEnv: { TOKENRHYTHM_API_KEY: "example-test-key" },
+  });
+  assert.deepEqual(benchmark.targets.map((target) => target.target), ["tokenrhythm"]);
+  assert.equal(benchmark.targets[0]?.model, "deepseek-v4-flash-0731");
 });
 
 test("target and route overrides are deterministic", async () => {

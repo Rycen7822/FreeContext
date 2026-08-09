@@ -13,12 +13,13 @@ export type CliOptions = Mutable<CliConfigOverrides> & {
   version?: boolean;
   verbose?: boolean;
   noRepair?: boolean;
+  benchmarkSessionFile?: string;
 };
 
 type ValueOptionKey = Exclude<
   keyof CliConfigOverrides,
   "apiKey" | "contextCompactionEnabled"
-> | "query" | "cwd" | "format";
+> | "query" | "cwd" | "format" | "benchmarkSessionFile";
 type FlagOptionKey = "help" | "version" | "verbose" | "noRepair" | "contextCompactionEnabled";
 
 const VALUE_OPTIONS = new Map<string, ValueOptionKey>([
@@ -31,6 +32,7 @@ const VALUE_OPTIONS = new Map<string, ValueOptionKey>([
   ["--target", "target"],
   ["--prompt", "promptPath"],
   ["--format", "format"],
+  ["--benchmark-session-file", "benchmarkSessionFile"],
   ["--max-turns", "maxTurns"],
   ["--max-tool-calls", "maxToolCalls"],
   ["--request-timeout-ms", "requestTimeoutMs"],
@@ -105,6 +107,9 @@ export function parseArgs(argv: readonly string[]): CliOptions {
     throw new ConfigurationError("Provide the query either with --query or as positional text, not both.");
   }
   if (!options.query && options.positional.length) options.query = options.positional.join(" ");
+  if (options.command === "doctor" && options.benchmarkSessionFile) {
+    throw new ConfigurationError("--benchmark-session-file is available only for explore.");
+  }
   return options;
 }
 
@@ -126,6 +131,8 @@ Core options:
       --max-tool-calls N        Maximum repository tool calls
       --no-context-compaction   Disable proactive compaction and overflow recovery
       --no-repair               Disable one-pass output-contract repair
+      --benchmark-session-file PATH
+                                Save the full benchmark-only session outside the explored workspace
       --verbose                 Emit lifecycle diagnostics to stderr
   -h, --help                    Show help
   -V, --version                 Show version

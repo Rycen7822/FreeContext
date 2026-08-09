@@ -241,7 +241,7 @@ The external prompt defines the search strategy and final-output contract. The s
 
 ### Read-Only Security Boundary
 
-The production runtime exposes no file-writing API. External commands are implemented by fixed tools, invoked with argument arrays, and constrained by:
+The model-facing explorer tool surface exposes no file-writing API. The opt-in benchmark session sink described below is host-controlled, is never registered as a model tool, and refuses targets inside the explored workspace. External commands are implemented by fixed tools, invoked with argument arrays, and constrained by:
 
 - `shell: false`.
 - Executables resolved to absolute paths in advance.
@@ -258,6 +258,27 @@ The production runtime exposes no file-writing API. External commands are implem
 Directory-level `rg` and `glob` searches exclude every `.env*` and `*.env` file so that a positive glob supplied by the model cannot add sensitive files back. Tracked TOML examples contain no credentials and may be read like normal repository files; the default populated catalog lives outside the repository and secret values remain in its named environment variables.
 
 These constraints prevent the subagent from modifying the workspace. It still sends retrieved code excerpts to the configured model API. Before using a private repository, confirm the provider's data-processing policy. See [`docs/security.md`](docs/security.md) for the complete threat model.
+
+### Benchmark Context Capture
+
+Benchmark harnesses can preserve one complete FreeContext session per invocation without changing normal CLI output:
+
+```bash
+mkdir -p /logs/agent/freecontext-sessions
+freecontext explore -C /workspace \
+  --benchmark-session-file /logs/agent/freecontext-sessions/call-001.json \
+  --query 'Locate the router and its tests.'
+```
+
+The capture contains the exact request, system prompts, safe tool schemas, raw primary/repair messages, effective post-compaction contexts, validation results, runtime events, and terminal outcome. It never serializes provider credentials or request headers, requires an existing destination directory outside the explored workspace, creates a private file, and refuses overwrite.
+
+After the main Codex run has archived `agent/sessions/**/*.jsonl`, create the self-contained task context document:
+
+```bash
+freecontext-benchmark-context --agent-dir /logs/agent --task-name TaskNameXXX
+```
+
+This writes `master-agent-context.json`, preserving the complete raw main-agent context and indexing every FreeContext prompt, compact output, and separate `freecontext-sessions/*.json` address. Export fails if the main-agent context does not contain the corresponding full-session reference. The ready-to-use Pier integration is documented in [`benchmarks/deepswe/README.md`](benchmarks/deepswe/README.md).
 
 ### Tests
 
@@ -528,7 +549,7 @@ TOML 中的相对路径以 `config.toml` 所在目录为基准；CLI 与环境�
 
 ### 只读安全边界
 
-生产运行时没有任何文件写入 API。外部命令由固定工具实现以 argv 数组调用，并强制：
+面向模型的 explorer 工具面没有任何文件写入 API。下文的 benchmark session sink 只能由宿主显式启用，不会注册为模型工具，并拒绝写入被探索工作区。外部命令由固定工具实现以 argv 数组调用，并强制：
 
 - `shell: false`；
 - 可执行文件预先解析为绝对路径；
@@ -545,6 +566,27 @@ TOML 中的相对路径以 `config.toml` 所在目录为基准；CLI 与环境�
 目录级 `rg`/`glob` 会排除全部 `.env*` 与 `*.env`，防止模型提供正向 glob 后重新纳入敏感文件。仓库内 TOML 示例不含凭据，可按普通项目文件读取；实际默认配置位于仓库之外，secret 值始终保留在其具名环境变量中。
 
 这些约束阻止子代理修改工作区；它仍会把检索到的代码片段发送给配置的模型 API。私有仓库使用前必须确认相应供应商的数据处理政策。完整威胁模型见 [`docs/security.md`](docs/security.md)。
+
+### Benchmark 上下文保存
+
+Benchmark harness 可以为每次 FreeContext 调用单独保存完整会话，同时不改变默认 CLI 输出：
+
+```bash
+mkdir -p /logs/agent/freecontext-sessions
+freecontext explore -C /workspace \
+  --benchmark-session-file /logs/agent/freecontext-sessions/call-001.json \
+  --query 'Locate the router and its tests.'
+```
+
+该文件包含精确请求、system prompt、安全工具 schema、主回答/repair 原文、压缩后的有效上下文、验证结果、运行事件和最终状态；不会序列化 provider 凭据或请求 header。目标父目录必须预先存在且位于被探索工作区之外，文件权限为私有，并且禁止覆盖已有文件。
+
+主 Codex 运行将 `agent/sessions/**/*.jsonl` 归档后，可生成自包含的任务上下文文档：
+
+```bash
+freecontext-benchmark-context --agent-dir /logs/agent --task-name TaskNameXXX
+```
+
+命令生成 `master-agent-context.json`：完整保留主 agent 原始上下文，并为每次 FreeContext 调用记录 prompt、返回给主 agent 的紧凑输出，以及独立 `freecontext-sessions/*.json` 文件地址。如果主 agent 上下文没有包含对应完整会话引用，导出会直接失败。可直接复用的 Pier 集成见 [`benchmarks/deepswe/README.md`](benchmarks/deepswe/README.md)。
 
 ### 测试
 

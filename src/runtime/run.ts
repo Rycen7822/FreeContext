@@ -1,16 +1,28 @@
 import type { Usage } from "@earendil-works/pi-ai";
-import type { CliConfigOverrides, FreeContextConfig } from "../config.js";
+import type { CliConfigOverrides } from "../config.js";
 import { redactUrl } from "../config.js";
 import { OutputValidationError } from "../errors.js";
-import type { ValidatedEvidenceCitation } from "../output/evidence.js";
+import type { ExplorerOutputValidation, ValidatedEvidenceCitation } from "../output/evidence.js";
 import { renderFinalAnswer, validateExplorerOutput } from "../output/evidence.js";
-import { buildRepairPrompt, buildUserPrompt } from "../prompt.js";
+import { buildRepairPrompt, buildUserPrompt, REPAIR_SYSTEM_PROMPT } from "../prompt.js";
 import type { Workspace } from "../tools/contracts.js";
 import { createWorkspace } from "../tools/workspace.js";
 import type { PiSessionEventHandler, PiSessionMetrics } from "./pi-session.js";
 import { runPiSession } from "./pi-session.js";
 import type { RouterDependencies } from "./router.js";
 import { runPrimaryRoute } from "./router.js";
+import { captureError, capturePiSession, captureValidation } from "./session-capture.js";
+import type {
+  ExplorerCaptureOutcome,
+  ExplorerRuntime,
+  ExplorerSessionCaptureHandler,
+} from "./session-capture.js";
+
+export type {
+  ExplorerCapturedError,
+  ExplorerSessionCapture,
+  ExplorerSessionCaptureHandler,
+} from "./session-capture.js";
 
 export interface ExplorerDependencies extends RouterDependencies {
   readonly workspace?: Workspace;
@@ -23,6 +35,7 @@ export interface RunExplorerOptions {
   readonly repair?: boolean;
   readonly signal?: AbortSignal;
   readonly onEvent?: PiSessionEventHandler;
+  readonly onSessionCapture?: ExplorerSessionCaptureHandler;
   readonly dependencies?: ExplorerDependencies;
 }
 
@@ -43,19 +56,6 @@ export interface ExplorerMetrics {
   readonly toolExecutionMsTotal: number;
   readonly toolExecutionMsMax: number;
   readonly totalMs: number;
-}
-
-export interface ExplorerRuntime {
-  readonly route: string;
-  readonly target: string;
-  readonly provider: string;
-  readonly api: FreeContextConfig["api"];
-  readonly authMode: FreeContextConfig["authMode"];
-  readonly baseUrl: string;
-  readonly model: string;
-  readonly workspace: string;
-  readonly promptPath: string;
-  readonly tools: readonly string[];
 }
 
 export interface ExplorerResult {
@@ -111,6 +111,7 @@ export async function runExplorer({
   repair = true,
   signal,
   onEvent,
+  onSessionCapture,
   dependencies = {},
 }: RunExplorerOptions): Promise<Readonly<ExplorerResult>> {
   if (typeof query !== "string" || !query.trim()) {
@@ -123,10 +124,11 @@ export async function runExplorer({
   const clock = dependencies.clock ?? performance.now.bind(performance);
   const startedAt = clock();
   const workspace = dependencies.workspace ?? (await createWorkspace(cwd));
+  const primaryPrompt = buildUserPrompt(query);
   const routed = await runPrimaryRoute({
     cli,
     workspace,
-    promptText: buildUserPrompt(query),
+    promptText: primaryPrompt,
     ...(signal ? { signal } : {}),
     ...(onEvent ? { onEvent } : {}),
     startedAt,
@@ -143,49 +145,102 @@ export async function runExplorer({
     setupMs,
     primarySessionMs,
   } = routed;
+  const runtime = Object.freeze({
+    route: routed.route,
+    target: config.target,
+    provider: config.provider,
+    api: config.api,
+    authMode: config.authMode,
+    baseUrl: redactUrl(config.baseUrl),
+    model: config.model,
+    workspace: workspace.root,
+    promptPath: config.promptPath,
+    tools: Object.freeze([...repositoryTools.names]),
+  });
 
   const primaryValidationStartedAt = clock();
-  let validation = await validateExplorerOutput(primary.text, workspace);
+  const primaryValidation = await validateExplorerOutput(primary.text, workspace);
+  let validation = primaryValidation;
   const primaryValidationMs = Math.max(0, clock() - primaryValidationStartedAt);
   let repairRun: Awaited<ReturnType<typeof runPiSession>> | null = null;
+  let repairPrompt: string | null = null;
+  let repairValidation: ExplorerOutputValidation | null = null;
   let repairSessionMs = 0;
   let repairValidationMs = 0;
+
+  const publishCapture = async (outcome: ExplorerCaptureOutcome): Promise<void> => {
+    if (!onSessionCapture) return;
+    const repairCapture = repairPrompt === null
+      ? null
+      : Object.freeze({
+          prompt: repairPrompt,
+          session: repairRun
+            ? capturePiSession(repairRun, REPAIR_SYSTEM_PROMPT, repairPrompt, [])
+            : null,
+          validation: repairValidation ? captureValidation(repairValidation) : null,
+        });
+    await onSessionCapture(Object.freeze({
+      schemaVersion: "freecontext-session-v1",
+      request: query,
+      runtime,
+      primary: capturePiSession(primary, systemPrompt, primaryPrompt, repositoryTools.tools),
+      primaryValidation: captureValidation(primaryValidation),
+      repair: repairCapture,
+      outcome,
+    }));
+  };
+
   if (!validation.valid && repair) {
     const repairStartedAt = clock();
-    repairRun = await runPiSession({
-      bindings,
-      model,
-      requestOptions,
-      config,
-      systemPrompt,
-      promptText: buildRepairPrompt(validation.problems),
-      tools: [],
-      initialMessages: primary.contextMessages,
-      maxTurns: 1,
-      maxToolCalls: 0,
-      ...(signal ? { signal } : {}),
-      ...(onEvent ? { onEvent } : {}),
-      clock,
-      ...(dependencies.timestamp ? { timestamp: dependencies.timestamp } : {}),
-    });
+    repairPrompt = buildRepairPrompt(primary.text, validation.problems);
+    try {
+      repairRun = await runPiSession({
+        bindings,
+        model,
+        requestOptions,
+        config,
+        systemPrompt: REPAIR_SYSTEM_PROMPT,
+        promptText: repairPrompt,
+        tools: [],
+        maxTurns: 1,
+        maxToolCalls: 0,
+        ...(signal ? { signal } : {}),
+        ...(onEvent ? { onEvent } : {}),
+        clock,
+        ...(dependencies.timestamp ? { timestamp: dependencies.timestamp } : {}),
+      });
+    } catch (error) {
+      await publishCapture(Object.freeze({
+        status: "repair_error",
+        error: captureError(error),
+      }));
+      throw error;
+    }
     repairSessionMs = Math.max(0, clock() - repairStartedAt);
     const repairValidationStartedAt = clock();
-    validation = await validateExplorerOutput(repairRun.text, workspace);
+    repairValidation = await validateExplorerOutput(repairRun.text, workspace);
+    validation = repairValidation;
     repairValidationMs = Math.max(0, clock() - repairValidationStartedAt);
   }
 
   if (!validation.valid) {
-    throw new OutputValidationError(
+    const error = new OutputValidationError(
       `Explorer output failed validation: ${validation.problems.join("; ") || "unknown validation error"}`,
       { problems: validation.problems, rawOutput: repairRun?.text ?? primary.text },
     );
+    await publishCapture(Object.freeze({
+      status: "output_validation_error",
+      error: captureError(error),
+    }));
+    throw error;
   }
 
   const primaryUsage = sessionUsage(primary.metrics);
   const repairUsage = repairRun ? sessionUsage(repairRun.metrics) : EMPTY_USAGE;
   const evidence = validation.evidence.map(({ totalLines: _totalLines, ...item }) => Object.freeze(item));
-  return Object.freeze({
-    answer: renderFinalAnswer(validation),
+  const answer = renderFinalAnswer(validation);
+  const result = Object.freeze({
+    answer,
     summary: validation.summary,
     evidence: Object.freeze(evidence),
     gaps: Object.freeze([...validation.gaps]),
@@ -211,17 +266,8 @@ export async function runExplorer({
       ),
       totalMs: Math.max(0, clock() - startedAt),
     }),
-    runtime: Object.freeze({
-      route: routed.route,
-      target: config.target,
-      provider: config.provider,
-      api: config.api,
-      authMode: config.authMode,
-      baseUrl: redactUrl(config.baseUrl),
-      model: config.model,
-      workspace: workspace.root,
-      promptPath: config.promptPath,
-      tools: Object.freeze([...repositoryTools.names]),
-    }),
+    runtime,
   });
+  await publishCapture(Object.freeze({ status: "completed", answer }));
+  return result;
 }

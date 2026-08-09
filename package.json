@@ -4,7 +4,8 @@
   "description": "Read-only repository exploration subagent for Codex, built on the Pi agent loop.",
   "type": "module",
   "bin": {
-    "freecontext": "./bin/freecontext.mjs"
+    "freecontext": "./bin/freecontext.mjs",
+    "freecontext-benchmark-context": "./bin/freecontext-benchmark-context.mjs"
   },
   "exports": {
     ".": {
@@ -14,6 +15,7 @@
   },
   "files": [
     "bin",
+    "benchmarks",
     "dist",
     "prompts",
     "skills",

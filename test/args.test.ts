@@ -35,6 +35,15 @@ test("argument parser accepts TOML routing and context controls", () => {
   assert.throws(() => parseArgs(["--context-reserve-tokens", "12000"]), /Unknown option/u);
 });
 
+test("argument parser scopes benchmark session capture to exploration", () => {
+  const parsed = parseArgs(["explore", "--benchmark-session-file", "/logs/session.json", "query"]);
+  assert.equal(parsed.benchmarkSessionFile, "/logs/session.json");
+  assert.throws(
+    () => parseArgs(["doctor", "--benchmark-session-file", "/logs/session.json"]),
+    /only for explore/u,
+  );
+});
+
 test("help describes the TOML credential boundary without legacy dotenv guidance", () => {
   assert.match(HELP_TEXT, /credential_env/u);
   assert.doesNotMatch(HELP_TEXT, /configured \.env/u);

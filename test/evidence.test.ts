@@ -25,6 +25,18 @@ test("parseFinalBlock extracts the last valid-shaped block", () => {
   });
 });
 
+test("parser expands explicit comma-separated ranges for one path", () => {
+  const parsed = parseFinalBlock(VALID.replace("sample.js:1-2", "sample.js:1, 2-2"));
+  assert.deepEqual(
+    parsed.evidence.map(({ path, start, end }) => ({ path, start, end })),
+    [
+      { path: "sample.js", start: 1, end: 1 },
+      { path: "sample.js", start: 2, end: 2 },
+    ],
+  );
+  assert.deepEqual(parsed.problems, []);
+});
+
 test("validator confirms paths and real line ranges", async () => {
   const directory = await mkdtemp(path.join(os.tmpdir(), "freecontext-evidence-"));
   try {

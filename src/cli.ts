@@ -5,9 +5,15 @@ import { parseArgs, HELP_TEXT } from "./cli/args.js";
 import { runDoctor } from "./cli/doctor.js";
 import type { DoctorReport } from "./cli/doctor.js";
 import { runExplorer } from "./runtime/run.js";
-import type { ExplorerResult } from "./runtime/run.js";
-import type { FreeContextRuntimeEvent, PiSessionEventHandler } from "./runtime/pi-session.js";
+import type { ExplorerCapturedError, ExplorerResult, ExplorerSessionCapture } from "./runtime/run.js";
+import type {
+  FreeContextRuntimeEvent,
+  PiSessionEventHandler,
+  PiSessionEventState,
+} from "./runtime/pi-session.js";
+import type { CapturedRuntimeEvent } from "./benchmark/session-file.js";
 import { FreeContextError } from "./errors.js";
+import { captureError } from "./runtime/session-capture.js";
 
 const PACKAGE_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 
@@ -98,16 +104,65 @@ export async function main(argv: readonly string[] = process.argv.slice(2), io: 
   process.once("SIGINT", abort);
   process.once("SIGTERM", abort);
   try {
-    const result = await runExplorer({
-      query,
-      cwd: cli.cwd || process.cwd(),
-      cli,
-      repair: !cli.noRepair,
-      signal: controller.signal,
-      ...(cli.verbose ? { onEvent: createEventReporter(io.stderr) } : {}),
-    });
-    if (cli.format === "json") io.stdout.write(`${JSON.stringify(jsonResult(result), null, 2)}\n`);
-    else io.stdout.write(`${result.answer}\n`);
+    const explorationCwd = cli.cwd || process.cwd();
+    const runtimeEvents: CapturedRuntimeEvent[] = [];
+    const reporter = cli.verbose ? createEventReporter(io.stderr) : undefined;
+    const onEvent: PiSessionEventHandler | undefined = reporter || cli.benchmarkSessionFile
+      ? async (event: FreeContextRuntimeEvent, state: PiSessionEventState) => {
+          if (cli.benchmarkSessionFile) {
+            runtimeEvents.push(Object.freeze({ event, state: Object.freeze({ ...state }) }));
+          }
+          await reporter?.(event, state);
+        }
+      : undefined;
+    let sessionWritten = false;
+    let sessionCapture: Readonly<ExplorerSessionCapture> | null = null;
+    const persistSession = async (
+      capture: Readonly<ExplorerSessionCapture> | null,
+      terminalError: Readonly<ExplorerCapturedError> | null,
+      cliOutput: string,
+    ): Promise<void> => {
+      if (!cli.benchmarkSessionFile) return;
+      const { writeBenchmarkSessionFile } = await import("./benchmark/session-file.js");
+      await writeBenchmarkSessionFile({
+        filePath: cli.benchmarkSessionFile,
+        workspaceRoot: capture?.runtime.workspace ?? explorationCwd,
+        request: query,
+        cwd: explorationCwd,
+        cliOutput,
+        capture,
+        runtimeEvents,
+        terminalError,
+      });
+      sessionWritten = true;
+    };
+
+    let result: Readonly<ExplorerResult>;
+    try {
+      result = await runExplorer({
+        query,
+        cwd: explorationCwd,
+        cli,
+        repair: !cli.noRepair,
+        signal: controller.signal,
+        ...(onEvent ? { onEvent } : {}),
+        ...(cli.benchmarkSessionFile
+          ? { onSessionCapture: (capture) => { sessionCapture = capture; } }
+          : {}),
+      });
+    } catch (error) {
+      if (cli.benchmarkSessionFile && !sessionWritten) {
+        const terminalError = captureError(error);
+        const cliOutput = `freecontext: ${terminalError.code}: ${terminalError.message}\n`;
+        await persistSession(sessionCapture, terminalError, cliOutput);
+      }
+      throw error;
+    }
+    const cliOutput = cli.format === "json"
+      ? `${JSON.stringify(jsonResult(result), null, 2)}\n`
+      : `${result.answer}\n`;
+    await persistSession(sessionCapture, null, cliOutput);
+    io.stdout.write(cliOutput);
     return 0;
   } finally {
     process.removeListener("SIGINT", abort);

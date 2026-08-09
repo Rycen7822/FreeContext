@@ -25,6 +25,8 @@ test("external prompt template receives workspace, tools, and overview", async (
 
 test("user and repair prompts preserve task boundaries", () => {
   assert.match(buildUserPrompt("find x"), /<request>\nfind x\n<\/request>/u);
-  assert.match(buildRepairPrompt(["bad range"]), /- bad range/u);
-  assert.match(buildRepairPrompt(["bad range"]), /Do not call tools/u);
+  const repair = buildRepairPrompt("prior answer", ["bad range"]);
+  assert.match(repair, /- bad range/u);
+  assert.match(repair, /<previous_output>\nprior answer\n<\/previous_output>/u);
+  assert.match(repair, /one repository-relative path and one continuous line range/u);
 });

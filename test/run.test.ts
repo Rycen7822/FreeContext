@@ -6,8 +6,8 @@ import path from "node:path";
 import type { AgentContext, AgentTool } from "@earendil-works/pi-agent-core";
 import type { AssistantMessage } from "@earendil-works/pi-ai";
 import { Type } from "@earendil-works/pi-ai";
-import { ProviderError } from "../src/errors.js";
-import type { ExplorerDependencies } from "../src/runtime/run.js";
+import { OutputValidationError, ProviderError } from "../src/errors.js";
+import type { ExplorerDependencies, ExplorerSessionCapture } from "../src/runtime/run.js";
 import { runExplorer } from "../src/runtime/run.js";
 import { createWorkspace } from "../src/tools/workspace.js";
 import { assistantText, baseConfig, baseRouteConfig, fakeBindings } from "./helpers.js";
@@ -46,9 +46,11 @@ test("runExplorer returns locally validated evidence", async () => {
     const valid = assistantText(
       "<final_answer>\nsummary: a is exported.\nevidence:\n- a.js:1-2 — Defines and exports a.\ngaps:\n- none\n</final_answer>",
     );
+    let capture: Readonly<ExplorerSessionCapture> | undefined;
     const result = await runExplorer({
       query: "find a",
       cwd: root,
+      onSessionCapture: (value) => { capture = value; },
       dependencies: { ...(await fakeDependencies(root, [valid])), clock: unitClock() },
     });
     assert.equal(result.summary, "a is exported.");
@@ -68,6 +70,11 @@ test("runExplorer returns locally validated evidence", async () => {
     assert.equal(result.metrics.toolExecutionMsMax, 0);
     assert.equal(result.metrics.totalMs, 8);
     assert.equal(result.metrics.primary.sessionMs, 1);
+    assert.equal(capture?.outcome.status, "completed");
+    assert.equal(capture?.request, "find a");
+    assert.equal(capture?.primary.output, valid.content[0]?.type === "text" ? valid.content[0].text : "");
+    assert.equal(capture?.repair, null);
+    assert.equal(capture?.runtime.baseUrl, "https://example.invalid");
   } finally {
     await rm(root, { recursive: true, force: true });
   }
@@ -81,9 +88,11 @@ test("runExplorer performs one no-tool format repair", async () => {
     const repaired = assistantText(
       "<final_answer>\nsummary: a is defined.\nevidence:\n- a.js:1-1 — Defines a.\ngaps:\n- none\n</final_answer>",
     );
+    let capture: Readonly<ExplorerSessionCapture> | undefined;
     const result = await runExplorer({
       query: "find a",
       cwd: root,
+      onSessionCapture: (value) => { capture = value; },
       dependencies: { ...(await fakeDependencies(root, [invalid, repaired])), clock: unitClock() },
     });
     assert.equal(result.metrics.repaired, true);
@@ -98,6 +107,37 @@ test("runExplorer performs one no-tool format repair", async () => {
     assert.equal(result.metrics.totalMs, 14);
     assert.equal(result.metrics.primary.sessionMs, 1);
     assert.equal(result.metrics.repair?.sessionMs, 1);
+    assert.equal(capture?.primary.output, "The answer is a.js.");
+    assert.equal(capture?.repair?.session?.output, result.answer);
+    assert.equal(capture?.primaryValidation.valid, false);
+    assert.equal(capture?.repair?.validation?.valid, true);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("runExplorer captures both raw answers when repair still fails validation", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "freecontext-run-"));
+  try {
+    await writeFile(path.join(root, "a.js"), "const a = 1;\n", "utf8");
+    const primary = assistantText("Primary answer without the required block.");
+    const repair = assistantText("Repair answer without the required block.");
+    let capture: Readonly<ExplorerSessionCapture> | undefined;
+
+    await assert.rejects(
+      runExplorer({
+        query: "find a",
+        cwd: root,
+        onSessionCapture: (value) => { capture = value; },
+        dependencies: await fakeDependencies(root, [primary, repair]),
+      }),
+      (error: unknown) => error instanceof OutputValidationError,
+    );
+
+    assert.equal(capture?.outcome.status, "output_validation_error");
+    assert.equal(capture?.primary.output, "Primary answer without the required block.");
+    assert.equal(capture?.repair?.session?.output, "Repair answer without the required block.");
+    assert.deepEqual(capture?.repair?.validation?.problems, ["Missing <final_answer> block."]);
   } finally {
     await rm(root, { recursive: true, force: true });
   }
@@ -119,11 +159,13 @@ test("format repair stays on the selected target and never enters route fallback
       throw Object.assign(new Error("service unavailable"), { status: 503 });
     });
     const workspace = await createWorkspace(root);
+    let capture: Readonly<ExplorerSessionCapture> | undefined;
 
     await assert.rejects(
       runExplorer({
         query: "find a",
         cwd: root,
+        onSessionCapture: (value) => { capture = value; },
         dependencies: {
           routeConfig: baseRouteConfig([
             baseConfig({ target: "selected" }),
@@ -142,12 +184,15 @@ test("format repair stays on the selected target and never enters route fallback
       (error: unknown) => error instanceof ProviderError,
     );
     assert.equal(invocations, 2);
+    assert.equal(capture?.outcome.status, "repair_error");
+    assert.equal(capture?.primary.output, "The answer is a.js.");
+    assert.equal(capture?.repair?.session, null);
   } finally {
     await rm(root, { recursive: true, force: true });
   }
 });
 
-test("format repair receives only effective compacted context and no tools", async () => {
+test("format repair uses a fresh no-tool context containing only the prior output", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "freecontext-run-"));
   try {
     await writeFile(path.join(root, "a.js"), "const a = 1;\n", "utf8");
@@ -168,6 +213,7 @@ test("format repair receives only effective compacted context and no tools", asy
     });
     let invocation = 0;
     let repairContext: AgentContext | undefined;
+    let repairPrompt = "";
     const bindings = fakeBindings(async (prompts, context, loopConfig, emit) => {
       invocation += 1;
       if (invocation === 1) {
@@ -202,6 +248,8 @@ test("format repair receives only effective compacted context and no tools", asy
         return [...prompts, invalid];
       }
       repairContext = context;
+      const prompt = prompts[0];
+      repairPrompt = prompt?.role === "user" && typeof prompt.content === "string" ? prompt.content : "";
       await emit({ type: "turn_start" });
       await emit({ type: "turn_end", message: repaired, toolResults: [] });
       return [...prompts, repaired];
@@ -214,9 +262,11 @@ test("format repair receives only effective compacted context and no tools", asy
       execute: async () => ({ content: [{ type: "text", text: "ok" }], details: {} }),
     };
     const workspace = await createWorkspace(root);
+    let capture: Readonly<ExplorerSessionCapture> | undefined;
     const result = await runExplorer({
       query: "find a",
       cwd: root,
+      onSessionCapture: (value) => { capture = value; },
       dependencies: {
         routeConfig: baseRouteConfig([
           baseConfig({
@@ -239,17 +289,16 @@ test("format repair receives only effective compacted context and no tools", asy
 
     assert.ok(repairContext);
     assert.deepEqual(repairContext.tools, []);
-    assert.equal(repairContext.messages[0]?.role, "compactionSummary");
-    assert.ok(repairContext.messages.includes(invalid));
-    assert.equal(
-      repairContext.messages.some(
-        (message) => message.role === "user" && typeof message.content === "string" && message.content.includes("x".repeat(100)),
-      ),
-      false,
-    );
+    assert.deepEqual(repairContext.messages, []);
+    assert.match(repairContext.systemPrompt, /repair one repository-explorer response/u);
+    assert.match(repairPrompt, /<previous_output>\nThe answer is a\.js\.\n<\/previous_output>/u);
+    assert.doesNotMatch(repairPrompt, new RegExp("x".repeat(100), "u"));
     assert.equal(result.metrics.repaired, true);
     assert.equal(result.metrics.primary.compactions, 1);
     assert.equal(result.evidence[0]?.path, "a.js");
+    assert.equal(capture?.primary.tools[0]?.name, "read");
+    assert.deepEqual(capture?.repair?.session?.tools, []);
+    assert.doesNotThrow(() => JSON.stringify(capture));
   } finally {
     await rm(root, { recursive: true, force: true });
   }
