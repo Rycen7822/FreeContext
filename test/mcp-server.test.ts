@@ -10,7 +10,11 @@ import {
   createSingleFlightExecutor,
   parseMcpServerArgs,
 } from "../src/mcp/server.js";
-import { INVOCATION_POLICY, SERVER_INSTRUCTIONS } from "../src/mcp/contracts.js";
+import {
+  INVOCATION_POLICY,
+  SERVER_INSTRUCTIONS,
+  TOOL_DESCRIPTION,
+} from "../src/mcp/contracts.js";
 import type { ContextTokenCounter } from "../src/runtime/context-budget.js";
 import type { ExplorerResult, RunExplorerOptions } from "../src/runtime/run.js";
 import type { ExplorerSessionCapture } from "../src/runtime/session-capture.js";
@@ -83,12 +87,13 @@ test("MCP server advertises one exact tool and serializes two concurrent calls",
     await client.connect(clientTransport);
 
     assert.equal(client.getInstructions(), SERVER_INSTRUCTIONS);
-    assert.ok(SERVER_INSTRUCTIONS.length <= 240);
+    assert.ok(client.getInstructions()?.startsWith(INVOCATION_POLICY));
+    assert.ok(SERVER_INSTRUCTIONS.length <= 512);
     const listed = await client.listTools();
     assert.deepEqual(listed.tools.map(({ name }) => name), ["gather_context"]);
     const tool = listed.tools[0];
     assert.equal(tool?.title, "Gather context with FreeContext");
-    assert.equal(tool?.description, INVOCATION_POLICY);
+    assert.equal(tool?.description, TOOL_DESCRIPTION);
     assert.deepEqual(tool?.annotations, {
       readOnlyHint: true,
       destructiveHint: false,

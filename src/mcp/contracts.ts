@@ -1,8 +1,10 @@
 import { z } from "zod";
 
-export const INVOCATION_POLICY = "Use gather_context for read-only work across files/documents or evidence classes; code/workspace exploration; cross-document keyword/topic search; key facts/constraints from long documents; tracing, comparison, impact mapping, planning, review, or diagnosis; or tasks needing multiple exploratory reads. Use it in familiar workspaces and with known candidates. Skip only when one bounded read or direct search in one known target fully answers. FreeContext never edits; parent reads exact edit ranges.";
+export const INVOCATION_POLICY = "Before parent discovery or broad reads, call gather_context once for read-only work spanning files/docs/evidence classes: code/workspace exploration; cross-document keyword/topic search; long-document facts/constraints; tracing, comparison, impact, planning, review, or diagnosis. Use in familiar workspaces/known files. Skip if one bounded read/search in a known target fully answers. FreeContext never edits; parent reads decisive/edit ranges.";
 
-export const SERVER_INSTRUCTIONS = "FreeContext has one read-only context-gathering tool. Follow gather_context's description. Never send credentials or source dumps, repeat a successful request, or make a follow-up unless the prior result names a material gap.";
+export const TOOL_DESCRIPTION = "Delegates one atomic read-only exploration request and returns compact cited evidence plus a private full-session path.";
+
+export const SERVER_INSTRUCTIONS = `${INVOCATION_POLICY} Never send secrets/source dumps; retry only for a material gap.`;
 
 export const VISIBLE_RESULT_LIMITS = Object.freeze({
   evidence: 8,

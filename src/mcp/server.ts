@@ -8,8 +8,8 @@ import { defaultSessionDirectory } from "../session/store.js";
 import {
   GatherContextInputSchema,
   GatherContextOutputSchema,
-  INVOCATION_POLICY,
   SERVER_INSTRUCTIONS,
+  TOOL_DESCRIPTION,
 } from "./contracts.js";
 import { createGatherContextHandler } from "./tool.js";
 import type { GatherContextHandlerDependencies, SingleFlightExecutor } from "./tool.js";
@@ -97,7 +97,7 @@ export function createFreeContextMcpServer(
     "gather_context",
     {
       title: "Gather context with FreeContext",
-      description: INVOCATION_POLICY,
+      description: TOOL_DESCRIPTION,
       inputSchema: GatherContextInputSchema,
       outputSchema: GatherContextOutputSchema,
       annotations: {

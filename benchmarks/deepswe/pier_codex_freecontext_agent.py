@@ -75,6 +75,7 @@ class PierCodexFreeContext(PierCodexBase):
     def _freecontext_mcp_config_toml(self) -> str:
         return f'''[mcp_servers.freecontext]
 command = "{_REMOTE_LAUNCHER.as_posix()}"
+required = true
 startup_timeout_sec = 30
 tool_timeout_sec = 1800
 enabled_tools = ["gather_context"]

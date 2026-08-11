@@ -8,6 +8,7 @@ import {
   GatherContextOutputSchema,
   INVOCATION_POLICY,
   SERVER_INSTRUCTIONS,
+  TOOL_DESCRIPTION,
   VISIBLE_TRUNCATION_GAP,
 } from "../src/mcp/contracts.js";
 import { createGatherContextHandler } from "../src/mcp/tool.js";
@@ -47,27 +48,41 @@ function outputOf(result: Awaited<ReturnType<ReturnType<typeof createGatherConte
   return GatherContextOutputSchema.parse(result.structuredContent);
 }
 
-test("gather_context policy covers broad read work without claiming parent actions", () => {
+test("gather_context metadata makes broad read delegation salient without claiming parent actions", () => {
   const fixtures = [
-    ["multi-file or evidence-class work", /across files\/documents or evidence classes/u],
+    ["before-parent decision seam", /^Before parent discovery or broad reads/u],
+    ["multi-file or evidence-class work", /spanning files\/docs\/evidence classes/u],
     ["cross-document keyword search", /cross-document keyword\/topic search/u],
-    ["long-document extraction", /key facts\/constraints from long documents/u],
+    ["long-document extraction", /long-document facts\/constraints/u],
     ["planning, review, and diagnosis", /planning, review, or diagnosis/u],
-    ["familiar workspace use", /familiar workspaces and with known candidates/u],
-    ["multiple exploratory reads", /multiple exploratory reads/u],
-    ["single-target skip", /one bounded read or direct search in one known target fully answers/u],
-    ["parent decisive read", /parent reads exact edit ranges/u],
+    ["familiar workspace use", /familiar workspaces\/known files/u],
+    ["single-target skip", /one bounded read\/search in a known target fully answers/u],
+    ["parent decisive read", /parent reads decisive\/edit ranges/u],
   ] as const;
 
   for (const [label, pattern] of fixtures) {
-    assert.match(INVOCATION_POLICY, pattern, label);
+    assert.match(SERVER_INSTRUCTIONS, pattern, label);
   }
-  const skipRule = INVOCATION_POLICY.slice(INVOCATION_POLICY.indexOf("Skip only"));
-  assert.doesNotMatch(skipRule, /cross-document|long documents|multiple exploratory reads/u);
-  assert.match(INVOCATION_POLICY, /FreeContext never edits/u);
-  assert.doesNotMatch(INVOCATION_POLICY, /\b(?:run tests|install packages|commit|push)\b/u);
-  assert.doesNotMatch(INVOCATION_POLICY, /explore_repository/u);
-  assert.doesNotMatch(SERVER_INSTRUCTIONS, /cross-document|familiar workspaces|planning, review/u);
+  assert.equal(
+    SERVER_INSTRUCTIONS,
+    `${INVOCATION_POLICY} Never send secrets/source dumps; retry only for a material gap.`,
+  );
+  assert.equal(SERVER_INSTRUCTIONS.length, 509);
+  assert.ok(SERVER_INSTRUCTIONS.length <= 512);
+  assert.equal(
+    TOOL_DESCRIPTION,
+    "Delegates one atomic read-only exploration request and returns compact cited evidence plus a private full-session path.",
+  );
+  assert.doesNotMatch(TOOL_DESCRIPTION, /Before parent|cross-document|Skip if/u);
+  assert.equal(`${SERVER_INSTRUCTIONS}\n${TOOL_DESCRIPTION}`.split(INVOCATION_POLICY).length - 1, 1);
+  const skipRule = SERVER_INSTRUCTIONS.slice(SERVER_INSTRUCTIONS.indexOf("Skip if"));
+  assert.doesNotMatch(skipRule, /cross-document|long-document|code\/workspace/u);
+  assert.match(SERVER_INSTRUCTIONS, /FreeContext never edits/u);
+  assert.doesNotMatch(
+    `${SERVER_INSTRUCTIONS}\n${TOOL_DESCRIPTION}`,
+    /\b(?:run tests|install packages|commit|push|edit files|write files)\b/u,
+  );
+  assert.doesNotMatch(`${SERVER_INSTRUCTIONS}\n${TOOL_DESCRIPTION}`, /explore_repository/u);
 });
 
 test("gather_context calls one explorer with the shared counter and commits one non-Git session", async () => {
