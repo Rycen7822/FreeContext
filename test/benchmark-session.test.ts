@@ -12,7 +12,7 @@ test("benchmark session writer creates a private non-overwriting file outside th
   const logs = path.join(root, "logs");
   const target = path.join(logs, "session.json");
   try {
-    await Promise.all([mkdir(workspace), mkdir(logs)]);
+    await Promise.all([mkdir(workspace), mkdir(logs, { mode: 0o700 })]);
     const options = {
       filePath: target,
       workspaceRoot: workspace,

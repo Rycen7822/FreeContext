@@ -17,10 +17,14 @@ import { captureError } from "./runtime/session-capture.js";
 
 const PACKAGE_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 
-interface CliIo {
+export interface CliIo {
   readonly stdin: NodeJS.ReadableStream & { readonly isTTY?: boolean };
   readonly stdout: Pick<NodeJS.WriteStream, "write">;
   readonly stderr: Pick<NodeJS.WriteStream, "write">;
+}
+
+export interface CliDependencies {
+  readonly runExplorer?: typeof runExplorer;
 }
 
 async function readPackageVersion(): Promise<string> {
@@ -60,9 +64,11 @@ function createEventReporter(stderr: CliIo["stderr"]): PiSessionEventHandler {
 
 function jsonResult(result: ExplorerResult) {
   return {
+    status: result.status,
     summary: result.summary,
     evidence: result.evidence,
     gaps: result.gaps,
+    validationProblems: result.validationProblems,
     metrics: result.metrics,
     runtime: result.runtime,
     answer: result.answer,
@@ -75,7 +81,11 @@ function renderDoctor(report: DoctorReport): string {
     .join("\n");
 }
 
-export async function main(argv: readonly string[] = process.argv.slice(2), io: CliIo = process): Promise<number> {
+export async function main(
+  argv: readonly string[] = process.argv.slice(2),
+  io: CliIo = process,
+  dependencies: CliDependencies = {},
+): Promise<number> {
   const cli = parseArgs(argv);
   if (cli.help) {
     io.stdout.write(`${HELP_TEXT}\n`);
@@ -139,7 +149,7 @@ export async function main(argv: readonly string[] = process.argv.slice(2), io: 
 
     let result: Readonly<ExplorerResult>;
     try {
-      result = await runExplorer({
+      result = await (dependencies.runExplorer ?? runExplorer)({
         query,
         cwd: explorationCwd,
         cli,
@@ -170,18 +180,25 @@ export async function main(argv: readonly string[] = process.argv.slice(2), io: 
   }
 }
 
-export async function runCli() {
+export async function executeCli(
+  argv: readonly string[],
+  io: CliIo,
+  dependencies: CliDependencies = {},
+): Promise<number> {
   try {
-    const exitCode = await main();
-    process.exitCode = exitCode;
+    return await main(argv, io, dependencies);
   } catch (error) {
     const known = error instanceof FreeContextError;
     const code = known ? error.code : "UNEXPECTED_ERROR";
     const exitCode = known ? error.exitCode : 1;
     const message = error instanceof Error ? error.message : String(error);
     const stack = error instanceof Error ? error.stack : undefined;
-    process.stderr.write(`freecontext: ${code}: ${message}\n`);
-    if (process.env.FREECONTEXT_DEBUG === "1" && stack) process.stderr.write(`${stack}\n`);
-    process.exitCode = exitCode;
+    io.stderr.write(`freecontext: ${code}: ${message}\n`);
+    if (process.env.FREECONTEXT_DEBUG === "1" && stack) io.stderr.write(`${stack}\n`);
+    return exitCode;
   }
+}
+
+export async function runCli() {
+  process.exitCode = await executeCli(process.argv.slice(2), process);
 }

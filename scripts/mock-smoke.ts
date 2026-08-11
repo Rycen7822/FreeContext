@@ -1,7 +1,11 @@
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
+import { Readable } from "node:stream";
+import { executeCli } from "../src/cli.js";
+import type { CliIo } from "../src/cli.js";
 import type { FreeContextConfig } from "../src/config.js";
+import { OutputValidationError } from "../src/errors.js";
 import type { PiBindings } from "../src/runtime/pi-bindings.js";
 import { loadPiBindings } from "../src/runtime/pi-bindings.js";
 import { runExplorer } from "../src/runtime/run.js";
@@ -16,7 +20,7 @@ try {
     content: [
       {
         type: "text" as const,
-        text: "<final_answer>\nsummary: The sample exports answer.\nevidence:\n- sample.js:1-3 — Defines the exported function.\ngaps:\n- none\n</final_answer>",
+        text: "<final_answer>\nsummary: The sample exports answer.\nevidence:\n- sample.js:1-3 — Defines the exported function.\n- fabricated-secret.txt has no valid citation range\ngaps:\n- none\n</final_answer>",
       },
     ],
     api: "anthropic-messages" as const,
@@ -104,9 +108,59 @@ try {
       systemPrompt: "test",
     },
   });
+  if (result.status !== "partial") throw new Error("mock smoke did not preserve partial evidence");
+  if (result.validationProblems.length !== 1) throw new Error("mock smoke did not expose one validation problem");
   if (!result.answer.includes("sample.js:1-3")) throw new Error("mock smoke validation failed");
+  if (result.answer.includes("fabricated-secret")) throw new Error("mock smoke leaked rejected evidence");
   if (summaryCalls !== 0) throw new Error("baseline mock unexpectedly called the summary transport");
   if (result.metrics.primary.compactions !== 0) throw new Error("baseline mock unexpectedly compacted context");
+
+  const runCliFixture = async (format: "text" | "json") => {
+    const stdout: string[] = [];
+    const stderr: string[] = [];
+    const io: CliIo = {
+      stdin: Object.assign(Readable.from([]), { isTTY: true }),
+      stdout: { write: ((chunk: string | Uint8Array) => { stdout.push(String(chunk)); return true; }) as CliIo["stdout"]["write"] },
+      stderr: { write: ((chunk: string | Uint8Array) => { stderr.push(String(chunk)); return true; }) as CliIo["stderr"]["write"] },
+    };
+    const exitCode = await executeCli(
+      ["explore", "--format", format, "Find answer"],
+      io,
+      { runExplorer: async () => result },
+    );
+    return { exitCode, stdout: stdout.join(""), stderr: stderr.join("") };
+  };
+
+  const jsonCli = await runCliFixture("json");
+  const json = JSON.parse(jsonCli.stdout) as { status?: unknown; validationProblems?: unknown };
+  if (jsonCli.exitCode !== 0 || json.status !== "partial") throw new Error("partial CLI JSON did not exit successfully");
+  if (!Array.isArray(json.validationProblems) || json.validationProblems.length !== 1) {
+    throw new Error("partial CLI JSON omitted validation problems");
+  }
+  const textCli = await runCliFixture("text");
+  if (textCli.exitCode !== 0 || textCli.stdout !== `${result.answer}\n`) {
+    throw new Error("partial CLI text did not exit successfully");
+  }
+
+  const rawSentinel = "RAW_MODEL_SECRET_SENTINEL";
+  const invalidStderr: string[] = [];
+  const invalidExit = await executeCli(
+    ["explore", "Find answer"],
+    {
+      stdin: Object.assign(Readable.from([]), { isTTY: true }),
+      stdout: { write: (() => true) as CliIo["stdout"]["write"] },
+      stderr: { write: ((chunk: string | Uint8Array) => { invalidStderr.push(String(chunk)); return true; }) as CliIo["stderr"]["write"] },
+    },
+    {
+      runExplorer: async () => {
+        throw new OutputValidationError("Explorer output failed validation: Missing <final_answer> block.", {
+          rawOutput: rawSentinel,
+        });
+      },
+    },
+  );
+  if (invalidExit === 0) throw new Error("invalid CLI fixture returned success");
+  if (invalidStderr.join("").includes(rawSentinel)) throw new Error("invalid CLI stderr leaked raw model output");
   process.stdout.write(`${result.answer}\n`);
 } finally {
   await rm(root, { recursive: true, force: true });

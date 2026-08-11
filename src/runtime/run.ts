@@ -61,10 +61,12 @@ export interface ExplorerMetrics {
 }
 
 export interface ExplorerResult {
+  readonly status: "completed" | "partial";
   readonly answer: string;
   readonly summary: string;
   readonly evidence: readonly Omit<ValidatedEvidenceCitation, "totalLines">[];
   readonly gaps: readonly string[];
+  readonly validationProblems: readonly string[];
   readonly metrics: Readonly<ExplorerMetrics>;
   readonly runtime: Readonly<ExplorerRuntime>;
 }
@@ -193,7 +195,7 @@ async function runExplorerWithCounter({
     }));
   };
 
-  if (!validation.valid && repair) {
+  if (validation.status === "invalid" && repair) {
     const repairStartedAt = clock();
     repairPrompt = buildRepairPrompt(primary.text, validation.problems);
     try {
@@ -227,7 +229,7 @@ async function runExplorerWithCounter({
     repairValidationMs = Math.max(0, clock() - repairValidationStartedAt);
   }
 
-  if (!validation.valid) {
+  if (validation.status === "invalid") {
     const error = new OutputValidationError(
       `Explorer output failed validation: ${validation.problems.join("; ") || "unknown validation error"}`,
       { problems: validation.problems, rawOutput: repairRun?.text ?? primary.text },
@@ -244,10 +246,12 @@ async function runExplorerWithCounter({
   const evidence = validation.evidence.map(({ totalLines: _totalLines, ...item }) => Object.freeze(item));
   const answer = renderFinalAnswer(validation);
   const result = Object.freeze({
+    status: validation.status,
     answer,
     summary: validation.summary,
     evidence: Object.freeze(evidence),
     gaps: Object.freeze([...validation.gaps]),
+    validationProblems: Object.freeze([...validation.problems]),
     metrics: Object.freeze({
       turns: primary.metrics.turns + (repairRun?.metrics.turns ?? 0),
       toolCalls: primary.metrics.toolCalls + (repairRun?.metrics.toolCalls ?? 0),
@@ -272,7 +276,9 @@ async function runExplorerWithCounter({
     }),
     runtime,
   });
-  await publishCapture(Object.freeze({ status: "completed", answer }));
+  await publishCapture(validation.status === "partial"
+    ? Object.freeze({ status: "partial", answer, problemCount: validation.problems.length })
+    : Object.freeze({ status: "completed", answer }));
   return result;
 }
 

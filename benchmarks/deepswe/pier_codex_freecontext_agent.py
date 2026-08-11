@@ -22,20 +22,13 @@ _PROFILE = Path(os.environ.get("FREECONTEXT_SUBAGENT_PROFILE", "/home/xu/.codex/
 _REMOTE_ROOT = PurePosixPath("/tmp/freecontext-runtime")
 _REMOTE_SECRET_ROOT = PurePosixPath("/tmp/freecontext-secrets")
 _REMOTE_SECRET = _REMOTE_SECRET_ROOT / "tokenrhythm"
-_REMOTE_WRAPPER = _REMOTE_ROOT / "freecontext-pier"
+_REMOTE_LAUNCHER = PurePosixPath("/tmp/freecontext-mcp-launcher")
 _REMOTE_NODE = _REMOTE_ROOT / "runtime-bin/node"
 _REMOTE_CODEX = _REMOTE_ROOT / "runtime-bin/codex"
 _REMOTE_CODE_MODE_HOST = _REMOTE_ROOT / "runtime-bin/codex-code-mode-host"
 _REMOTE_RG = _REMOTE_ROOT / "runtime-bin/rg"
 _REMOTE_AGENT_DIR = PurePosixPath("/logs/agent")
-_GUIDANCE = (
-    "FreeContext is installed. Read and follow the installed `freecontext` skill "
-    "for broad or cold repository exploration, then inspect decisive cited ranges "
-    "before editing. A call may take several minutes: never start another while one "
-    "is running, and never repeat a successful query. Every call prints the path to "
-    "its preserved full session; keep that reference in the master-agent context. "
-    "Never expose credentials or held-out solution material."
-)
+_REMOTE_SESSION_DIR = _REMOTE_AGENT_DIR / "freecontext-sessions"
 
 
 def _runtime_archive() -> Path:
@@ -78,29 +71,47 @@ class PierCodexFreeContext(PierCodexBase):
             ],
         )
 
+    def _freecontext_mcp_config_toml(self) -> str:
+        return f'''[mcp_servers.freecontext]
+command = "{_REMOTE_LAUNCHER.as_posix()}"
+startup_timeout_sec = 30
+tool_timeout_sec = 1800
+enabled_tools = ["gather_context"]
+
+[mcp_servers.freecontext.tools.gather_context]
+approval_mode = "approve"
+'''
+
     async def run(
         self, instruction: str, environment: BaseEnvironment, context: AgentContext
     ) -> None:
-        await self._upload_freecontext(environment)
-        original_skills_dir = getattr(self, "skills_dir", None)
-        self.skills_dir = (_REMOTE_ROOT / "skills").as_posix()
+        original_config_toml = self._config_toml
+        run_started = False
         run_failed = False
         try:
-            guided = f"{_GUIDANCE}\n\n<task>\n{instruction}\n</task>\n"
-            await super().run(guided, environment, context)
+            await self._upload_freecontext(environment)
+            mcp_config = self._freecontext_mcp_config_toml()
+            self._config_toml = (
+                f"{original_config_toml.rstrip()}\n\n{mcp_config}"
+                if original_config_toml
+                else mcp_config
+            )
+            run_started = True
+            await super().run(instruction, environment, context)
         except BaseException:
             run_failed = True
             raise
         finally:
             try:
-                await self._export_master_context(environment)
+                if run_started:
+                    await self._export_master_context(environment)
             except Exception:
                 if run_failed:
                     self.logger.exception("Context export also failed after the master agent failed")
                 else:
                     raise
             finally:
-                self.skills_dir = original_skills_dir
+                self._config_toml = original_config_toml
                 await self._cleanup_freecontext(environment)
 
     async def _upload_freecontext(self, environment: BaseEnvironment) -> None:
@@ -115,6 +126,7 @@ class PierCodexFreeContext(PierCodexBase):
             environment,
             command=(
                 f"rm -rf {remote_root} {remote_secret_root} {remote_archive}; "
+                f"rm -f {_REMOTE_LAUNCHER.as_posix()}; "
                 f"mkdir -p {remote_root} {remote_secret_root}"
             ),
         )
@@ -135,9 +147,8 @@ class PierCodexFreeContext(PierCodexBase):
                 secret_path.unlink(missing_ok=True)
 
         default_user = environment.default_user or "agent"
-        wrapper = _REMOTE_WRAPPER.as_posix()
         config = (_REMOTE_ROOT / "benchmarks/deepswe/freecontext.toml").as_posix()
-        cli = (_REMOTE_ROOT / "bin/freecontext.mjs").as_posix()
+        mcp_server = (_REMOTE_ROOT / "bin/freecontext-mcp.mjs").as_posix()
         await self.exec_as_root(
             environment,
             command=(
@@ -146,32 +157,21 @@ class PierCodexFreeContext(PierCodexBase):
                 f"chmod 755 {_REMOTE_NODE.as_posix()} {_REMOTE_CODEX.as_posix()} "
                 f"{_REMOTE_CODE_MODE_HOST.as_posix()} {_REMOTE_RG.as_posix()}; "
                 f"chmod 600 {_REMOTE_SECRET.as_posix()}; "
-                f"cat > {wrapper} <<'SH'\n"
+                f"mkdir -p {_REMOTE_SESSION_DIR.as_posix()}; "
+                f"chown {default_user} {_REMOTE_SESSION_DIR.as_posix()}; "
+                f"chmod 700 {_REMOTE_SESSION_DIR.as_posix()}; "
+                f"cat > {_REMOTE_LAUNCHER.as_posix()} <<'SH'\n"
                 "#!/usr/bin/env bash\n"
                 "set -euo pipefail\n"
                 f"TOKENRHYTHM_API_KEY=\"$(cat {_REMOTE_SECRET.as_posix()})\"\n"
                 "export TOKENRHYTHM_API_KEY NODE_USE_ENV_PROXY=1\n"
-                f"session_dir={(_REMOTE_AGENT_DIR / 'freecontext-sessions').as_posix()}\n"
-                "mkdir -p \"$session_dir\"\n"
-                "session_id=\"$(date -u +%Y%m%dT%H%M%S%N)-$$-${RANDOM}\"\n"
-                "session_file=\"$session_dir/$session_id.json\"\n"
-                "set +e\n"
-                f"{_REMOTE_NODE.as_posix()} {cli} \"$@\" --config {config} "
-                "--benchmark-session-file \"$session_file\"\n"
-                "status=$?\n"
-                "set -e\n"
-                "if [[ -s \"$session_file\" ]]; then\n"
-                "  printf '\\nFreeContext full session: %s\\n' \"$session_file\"\n"
-                "else\n"
-                "  printf '\\nFreeContext full session unavailable: %s\\n' \"$session_file\"\n"
-                "fi\n"
-                "exit \"$status\"\n"
+                f"exec {_REMOTE_NODE.as_posix()} {mcp_server} --config {config} "
+                f"--session-dir {_REMOTE_SESSION_DIR.as_posix()}\n"
                 "SH\n"
-                f"chmod 755 {wrapper}; "
+                f"chmod 755 {_REMOTE_LAUNCHER.as_posix()}; "
                 f"ln -sfn {_REMOTE_CODEX.as_posix()} /usr/local/bin/codex; "
                 "if ! command -v rg >/dev/null 2>&1; then "
-                f"ln -sfn {_REMOTE_RG.as_posix()} /usr/local/bin/rg; fi; "
-                f"ln -sfn {wrapper} /usr/local/bin/freecontext"
+                f"ln -sfn {_REMOTE_RG.as_posix()} /usr/local/bin/rg; fi"
             ),
         )
 
@@ -188,18 +188,12 @@ class PierCodexFreeContext(PierCodexBase):
         )
 
     async def _cleanup_freecontext(self, environment: BaseEnvironment) -> None:
-        wrapper = _REMOTE_WRAPPER.as_posix()
         try:
             await self.exec_as_root(
                 environment,
                 command=(
-                    "if [ \"$(readlink /usr/local/bin/freecontext 2>/dev/null || true)\" = "
-                    f"\"{wrapper}\" ]; then rm -f /usr/local/bin/freecontext; fi; "
-                    "if [ \"$(readlink /usr/local/bin/codex 2>/dev/null || true)\" = "
-                    f"\"{_REMOTE_CODEX.as_posix()}\" ]; then rm -f /usr/local/bin/codex; fi; "
-                    "if [ \"$(readlink /usr/local/bin/rg 2>/dev/null || true)\" = "
-                    f"\"{_REMOTE_RG.as_posix()}\" ]; then rm -f /usr/local/bin/rg; fi; "
-                    f"rm -rf {_REMOTE_ROOT.as_posix()} {_REMOTE_SECRET_ROOT.as_posix()}"
+                    f"rm -f {_REMOTE_SECRET.as_posix()} {_REMOTE_LAUNCHER.as_posix()}; "
+                    f"rmdir {_REMOTE_SECRET_ROOT.as_posix()} 2>/dev/null || true"
                 ),
             )
         except Exception:

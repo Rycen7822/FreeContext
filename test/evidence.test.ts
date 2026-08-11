@@ -54,6 +54,36 @@ test("validator confirms paths and real line ranges", async () => {
   }
 });
 
+test("validator preserves 27 valid citations when one citation is malformed", async () => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), "freecontext-evidence-"));
+  try {
+    const source = Array.from({ length: 27 }, (_, index) => `line ${index + 1}`).join("\n");
+    await writeFile(path.join(directory, "sample.js"), `${source}\n`, "utf8");
+    const citations = Array.from(
+      { length: 27 },
+      (_, index) => `- sample.js:${index + 1}-${index + 1} — Evidence ${index + 1}.`,
+    );
+    const output = `<final_answer>
+summary: Twenty-seven lines are supported.
+evidence:
+${citations.join("\n")}
+- fabricated-secret.txt has no valid citation range
+gaps:
+- none
+</final_answer>`;
+    const result = await validateExplorerOutput(output, await createWorkspace(directory));
+
+    assert.equal(result.status, "partial");
+    assert.equal(result.valid, true);
+    assert.equal(result.evidence.length, 27);
+    assert.deepEqual(result.gaps, ["Validation: Malformed evidence citation."]);
+    assert.deepEqual(result.problems, ["Malformed evidence citation."]);
+    assert.doesNotMatch(renderFinalAnswer(result), /fabricated-secret/u);
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
 test("validator rejects fabricated and sensitive paths", async () => {
   const directory = await mkdtemp(path.join(os.tmpdir(), "freecontext-evidence-"));
   try {

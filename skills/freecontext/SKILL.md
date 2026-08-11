@@ -1,24 +1,20 @@
 ---
 name: freecontext
-description: Delegate broad, cold-start, or repeatedly failing repository search to a read-only external subagent that returns compact file:line evidence. Use for locating implementations, call chains, registrations, configuration, tests, or cross-cutting behavior across an unfamiliar codebase. Skip when the exact file and narrow line range are already known.
+description: Manual FreeContext CLI compatibility fallback. Use only when the user explicitly requests FreeContext and the gather_context MCP tool is unavailable; never auto-trigger this skill for ordinary exploration or document search.
 ---
 
-# FreeContext repository exploration
+# FreeContext legacy CLI fallback
 
-Use FreeContext to keep exploratory search traces outside the main Codex context.
+The primary interface is the read-only `gather_context` MCP tool. It owns multi-file and multi-document exploration, cross-document search, long-document information extraction, tracing, comparison, impact mapping, planning, review, and diagnosis. The parent agent reads the returned decisive ranges before editing or making a high-confidence claim.
 
-## Invocation rule
+Do not load or invoke this skill during normal exploration. Use this compatibility path only when both conditions hold:
 
-Invoke FreeContext when at least one condition holds:
+- the user explicitly asks to use FreeContext; and
+- `gather_context` is unavailable in the current process.
 
-- The repository or relevant subsystem is unfamiliar.
-- The request spans several files, layers, symbols, registrations, tests, or configuration paths.
-- Two ordinary searches failed to identify the relevant implementation.
-- A compact evidence map is more useful than loading search output into the main context.
+If the MCP tool is available, call it directly without reading this skill. If neither condition holds, use the host's normal tools.
 
-Do not invoke it when the exact target file and narrow range are already known, or when one direct `rg`/read call will answer the question.
-
-## Command
+## Manual compatibility command
 
 Run one focused exploration request from the repository root:
 
@@ -26,7 +22,7 @@ Run one focused exploration request from the repository root:
 freecontext explore -C "$PWD" --query '<precise evidence request>'
 ```
 
-The query must state the behavior to trace and the evidence needed. Include likely symbols or subsystems when known. Do not include API keys, credentials, or file contents in the query.
+The query must state the relationship or facts to trace and the evidence needed. Include likely symbols, files, phrases, or subsystems when known. Do not include API keys, credentials, source dumps, or document contents in the query.
 
 A strong query asks for relationships, for example:
 
@@ -54,4 +50,4 @@ Issue a second FreeContext call only when the first result declares a material g
 
 ## Safety boundary
 
-FreeContext exposes structured `read`, `rg`, `glob`, and optional `jq`/`bat` tools. It has no edit, write, shell, network, package-manager, or version-control tool. Its output should never claim repository modifications.
+FreeContext exposes structured `read`, `rg`, `glob`, and optional `jq`/`bat` workspace tools. It has no edit, write, shell, package-manager, test-runner, or version-control capability. Its configured model provider is external, so do not send credentials or unnecessary source/document dumps. Its output should never claim repository modifications.

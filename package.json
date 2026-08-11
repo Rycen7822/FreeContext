@@ -5,7 +5,8 @@
   "type": "module",
   "bin": {
     "freecontext": "./bin/freecontext.mjs",
-    "freecontext-benchmark-context": "./bin/freecontext-benchmark-context.mjs"
+    "freecontext-benchmark-context": "./bin/freecontext-benchmark-context.mjs",
+    "freecontext-mcp": "./bin/freecontext-mcp.mjs"
   },
   "exports": {
     ".": {
@@ -22,6 +23,7 @@
     ".codex-plugin",
     "docs",
     "scripts/install-codex-skill.sh",
+    ".mcp.json",
     "freecontext.example.toml",
     "freecontext.sensenova.example.toml",
     "README.md",
@@ -35,9 +37,11 @@
     "test:core": "node --import tsx --test test/*.test.ts",
     "check": "node --import tsx scripts/static-check.ts",
     "smoke:mock": "node --import tsx scripts/mock-smoke.ts",
+    "smoke:mcp": "node --import tsx scripts/mcp-smoke.ts",
     "smoke:live": "node --import tsx scripts/live-smoke.ts",
     "bench:mock": "node --import tsx scripts/benchmark-mock.ts --scenario baseline",
     "bench:context": "node --import tsx scripts/benchmark-mock.ts --scenario context",
+    "bench:mcp": "node --import tsx scripts/benchmark-mock.ts --scenario mcp",
     "prepare": "npm run build",
     "prepack": "npm run build"
   },
@@ -47,7 +51,9 @@
   "dependencies": {
     "@earendil-works/pi-agent-core": "0.82.1",
     "@earendil-works/pi-ai": "0.82.1",
-    "smol-toml": "1.7.1"
+    "@modelcontextprotocol/sdk": "1.30.0",
+    "smol-toml": "1.7.1",
+    "zod": "4.4.3"
   },
   "keywords": [
     "codex",

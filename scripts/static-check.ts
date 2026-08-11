@@ -28,16 +28,16 @@ const forbidden: readonly (readonly [RegExp, string])[] = [
 ];
 
 const failures: string[] = [];
-const benchmarkPersistenceModules = new Set([
+const hostPersistenceModules = new Set([
   path.join("src", "benchmark", "master-context.ts"),
-  path.join("src", "benchmark", "session-file.ts"),
+  path.join("src", "session", "store.ts"),
 ]);
 for (const file of files) {
   const source = await readFile(file, "utf8");
   const relative = path.relative(root, file);
   for (const [pattern, label] of forbidden) {
     if (
-      benchmarkPersistenceModules.has(relative) &&
+      hostPersistenceModules.has(relative) &&
       (label === "filesystem mutation API" || label === "persistent transcript path")
     ) {
       continue;
@@ -58,6 +58,65 @@ for (const file of files) {
 const packageSource = await readFile(path.join(root, "package.json"), "utf8");
 if (packageSource.includes(fullCodingAgentPackage)) {
   failures.push("package.json: full pi-coding-agent dependency");
+}
+
+const pluginManifest = JSON.parse(await readFile(path.join(root, ".codex-plugin", "plugin.json"), "utf8")) as {
+  mcpServers?: unknown;
+  skills?: unknown;
+};
+if (pluginManifest.mcpServers !== "./.mcp.json" || pluginManifest.skills !== "./skills/") {
+  failures.push("plugin.json: expected bundled MCP plus shadow skill paths");
+}
+const bundledMcp = JSON.parse(await readFile(path.join(root, ".mcp.json"), "utf8")) as Record<string, unknown>;
+const expectedBundledMcp = {
+  freecontext: {
+    command: "node",
+    args: ["bin/freecontext-mcp.mjs"],
+    cwd: ".",
+    startup_timeout_sec: 30,
+    tool_timeout_sec: 1_800,
+    required: false,
+  },
+};
+if (JSON.stringify(bundledMcp) !== JSON.stringify(expectedBundledMcp)) {
+  failures.push(".mcp.json: expected the exact direct freecontext stdio server map");
+}
+
+const mcpServer = await readFile(path.join(root, "src", "mcp", "server.ts"), "utf8");
+const registeredTools = [...mcpServer.matchAll(/registerTool\(\s*["']([^"']+)["']/gu)]
+  .map((match) => match[1]);
+if (JSON.stringify(registeredTools) !== JSON.stringify(["gather_context"])) {
+  failures.push(`src/mcp/server.ts: unexpected registered tools ${JSON.stringify(registeredTools)}`);
+}
+for (const required of [
+  "readOnlyHint: true",
+  "destructiveHint: false",
+  "openWorldHint: true",
+  "inputSchema: GatherContextInputSchema",
+  "outputSchema: GatherContextOutputSchema",
+]) {
+  if (!mcpServer.includes(required)) failures.push(`src/mcp/server.ts: missing ${required}`);
+}
+if ((mcpServer.match(/new McpServer\(/gu) ?? []).length !== 1) {
+  failures.push("src/mcp/server.ts: expected exactly one MCP server");
+}
+
+const mcpEntries = await Promise.all(
+  files
+    .filter((file) => path.relative(root, file).startsWith(`${path.join("src", "mcp")}${path.sep}`))
+    .map(async (file) => ({ file, source: await readFile(file, "utf8") })),
+);
+if (mcpEntries.some(({ source }) => /\bexplore_repository\b/u.test(source))) {
+  failures.push("src/mcp: legacy proposed tool alias remains");
+}
+if (mcpEntries.some(({ source }) => /runPiSession|runPrimaryRoute/u.test(source))) {
+  failures.push("src/mcp: duplicated explorer runtime");
+}
+if (mcpEntries.some(({ file, source }) => (
+  path.relative(root, file) !== path.join("src", "mcp", "server.ts") &&
+  /\bMcpServer\b|StdioServerTransport/u.test(source)
+))) {
+  failures.push("src/mcp: transport owner escaped server.ts");
 }
 
 const processWrapper = await readFile(path.join(root, "src", "tools", "process.ts"), "utf8");

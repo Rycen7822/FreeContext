@@ -53,7 +53,9 @@ test("runExplorer returns locally validated evidence", async () => {
       onSessionCapture: (value) => { capture = value; },
       dependencies: { ...(await fakeDependencies(root, [valid])), clock: unitClock() },
     });
+    assert.equal(result.status, "completed");
     assert.equal(result.summary, "a is exported.");
+    assert.deepEqual(result.validationProblems, []);
     assert.equal(result.evidence[0]?.path, "a.js");
     assert.equal(result.metrics.repaired, false);
     assert.equal(result.metrics.routeAttempts, 1);
@@ -71,10 +73,45 @@ test("runExplorer returns locally validated evidence", async () => {
     assert.equal(result.metrics.totalMs, 8);
     assert.equal(result.metrics.primary.sessionMs, 1);
     assert.equal(capture?.outcome.status, "completed");
+    assert.equal(capture?.primaryValidation.status, "completed");
     assert.equal(capture?.request, "find a");
     assert.equal(capture?.primary.output, valid.content[0]?.type === "text" ? valid.content[0].text : "");
     assert.equal(capture?.repair, null);
     assert.equal(capture?.runtime.baseUrl, "https://example.invalid");
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("runExplorer returns primary partial evidence without repair", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "freecontext-run-"));
+  try {
+    await writeFile(path.join(root, "a.js"), "const a = 1;\n", "utf8");
+    const partial = assistantText(
+      "<final_answer>\nsummary: a is defined.\nevidence:\n- a.js:1-1 — Defines a.\n- missing.js:1-1 — Fabricated citation.\ngaps:\n- none\n</final_answer>",
+    );
+    let capture: Readonly<ExplorerSessionCapture> | undefined;
+    const result = await runExplorer({
+      query: "find a",
+      cwd: root,
+      onSessionCapture: (value) => { capture = value; },
+      dependencies: await fakeDependencies(root, [partial]),
+    });
+
+    assert.equal(result.status, "partial");
+    assert.equal(result.metrics.repaired, false);
+    assert.deepEqual(result.evidence.map(({ path }) => path), ["a.js"]);
+    assert.deepEqual(result.validationProblems, [
+      "Evidence path rejected by workspace policy (missing, sensitive, outside, oversized, or unsupported).",
+    ]);
+    assert.doesNotMatch(result.answer, /missing\.js/u);
+    assert.equal(capture?.primaryValidation.status, "partial");
+    assert.equal(capture?.repair, null);
+    assert.deepEqual(capture?.outcome, {
+      status: "partial",
+      answer: result.answer,
+      problemCount: 1,
+    });
   } finally {
     await rm(root, { recursive: true, force: true });
   }
@@ -111,6 +148,32 @@ test("runExplorer performs one no-tool format repair", async () => {
     assert.equal(capture?.repair?.session?.output, result.answer);
     assert.equal(capture?.primaryValidation.valid, false);
     assert.equal(capture?.repair?.validation?.valid, true);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("runExplorer accepts partial evidence from the single repair", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "freecontext-run-"));
+  try {
+    await writeFile(path.join(root, "a.js"), "const a = 1;\n", "utf8");
+    const invalid = assistantText("The answer is a.js.");
+    const partial = assistantText(
+      "<final_answer>\nsummary: a is defined.\nevidence:\n- a.js:1-1 — Defines a.\n- malformed evidence\ngaps:\n- none\n</final_answer>",
+    );
+    let capture: Readonly<ExplorerSessionCapture> | undefined;
+    const result = await runExplorer({
+      query: "find a",
+      cwd: root,
+      onSessionCapture: (value) => { capture = value; },
+      dependencies: await fakeDependencies(root, [invalid, partial]),
+    });
+
+    assert.equal(result.status, "partial");
+    assert.equal(result.metrics.repaired, true);
+    assert.deepEqual(result.validationProblems, ["Malformed evidence citation."]);
+    assert.equal(capture?.repair?.validation?.status, "partial");
+    assert.equal(capture?.outcome.status, "partial");
   } finally {
     await rm(root, { recursive: true, force: true });
   }

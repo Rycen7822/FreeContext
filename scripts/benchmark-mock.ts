@@ -3,12 +3,15 @@ import type { AgentMessage } from "@earendil-works/pi-agent-core";
 import { createAssistantMessageEventStream } from "@earendil-works/pi-ai";
 import type { AssistantMessage } from "@earendil-works/pi-ai";
 import type { FreeContextConfig } from "../src/config.js";
+import { createGatherContextHandler } from "../src/mcp/tool.js";
+import type { ContextTokenCounter } from "../src/runtime/context-budget.js";
 import { createModel, createRequestOptions } from "../src/runtime/model.js";
 import { loadPiBindings } from "../src/runtime/pi-bindings.js";
 import type { PiBindings } from "../src/runtime/pi-bindings.js";
 import { runPiSession } from "../src/runtime/pi-session.js";
+import type { ExplorerResult } from "../src/runtime/run.js";
 
-type Scenario = "baseline" | "context";
+type Scenario = "baseline" | "context" | "mcp";
 
 function option(name: string): string | undefined {
   const exactIndex = process.argv.indexOf(`--${name}`);
@@ -66,14 +69,85 @@ function assistantText(text: string, totalTokens = 15): AssistantMessage {
   };
 }
 
+async function runMcpScenario(runs: number, warmup: number): Promise<void> {
+  const tokenCounter: ContextTokenCounter = {
+    countBatch: async (texts) => texts.map(() => 0),
+  };
+  let toolCalls = 0;
+  let sessionIndex = 0;
+  const handler = createGatherContextHandler({
+    tokenCounter,
+    sessionDirectory: "/benchmark-sessions",
+    runExplorer: async () => {
+      toolCalls += 1;
+      return {
+        status: "completed",
+        answer: "validated",
+        summary: "Mock MCP context.",
+        evidence: [{ path: "document.md", start: 1, end: 1, reason: "Supports the result." }],
+        gaps: ["none"],
+        validationProblems: [],
+        metrics: {},
+        runtime: { workspace: "/benchmark-workspace" },
+      } as unknown as Readonly<ExplorerResult>;
+    },
+    reserveSession: async ({ request, workspace }) => ({
+      file: { path: `/benchmark-sessions/${sessionIndex += 1}.json` },
+      startedAt: "2026-08-11T00:00:00.000Z",
+      request,
+      workspace,
+    }),
+    commitSession: async ({ reservation }) => ({
+      sessionFile: reservation.file.path,
+      sessionBytes: 2_048,
+    }),
+  });
+  const runOnce = () => handler({ query: "collect benchmark context", workspace: "/benchmark-workspace" });
+
+  for (let index = 0; index < warmup; index += 1) await runOnce();
+  toolCalls = 0;
+  const samples: number[] = [];
+  let visibleResultBytes = 0;
+  let sessionBytes = 0;
+  for (let index = 0; index < runs; index += 1) {
+    const startedAt = performance.now();
+    const call = await runOnce();
+    samples.push(performance.now() - startedAt);
+    visibleResultBytes += Buffer.byteLength(JSON.stringify({
+      structuredContent: call.structuredContent,
+      content: call.content,
+    }));
+    sessionBytes += Number((call._meta?.freecontext as { sessionBytes?: unknown })?.sessionBytes ?? 0);
+  }
+  if (toolCalls !== runs) throw new Error("MCP benchmark did not execute exactly one tool per run");
+  const sorted = [...samples].sort((left, right) => left - right);
+  process.stdout.write(`${JSON.stringify({
+    scenario: "mcp",
+    runs,
+    warmup,
+    medianMs: rounded(percentile(sorted, 0.5)),
+    p95Ms: rounded(percentile(sorted, 0.95)),
+    minMs: rounded(sorted[0] ?? 0),
+    maxMs: rounded(sorted.at(-1) ?? 0),
+    rssBytes: process.memoryUsage().rss,
+    toolCalls,
+    visibleResultBytes,
+    sessionBytes,
+  })}\n`);
+}
+
 async function main(): Promise<void> {
   const selectedScenario = option("scenario") ?? "baseline";
-  if (selectedScenario !== "baseline" && selectedScenario !== "context") {
-    throw new Error("--scenario must be baseline or context");
+  if (selectedScenario !== "baseline" && selectedScenario !== "context" && selectedScenario !== "mcp") {
+    throw new Error("--scenario must be baseline, context, or mcp");
   }
   const scenario: Scenario = selectedScenario;
   const runs = integerOption("runs", 20, 1);
   const warmup = integerOption("warmup", 3, 0);
+  if (scenario === "mcp") {
+    await runMcpScenario(runs, warmup);
+    return;
+  }
   const config: FreeContextConfig = {
     target: "benchmark",
     provider: "benchmark-provider",
@@ -117,10 +191,17 @@ async function main(): Promise<void> {
       await emit({ type: "turn_start" });
       await emit({ type: "turn_end", message: final, toolResults: [] });
       const finalContext = { ...context, messages: [...context.messages, ...prompts, final] };
-      await loopConfig.shouldStopAfterTurn?.({
+      const prepared = await loopConfig.prepareNextTurn?.({
         message: final,
         toolResults: [],
         context: finalContext,
+        newMessages: [...prompts, final],
+      });
+      const effectiveContext = prepared?.context ?? finalContext;
+      await loopConfig.shouldStopAfterTurn?.({
+        message: final,
+        toolResults: [],
+        context: effectiveContext,
         newMessages: [...prompts, final],
       });
       return [...prompts, final];
@@ -134,9 +215,9 @@ async function main(): Promise<void> {
   };
   const initialMessages: readonly AgentMessage[] = scenario === "context"
     ? [
-        { role: "user", content: `old ${"x".repeat(4000)}`, timestamp: 0 },
+        { role: "user", content: `old ${"old-token ".repeat(8_000)}`, timestamp: 0 },
         assistantText("old finding", 7000),
-        { role: "user", content: `recent ${"y".repeat(5000)}`, timestamp: 1 },
+        { role: "user", content: `recent ${"recent ".repeat(500)}`, timestamp: 1 },
       ]
     : [];
   const runOnce = async () => await runPiSession({

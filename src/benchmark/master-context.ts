@@ -1,5 +1,7 @@
 import { readdir, readFile, realpath, writeFile } from "node:fs/promises";
 import path from "node:path";
+import { renderGatherContextText } from "../mcp/contracts.js";
+import type { McpSessionDocument } from "../mcp/session.js";
 import type { BenchmarkSessionDocument } from "./session-file.js";
 
 const OUTPUT_NAME = "master-agent-context.json";
@@ -44,25 +46,58 @@ async function collectFiles(directory: string, extension: string): Promise<strin
   return files.sort((left, right) => left.localeCompare(right));
 }
 
-function parseSessionDocument(text: string, filePath: string): BenchmarkSessionDocument {
+type FreeContextSessionDocument = BenchmarkSessionDocument | McpSessionDocument;
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === "object";
+}
+
+function parseSessionDocument(text: string, filePath: string): FreeContextSessionDocument {
   const value: unknown = JSON.parse(text);
-  if (
-    !value ||
-    typeof value !== "object" ||
-    !("schemaVersion" in value) ||
-    value.schemaVersion !== "freecontext-benchmark-session-v1"
-  ) {
-    throw new Error(`Invalid FreeContext benchmark session file: ${filePath}`);
+  if (isRecord(value) && value.schemaVersion === "freecontext-benchmark-session-v1") {
+    return value as unknown as BenchmarkSessionDocument;
   }
-  return value as BenchmarkSessionDocument;
+  if (
+    isRecord(value) &&
+    value.schemaVersion === "freecontext-mcp-session-v1" &&
+    value.transport === "mcp" &&
+    isRecord(value.invocation) &&
+    typeof value.invocation.request === "string" &&
+    isRecord(value.result) &&
+    typeof value.result.status === "string" &&
+    (typeof value.result.sessionFile === "string" || value.result.sessionFile === null) &&
+    (value.modelVisibleText === undefined || typeof value.modelVisibleText === "string")
+  ) {
+    return value as unknown as McpSessionDocument;
+  }
+  throw new Error(`Invalid FreeContext session file: ${filePath}`);
 }
 
 function outputToMaster(
-  session: BenchmarkSessionDocument,
+  session: FreeContextSessionDocument,
   runtimeSessionFile: string,
 ): string {
+  if (session.schemaVersion === "freecontext-mcp-session-v1") {
+    const text = session.modelVisibleText ?? renderGatherContextText(session.result);
+    return JSON.stringify({
+      content: [{ type: "text", text }],
+      structured_content: session.result,
+    }, null, 2);
+  }
   const output = session.invocation.cliOutput.trimEnd();
   return `${output}\n\nFreeContext full session: ${runtimeSessionFile}`;
+}
+
+function promptToFreeContext(session: FreeContextSessionDocument): string {
+  return session.schemaVersion === "freecontext-mcp-session-v1"
+    ? session.invocation.request
+    : session.capture?.request ?? session.invocation.request;
+}
+
+function sessionStatus(session: FreeContextSessionDocument): string {
+  return session.schemaVersion === "freecontext-mcp-session-v1"
+    ? session.result.status
+    : session.capture?.outcome.status ?? "failed_before_capture";
 }
 
 export async function exportMasterAgentContext({
@@ -99,13 +134,19 @@ export async function exportMasterAgentContext({
     const session = parseSessionDocument(await readFile(filePath, "utf8"), filePath);
     const relativePath = posixRelative(root, filePath);
     const runtimeSessionFile = path.posix.join(RUNTIME_AGENT_DIR, relativePath);
+    if (
+      session.schemaVersion === "freecontext-mcp-session-v1" &&
+      session.result.sessionFile !== runtimeSessionFile
+    ) {
+      throw new Error(`MCP session path does not match exported file: ${filePath}`);
+    }
     const referenceFoundInMasterContext = completeMasterContext.includes(runtimeSessionFile);
     return Object.freeze({
-      promptToFreeContext: session.capture?.request ?? session.invocation.request,
+      promptToFreeContext: promptToFreeContext(session),
       outputToMasterAgent: outputToMaster(session, runtimeSessionFile),
       fullSessionFile: relativePath,
       runtimeSessionFile,
-      status: session.capture?.outcome.status ?? "failed_before_capture",
+      status: sessionStatus(session),
       referenceFoundInMasterContext,
     });
   }));

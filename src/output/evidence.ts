@@ -29,20 +29,25 @@ interface ValidationFields extends Omit<ParsedFinalBlock, "evidence"> {
   readonly evidence: readonly ValidatedEvidenceCitation[];
 }
 
-export interface ValidatedExplorerOutput extends ValidationFields {
+export interface CompletedExplorerOutput extends ValidationFields {
   readonly valid: true;
+  readonly status: "completed";
+  readonly block: string;
+}
+
+export interface PartialExplorerOutput extends ValidationFields {
+  readonly valid: true;
+  readonly status: "partial";
   readonly block: string;
 }
 
 export interface InvalidExplorerOutput extends ValidationFields {
   readonly valid: false;
+  readonly status: "invalid";
 }
 
-export type ExplorerOutputValidation = ValidatedExplorerOutput | InvalidExplorerOutput;
-
-function errorMessage(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
-}
+export type UsableExplorerOutput = CompletedExplorerOutput | PartialExplorerOutput;
+export type ExplorerOutputValidation = UsableExplorerOutput | InvalidExplorerOutput;
 
 function extractFinalBlock(text: unknown): string | null {
   const matches = [...String(text || "").matchAll(/<final_answer>([\s\S]*?)<\/final_answer>/giu)];
@@ -55,7 +60,7 @@ function cleanPath(value: string): string {
 
 function parseEvidenceLine(line: string, evidence: EvidenceCitation[], problems: string[]): void {
   if (!/^[-*]\s+/u.test(line)) {
-    if (line && !/^none$/iu.test(line)) problems.push(`Malformed evidence line: ${line}`);
+    if (line && !/^none$/iu.test(line)) problems.push("Malformed evidence line.");
     return;
   }
   const content = line.replace(/^[-*]\s+/u, "").trim();
@@ -64,7 +69,7 @@ function parseEvidenceLine(line: string, evidence: EvidenceCitation[], problems:
   const rangesValue = match?.[2];
   const reasonValue = match?.[3];
   if (!pathValue || !rangesValue || !reasonValue) {
-    problems.push(`Malformed evidence citation: ${content}`);
+    problems.push("Malformed evidence citation.");
     return;
   }
   for (const range of rangesValue.split(",").map((value) => value.trim())) {
@@ -151,6 +156,15 @@ async function countLines(filePath: string): Promise<number> {
   return count;
 }
 
+function mergeValidationGaps(gaps: readonly string[], problems: readonly string[]): readonly string[] {
+  const candidates = problems.length > 0
+    ? gaps.filter((gap) => !/^none$/iu.test(gap.trim()))
+    : gaps;
+  const merged = [...candidates, ...problems.map((problem) => `Validation: ${problem}`)];
+  const deduplicated = [...new Set(merged.filter(Boolean))];
+  return deduplicated.length > 0 ? deduplicated : ["none"];
+}
+
 export async function validateExplorerOutput(text: unknown, workspace: Workspace): Promise<ExplorerOutputValidation> {
   const parsed = parseFinalBlock(text);
   const problems = [...parsed.problems];
@@ -160,19 +174,19 @@ export async function validateExplorerOutput(text: unknown, workspace: Workspace
 
   for (const item of parsed.evidence) {
     if (!item.path || item.path === ".") {
-      problems.push(`Evidence path is invalid: ${item.path || "<empty>"}`);
+      problems.push("Evidence path is invalid.");
       continue;
     }
     if (!Number.isSafeInteger(item.start) || !Number.isSafeInteger(item.end) || item.start < 1 || item.end < item.start || item.end > MAX_EVIDENCE_LINE) {
-      problems.push(`Invalid line range: ${item.path}:${item.start}-${item.end}`);
+      problems.push("Invalid evidence line range.");
       continue;
     }
     let target;
     try {
       target = await workspace.resolveExisting(item.path, { kind: "file" });
       assertDirectFileSize(target);
-    } catch (error) {
-      problems.push(`Invalid evidence path ${item.path}: ${errorMessage(error)}`);
+    } catch {
+      problems.push("Evidence path rejected by workspace policy (missing, sensitive, outside, oversized, or unsupported).");
       continue;
     }
     let total = lineCounts.get(target.absolute);
@@ -190,14 +204,22 @@ export async function validateExplorerOutput(text: unknown, workspace: Workspace
     validEvidence.push({ ...item, path: target.relative, totalLines: total });
   }
 
-  const fields = { ...parsed, evidence: validEvidence, problems };
-  if (parsed.block && parsed.summary && validEvidence.length > 0 && problems.length === 0) {
-    return { ...fields, block: parsed.block, valid: true };
+  const fields = {
+    ...parsed,
+    evidence: validEvidence,
+    gaps: mergeValidationGaps(parsed.gaps, problems),
+    problems,
+  };
+  if (parsed.block && parsed.summary && validEvidence.length > 0) {
+    if (problems.length === 0) {
+      return { ...fields, block: parsed.block, valid: true, status: "completed" };
+    }
+    return { ...fields, block: parsed.block, valid: true, status: "partial" };
   }
-  return { ...fields, valid: false };
+  return { ...fields, valid: false, status: "invalid" };
 }
 
-export function renderFinalAnswer(result: ValidatedExplorerOutput): string {
+export function renderFinalAnswer(result: UsableExplorerOutput): string {
   const lines = ["<final_answer>", `summary: ${result.summary}`, "evidence:"];
   for (const item of result.evidence) lines.push(`- ${item.path}:${item.start}-${item.end} — ${item.reason}`);
   lines.push("gaps:");

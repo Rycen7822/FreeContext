@@ -19,6 +19,7 @@ export interface ExplorerRuntime {
 
 export interface ExplorerValidationCapture {
   readonly valid: boolean;
+  readonly status: ExplorerOutputValidation["status"];
   readonly summary: string;
   readonly evidence: readonly ValidatedEvidenceCitation[];
   readonly gaps: readonly string[];
@@ -48,6 +49,7 @@ export interface ExplorerCapturedError {
 
 export type ExplorerCaptureOutcome =
   | Readonly<{ status: "completed"; answer: string }>
+  | Readonly<{ status: "partial"; answer: string; problemCount: number }>
   | Readonly<{ status: "output_validation_error"; error: ExplorerCapturedError }>
   | Readonly<{ status: "repair_error"; error: ExplorerCapturedError }>;
 
@@ -74,6 +76,7 @@ export function captureValidation(
 ): Readonly<ExplorerValidationCapture> {
   return Object.freeze({
     valid: validation.valid,
+    status: validation.status,
     summary: validation.summary,
     evidence: Object.freeze(validation.evidence.map((item) => Object.freeze({ ...item }))),
     gaps: Object.freeze([...validation.gaps]),
