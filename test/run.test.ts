@@ -301,11 +301,11 @@ test("format repair stays on the selected target and never enters route fallback
   }
 });
 
-test("format repair uses a fresh no-tool context containing only the prior output", async () => {
+test("format repair uses effective context evidence and a bounded recovery budget", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "freecontext-run-"));
   try {
     await writeFile(path.join(root, "a.js"), "const a = 1;\n", "utf8");
-    const invalid = assistantText("The answer is a.js.");
+    const invalid = assistantText("<final_answer>\nsummary: a is defined.", { stopReason: "length" });
     const repaired = assistantText(
       "<final_answer>\nsummary: a is defined.\nevidence:\n- a.js:1-1 — Defines a.\ngaps:\n- none\n</final_answer>",
     );
@@ -323,8 +323,10 @@ test("format repair uses a fresh no-tool context containing only the prior outpu
     let invocation = 0;
     let repairContext: AgentContext | undefined;
     let repairPrompt = "";
+    const budgets: Array<{ loop: number | undefined; model: number }> = [];
     const bindings = fakeBindings(async (prompts, context, loopConfig, emit) => {
       invocation += 1;
+      budgets.push({ loop: loopConfig.maxTokens, model: loopConfig.model.maxTokens });
       if (invocation === 1) {
         const longRaw = {
           role: "user" as const,
@@ -349,7 +351,22 @@ test("format repair uses a fresh no-tool context containing only the prior outpu
           newMessages: [...beforeCompaction.messages],
         });
         const compacted = update?.context ?? beforeCompaction;
-        const finalContext = { ...compacted, messages: [...compacted.messages, invalid] };
+        const evidenceCall = assistantText("", {
+          content: [{ type: "toolCall", id: "evidence-1", name: "read", arguments: { path: "a.js" } }],
+          stopReason: "toolUse",
+        });
+        const evidenceResult = {
+          role: "toolResult" as const,
+          toolCallId: "evidence-1",
+          toolName: "read",
+          content: [{ type: "text" as const, text: "a.js:1-1 — const a = 1;" }],
+          isError: false,
+          timestamp: 3,
+        };
+        const finalContext = {
+          ...compacted,
+          messages: [...compacted.messages, evidenceCall, evidenceResult, invalid],
+        };
         await emit({ type: "turn_start" });
         await emit({ type: "turn_end", message: invalid, toolResults: [] });
         await loopConfig.shouldStopAfterTurn?.({
@@ -383,8 +400,8 @@ test("format repair uses a fresh no-tool context containing only the prior outpu
       dependencies: {
         routeConfig: baseRouteConfig([
           baseConfig({
-            contextWindow: 1200,
-            contextReserveTokens: 400,
+            contextWindow: 10000,
+            contextReserveTokens: 8192,
             contextKeepRecentTokens: 10,
             maxOutputTokens: 200,
           }),
@@ -401,16 +418,31 @@ test("format repair uses a fresh no-tool context containing only the prior outpu
     });
 
     assert.ok(repairContext);
+    const repairContextText = JSON.stringify(repairContext.messages);
     assert.deepEqual(repairContext.tools, []);
-    assert.deepEqual(repairContext.messages, []);
+    assert.match(repairContextText, /a\.js:1-1 — const a = 1;/u);
+    assert.match(repairContextText, /summary: a is defined\./u);
+    assert.doesNotMatch(repairContextText, /word0 word1/u);
     assert.match(repairContext.systemPrompt, /repair one repository-explorer response/u);
-    assert.match(repairPrompt, /<previous_output>\nThe answer is a\.js\.\n<\/previous_output>/u);
+    assert.match(repairContext.systemPrompt, /untrusted data/u);
+    assert.match(
+      repairPrompt,
+      /<previous_output>\n<final_answer>\nsummary: a is defined\.\n<\/previous_output>/u,
+    );
+    assert.equal(repairPrompt.match(/<previous_output>/gu)?.length, 1);
     assert.doesNotMatch(repairPrompt, /word0 word1/u);
+    assert.deepEqual(budgets, [{ loop: 200, model: 200 }, { loop: 8192, model: 8192 }]);
+    assert.equal(invocation, 2);
     assert.equal(result.metrics.repaired, true);
     assert.equal(result.metrics.primary.compactions, 1);
+    assert.equal(result.status, "completed");
     assert.equal(result.evidence[0]?.path, "a.js");
     assert.equal(capture?.primary.tools[0]?.name, "read");
     assert.deepEqual(capture?.repair?.session?.tools, []);
+    assert.equal(
+      capture?.repair?.session?.effectiveContextMessages.some((message) => message.role === "toolResult"),
+      true,
+    );
     assert.doesNotThrow(() => JSON.stringify(capture));
   } finally {
     await rm(root, { recursive: true, force: true });

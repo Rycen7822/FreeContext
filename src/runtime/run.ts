@@ -71,6 +71,8 @@ export interface ExplorerResult {
   readonly runtime: Readonly<ExplorerRuntime>;
 }
 
+const REPAIR_OUTPUT_TOKEN_TARGET = 8192;
+
 const EMPTY_USAGE: Usage = {
   input: 0,
   output: 0,
@@ -198,15 +200,20 @@ async function runExplorerWithCounter({
   if (validation.status === "invalid" && repair) {
     const repairStartedAt = clock();
     repairPrompt = buildRepairPrompt(primary.text, validation.problems);
+    const repairMaxTokens = Math.max(
+      config.maxOutputTokens,
+      Math.min(REPAIR_OUTPUT_TOKEN_TARGET, config.contextReserveTokens),
+    );
     try {
       repairRun = await runPiSession({
         bindings,
-        model,
-        requestOptions,
+        model: Object.freeze({ ...model, maxTokens: repairMaxTokens }),
+        requestOptions: Object.freeze({ ...requestOptions, maxTokens: repairMaxTokens }),
         config,
         systemPrompt: REPAIR_SYSTEM_PROMPT,
         promptText: repairPrompt,
         tools: [],
+        initialMessages: primary.contextMessages,
         maxTurns: 1,
         maxToolCalls: 0,
         ...(signal ? { signal } : {}),
