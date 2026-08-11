@@ -1,0 +1,10 @@
+interface:
+  display_name: "FreeContext"
+  short_description: "Route broad reading to one read-only context tool"
+policy:
+  allow_implicit_invocation: true
+dependencies:
+  tools:
+    - type: "mcp"
+      value: "freecontext"
+      description: "Read-only gather_context tool for multi-file and multi-document evidence"

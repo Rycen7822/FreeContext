@@ -223,11 +223,11 @@ test("canonical Pier adapter registers atomic MCP without legacy guidance or CLI
   assert.match(source, /await super\(\)\.run\(instruction, environment, context\)/u);
   assert.match(source, /original_config_toml = self\._config_toml/u);
   assert.match(source, /self\._config_toml = original_config_toml/u);
+  assert.match(source, /_REMOTE_SKILLS_DIR = _REMOTE_ROOT \/ "skills"/u);
   assert.match(source, /freecontext-benchmark-context\.mjs/u);
   assert.match(source, /benchmarks\/deepswe\/freecontext\.toml/u);
   for (const legacy of [
     "_GUIDANCE",
-    "skills_dir",
     "freecontext explore",
     "--benchmark-session-file",
     "_REMOTE_WRAPPER",
@@ -237,6 +237,16 @@ test("canonical Pier adapter registers atomic MCP without legacy guidance or CLI
   ]) {
     assert.equal(source.includes(legacy), false, `legacy adapter surface remains: ${legacy}`);
   }
+
+  const skillSave = source.indexOf('original_skills_dir = getattr(self, "skills_dir", None)');
+  const upload = source.indexOf("await self._upload_freecontext(environment)");
+  const skillSet = source.indexOf("self.skills_dir = _REMOTE_SKILLS_DIR.as_posix()");
+  const parentRun = source.indexOf("await super().run(instruction, environment, context)");
+  const skillRestore = source.indexOf("self.skills_dir = original_skills_dir");
+  const configRestore = source.indexOf("self._config_toml = original_config_toml");
+  assert.ok(skillSave >= 0 && skillSave < upload);
+  assert.ok(upload < skillSet && skillSet < parentRun);
+  assert.ok(parentRun < skillRestore && skillRestore < configRestore);
 
   const configBlock = source.slice(
     source.indexOf("    def _freecontext_mcp_config_toml"),

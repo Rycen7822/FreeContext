@@ -20,6 +20,7 @@ _PROJECT_ROOT = Path(__file__).resolve().parents[2]
 _ARCHIVE_VALUE = os.environ.get("FREECONTEXT_RUNTIME_ARCHIVE")
 _PROFILE = Path(os.environ.get("FREECONTEXT_SUBAGENT_PROFILE", "/home/xu/.codex/ds.config.toml"))
 _REMOTE_ROOT = PurePosixPath("/tmp/freecontext-runtime")
+_REMOTE_SKILLS_DIR = _REMOTE_ROOT / "skills"
 _REMOTE_SECRET_ROOT = PurePosixPath("/tmp/freecontext-secrets")
 _REMOTE_SECRET = _REMOTE_SECRET_ROOT / "tokenrhythm"
 _REMOTE_LAUNCHER = PurePosixPath("/tmp/freecontext-mcp-launcher")
@@ -88,10 +89,12 @@ approval_mode = "approve"
         self, instruction: str, environment: BaseEnvironment, context: AgentContext
     ) -> None:
         original_config_toml = self._config_toml
+        original_skills_dir = getattr(self, "skills_dir", None)
         run_started = False
         run_failed = False
         try:
             await self._upload_freecontext(environment)
+            self.skills_dir = _REMOTE_SKILLS_DIR.as_posix()
             mcp_config = self._freecontext_mcp_config_toml()
             self._config_toml = (
                 f"{original_config_toml.rstrip()}\n\n{mcp_config}"
@@ -113,6 +116,7 @@ approval_mode = "approve"
                 else:
                     raise
             finally:
+                self.skills_dir = original_skills_dir
                 self._config_toml = original_config_toml
                 await self._cleanup_freecontext(environment)
 
