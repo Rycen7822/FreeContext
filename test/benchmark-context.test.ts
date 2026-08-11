@@ -252,6 +252,10 @@ test("canonical Pier adapter registers atomic MCP without legacy guidance or CLI
     source.indexOf("    def _freecontext_mcp_config_toml"),
     source.indexOf("    async def run", source.indexOf("    def _freecontext_mcp_config_toml")),
   );
+  assert.match(
+    configBlock,
+    /^env_vars = \["HTTP_PROXY", "HTTPS_PROXY", "http_proxy", "https_proxy", "NO_PROXY", "no_proxy"\]$/mu,
+  );
   assert.match(configBlock, /^required = true$/mu);
   assert.doesNotMatch(configBlock, /TOKENRHYTHM|credential|bearer/u);
   const cleanupBlock = source.slice(
