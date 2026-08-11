@@ -216,6 +216,8 @@ test("canonical Pier adapter registers atomic MCP without legacy guidance or CLI
   assert.match(source, /\[mcp_servers\.freecontext\.tools\.gather_context\]/u);
   assert.match(source, /approval_mode = "approve"/u);
   assert.match(source, /bin\/freecontext-mcp\.mjs/u);
+  assert.match(source, /FREECONTEXT_PYTHON=\{_REMOTE_PYTHON\.as_posix\(\)\}/u);
+  assert.match(source, /export TOKENRHYTHM_API_KEY FREECONTEXT_PYTHON NODE_USE_ENV_PROXY=1/u);
   assert.match(source, /--session-dir \{_REMOTE_SESSION_DIR\.as_posix\(\)\}/u);
   assert.match(source, /chmod 700 \{_REMOTE_SESSION_DIR\.as_posix\(\)\}/u);
   assert.match(source, /await super\(\)\.run\(instruction, environment, context\)/u);
