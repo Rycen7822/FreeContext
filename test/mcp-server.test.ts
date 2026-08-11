@@ -99,7 +99,8 @@ test("MCP server advertises one exact tool and serializes two concurrent calls",
     assert.equal(tool?.title, "Gather context with FreeContext");
     assert.equal(tool?.description, TOOL_DESCRIPTION);
     assert.equal(tool?.description, INVOCATION_POLICY);
-    assert.equal(tool?.description?.length, 510);
+    const descriptionLength = tool?.description?.length ?? 0;
+    assert.ok(descriptionLength >= 560 && descriptionLength <= 640);
     assert.deepEqual(tool?.annotations, {
       readOnlyHint: true,
       destructiveHint: false,

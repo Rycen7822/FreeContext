@@ -14,6 +14,7 @@ test("FreeContext skill routes broad reading to one atomic MCP tool", async () =
   assert.ok(description);
   assert.ok(Buffer.byteLength(skill, "utf8") <= 1_800);
   assert.ok([...description].length <= 420);
+  assert.match(description, /After loading, call FreeContext next before parent discovery; never batch its read\./u);
 
   for (const trigger of [
     "multi-file code/workspace exploration",
@@ -26,6 +27,10 @@ test("FreeContext skill routes broad reading to one atomic MCP tool", async () =
     assert.ok(skill.includes(trigger), `missing routing trigger: ${trigger}`);
   }
   assert.match(skill, /call `gather_context` once/u);
+  assert.match(
+    skill,
+    /Read this skill alone: never batch that read with Git, file listing, search, source\/document reads, or other task work\. Make `gather_context` the next tool action/u,
+  );
   assert.match(skill, /mcp__freecontext__gather_context.*ALL_TOOLS.*same `functions\.exec` call/u);
   assert.match(skill, /forward its result to the parent without listing the full catalog/u);
   assert.match(skill, /exact argument keys `query`.*`workspace`/u);

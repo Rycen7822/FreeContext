@@ -1,6 +1,6 @@
 import { z } from "zod";
 
-export const INVOCATION_POLICY = "Before parent discovery or broad reads, call gather_context once for read-only work spanning files/docs/evidence classes: code/workspace exploration; cross-document keyword/topic search; long-document facts/constraints; tracing, comparison, impact, planning, review, or diagnosis. Use in familiar workspaces/known files. Skip if one bounded read/search in a known target fully answers. FreeContext never edits; parent reads decisive/edit ranges. Returns compact cited evidence plus a private full-session path.";
+export const INVOCATION_POLICY = "Before parent discovery or broad reads, call gather_context once for read-only work spanning files/docs/evidence classes: code/workspace exploration; cross-document keyword/topic search; long-document facts/constraints; tracing, comparison, impact, planning, review, or diagnosis. Use in familiar workspaces/known files. After selecting FreeContext, make gather_context the next tool action; do not first list or search the repository. Skip if one bounded read/search in a known target fully answers. FreeContext never edits; parent reads decisive/edit ranges. Returns compact cited evidence plus a private full-session path.";
 
 export const TOOL_DESCRIPTION = INVOCATION_POLICY;
 

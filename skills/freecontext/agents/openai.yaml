@@ -1,6 +1,6 @@
 interface:
   display_name: "FreeContext"
-  short_description: "Route broad reading to one read-only context tool"
+  short_description: "Delegate broad reading before parent discovery"
 policy:
   allow_implicit_invocation: true
 dependencies:

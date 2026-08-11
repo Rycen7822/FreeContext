@@ -56,6 +56,8 @@ test("gather_context metadata makes broad read delegation salient without claimi
     ["long-document extraction", /long-document facts\/constraints/u],
     ["planning, review, and diagnosis", /planning, review, or diagnosis/u],
     ["familiar workspace use", /familiar workspaces\/known files/u],
+    ["immediate post-selection invocation", /After selecting FreeContext, make gather_context the next tool action/u],
+    ["no listing or search before delegation", /do not first list or search the repository/u],
     ["single-target skip", /one bounded read\/search in a known target fully answers/u],
     ["parent decisive read", /parent reads decisive\/edit ranges/u],
     ["compact output and private session", /compact cited evidence plus a private full-session path/u],
@@ -65,7 +67,7 @@ test("gather_context metadata makes broad read delegation salient without claimi
     assert.match(TOOL_DESCRIPTION, pattern, label);
   }
   assert.equal(TOOL_DESCRIPTION, INVOCATION_POLICY);
-  assert.equal(TOOL_DESCRIPTION.length, 510);
+  assert.ok(TOOL_DESCRIPTION.length >= 560 && TOOL_DESCRIPTION.length <= 640);
   assert.equal(
     SERVER_INSTRUCTIONS,
     "FreeContext exposes one read-only gather_context tool. Follow the tool description. Never send secrets/source dumps; retry only for a material gap.",
