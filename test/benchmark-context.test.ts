@@ -115,4 +115,6 @@ test("canonical Pier adapter wires per-call capture and post-run master export",
   assert.match(source, /FreeContext full session: %s/u);
   assert.match(source, /freecontext-benchmark-context\.mjs/u);
   assert.match(source, /benchmarks\/deepswe\/freecontext\.toml/u);
+  assert.match(source, /class PierCodexControl/u);
+  assert.match(source, /await PierCodexBase\.run\(self, instruction, environment, context\)/u);
 });

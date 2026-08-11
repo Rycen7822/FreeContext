@@ -12,13 +12,19 @@ import { createAssistantMessageEventStream, Type } from "@earendil-works/pi-ai";
 import { ContextBudgetError, ProviderError } from "../src/errors.js";
 import { createModel, createRequestOptions } from "../src/runtime/model.js";
 import type { PiBindings } from "../src/runtime/pi-bindings.js";
-import type { FreeContextRuntimeEvent } from "../src/runtime/pi-session.js";
-import { runPiSession } from "../src/runtime/pi-session.js";
+import type { FreeContextRuntimeEvent, PiSessionOptions } from "../src/runtime/pi-session.js";
+import { runPiSession as runPiSessionBase } from "../src/runtime/pi-session.js";
 import { assistantText, baseConfig, fakeBindings } from "./helpers.js";
 
 function bindingsWith(handler: PiBindings["runAgentLoop"]): PiBindings {
   return fakeBindings(handler);
 }
+
+const tokenCounter = {
+  countBatch: async (texts: readonly string[]) => texts.map((text) => Math.ceil(text.length / 4)),
+};
+
+const runPiSession = (options: PiSessionOptions) => runPiSessionBase({ ...options, tokenCounter });
 
 const readTool: AgentTool = {
   name: "read",
@@ -323,7 +329,11 @@ test("prepareNextTurn compacts older history and preserves two recent tool cycle
       ...context,
       messages: [
         ...prompts,
-        { role: "user" as const, content: `older request ${"x".repeat(1000)}`, timestamp: 1 },
+        {
+          role: "user" as const,
+          content: `older request ${Array.from({ length: 1000 }, (_, index) => `word${index}`).join(" ")}`,
+          timestamp: 1,
+        },
         firstAssistant,
         firstResult,
         { role: "user" as const, content: "keep first cycle", timestamp: 2 },

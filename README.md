@@ -69,6 +69,7 @@ The full interactive layer of the Pi coding agent is not included at runtime. Fr
 ### Requirements
 
 - Node.js `>= 22.19.0`
+- Python `>= 3.10` with `gigatoken` and `tiktoken` for `o200k_base` context measurement; set `FREECONTEXT_PYTHON` when the executable is not `python3`
 - `rg`: required
 - `jq`: optional; enabled automatically when available
 - `bat`, or `batcat` on Debian/Ubuntu: optional; enabled automatically when available
@@ -79,6 +80,7 @@ The full interactive layer of the Pi coding agent is not included at runtime. Fr
 git clone https://github.com/Rycen7822/FreeContext.git
 cd FreeContext
 npm install
+python3 -m pip install gigatoken tiktoken
 npm link
 ```
 
@@ -377,6 +379,7 @@ Pi coding-agent 的完整交互层没有进入运行时。FreeContext 复用其�
 ### 环境要求
 
 - Node.js `>= 22.19.0`
+- Python `>= 3.10`，并安装 `gigatoken` 和 `tiktoken`，用于基于 `o200k_base` 的上下文 token 计量；可用 `FREECONTEXT_PYTHON` 指定非默认的 Python 可执行文件
 - `rg`：必需
 - `jq`：可选，存在时自动启用
 - `bat` 或 Debian/Ubuntu 上的 `batcat`：可选，存在时自动启用
@@ -387,6 +390,7 @@ Pi coding-agent 的完整交互层没有进入运行时。FreeContext 复用其�
 git clone https://github.com/Rycen7822/FreeContext.git
 cd FreeContext
 npm install
+python3 -m pip install gigatoken tiktoken
 npm link
 ```
 

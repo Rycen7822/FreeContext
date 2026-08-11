@@ -217,7 +217,11 @@ test("format repair uses a fresh no-tool context containing only the prior outpu
     const bindings = fakeBindings(async (prompts, context, loopConfig, emit) => {
       invocation += 1;
       if (invocation === 1) {
-        const longRaw = { role: "user" as const, content: `raw ${"x".repeat(1000)}`, timestamp: 1 };
+        const longRaw = {
+          role: "user" as const,
+          content: `raw ${Array.from({ length: 1000 }, (_, index) => `word${index}`).join(" ")}`,
+          timestamp: 1,
+        };
         const beforeCompaction = {
           ...context,
           messages: [
@@ -292,7 +296,7 @@ test("format repair uses a fresh no-tool context containing only the prior outpu
     assert.deepEqual(repairContext.messages, []);
     assert.match(repairContext.systemPrompt, /repair one repository-explorer response/u);
     assert.match(repairPrompt, /<previous_output>\nThe answer is a\.js\.\n<\/previous_output>/u);
-    assert.doesNotMatch(repairPrompt, new RegExp("x".repeat(100), "u"));
+    assert.doesNotMatch(repairPrompt, /word0 word1/u);
     assert.equal(result.metrics.repaired, true);
     assert.equal(result.metrics.primary.compactions, 1);
     assert.equal(result.evidence[0]?.path, "a.js");

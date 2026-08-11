@@ -7,6 +7,8 @@ import { renderFinalAnswer, validateExplorerOutput } from "../output/evidence.js
 import { buildRepairPrompt, buildUserPrompt, REPAIR_SYSTEM_PROMPT } from "../prompt.js";
 import type { Workspace } from "../tools/contracts.js";
 import { createWorkspace } from "../tools/workspace.js";
+import type { ContextTokenCounter } from "./context-budget.js";
+import { GigatokenCounter } from "./gigatoken-counter.js";
 import type { PiSessionEventHandler, PiSessionMetrics } from "./pi-session.js";
 import { runPiSession } from "./pi-session.js";
 import type { RouterDependencies } from "./router.js";
@@ -104,7 +106,7 @@ function sessionUsage(metrics: PiSessionMetrics): Usage {
   return addUsage(metrics.usage, metrics.compactionUsage);
 }
 
-export async function runExplorer({
+async function runExplorerWithCounter({
   query,
   cwd = process.cwd(),
   cli = {},
@@ -113,7 +115,7 @@ export async function runExplorer({
   onEvent,
   onSessionCapture,
   dependencies = {},
-}: RunExplorerOptions): Promise<Readonly<ExplorerResult>> {
+}: RunExplorerOptions, tokenCounter: ContextTokenCounter): Promise<Readonly<ExplorerResult>> {
   if (typeof query !== "string" || !query.trim()) {
     throw new OutputValidationError("Repository exploration query must be a non-empty string.");
   }
@@ -125,6 +127,7 @@ export async function runExplorer({
   const startedAt = clock();
   const workspace = dependencies.workspace ?? (await createWorkspace(cwd));
   const primaryPrompt = buildUserPrompt(query);
+  const runtimeDependencies = { ...dependencies, tokenCounter };
   const routed = await runPrimaryRoute({
     cli,
     workspace,
@@ -132,7 +135,7 @@ export async function runExplorer({
     ...(signal ? { signal } : {}),
     ...(onEvent ? { onEvent } : {}),
     startedAt,
-    dependencies,
+    dependencies: runtimeDependencies,
   });
   const {
     config,
@@ -207,6 +210,7 @@ export async function runExplorer({
         ...(signal ? { signal } : {}),
         ...(onEvent ? { onEvent } : {}),
         clock,
+        tokenCounter,
         ...(dependencies.timestamp ? { timestamp: dependencies.timestamp } : {}),
       });
     } catch (error) {
@@ -270,4 +274,16 @@ export async function runExplorer({
   });
   await publishCapture(Object.freeze({ status: "completed", answer }));
   return result;
+}
+
+export async function runExplorer(options: RunExplorerOptions): Promise<Readonly<ExplorerResult>> {
+  if (options.dependencies?.tokenCounter) {
+    return runExplorerWithCounter(options, options.dependencies.tokenCounter);
+  }
+  const tokenCounter = new GigatokenCounter();
+  try {
+    return await runExplorerWithCounter(options, tokenCounter);
+  } finally {
+    await tokenCounter.close();
+  }
 }

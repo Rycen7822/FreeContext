@@ -23,4 +23,6 @@ coverage/
 /CODEX_STATE.md
 /AGENTS.md
 /.work/
+__pycache__/
+*.py[cod]
 dist/

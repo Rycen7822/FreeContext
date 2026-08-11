@@ -14,7 +14,9 @@ import {
   estimateInitialRequestTokens,
   selectCompactionCut,
 } from "./context-budget.js";
+import type { CompactionCut, ContextTokenCounter } from "./context-budget.js";
 import { compactContext } from "./context-compaction.js";
+import { GigatokenCounter } from "./gigatoken-counter.js";
 import type { FreeContextModel } from "./model.js";
 import { redactProviderError } from "./model.js";
 import { classifyProviderFailure } from "./provider-failure.js";
@@ -114,6 +116,7 @@ export interface PiSessionOptions {
   readonly onEvent?: PiSessionEventHandler;
   readonly clock?: () => number;
   readonly timestamp?: () => number;
+  readonly tokenCounter?: ContextTokenCounter;
 }
 
 function addUsage(left: Usage, right: Usage): Usage {
@@ -164,7 +167,7 @@ function lastAssistant(messages: readonly AgentMessage[]): AssistantMessage | un
   return undefined;
 }
 
-export async function runPiSession({
+async function runPiSessionWithCounter({
   bindings,
   model,
   requestOptions,
@@ -179,11 +182,11 @@ export async function runPiSession({
   onEvent,
   clock = performance.now.bind(performance),
   timestamp = Date.now,
-}: PiSessionOptions): Promise<Readonly<PiSessionResult>> {
+}: PiSessionOptions, tokenCounter: ContextTokenCounter | null): Promise<Readonly<PiSessionResult>> {
   const sessionStartedAt = clock();
-  const estimators = {
-    estimateContextTokens: bindings.estimateContextTokens,
-    estimateTokens: bindings.estimateTokens,
+  const counter = (): ContextTokenCounter => {
+    if (!tokenCounter) throw new ContextBudgetError("Context compaction requires the Gigatoken counter.");
+    return tokenCounter;
   };
   const compactionSettings = {
     enabled: config.contextCompactionEnabled,
@@ -247,8 +250,9 @@ export async function runPiSession({
   const runCompaction = async (
     messages: readonly AgentMessage[],
     reason: CompactionReason,
+    preparedCut: CompactionCut | null = null,
   ): Promise<readonly AgentMessage[]> => {
-    const cut = selectCompactionCut(messages, config.contextKeepRecentTokens, estimators);
+    const cut = preparedCut ?? await selectCompactionCut(messages, config.contextKeepRecentTokens, counter());
     if (!cut) {
       throw new ContextBudgetError(`Context ${reason} recovery has no valid compressible message span.`);
     }
@@ -260,6 +264,7 @@ export async function runPiSession({
       model,
       requestOptions,
       config,
+      tokenCounter: counter(),
       ...(signal ? { signal } : {}),
       clock,
       timestamp,
@@ -288,17 +293,20 @@ export async function runPiSession({
       promptText,
       messages: effectiveMessages,
       tools: effectiveTools,
-      estimators,
+      counter: counter(),
       contextWindow: model.contextWindow,
       reserveTokens: config.contextReserveTokens,
     });
 
   if (config.contextCompactionEnabled) {
-    let snapshot = admission();
-    assertInitialRequestFits(snapshot, effectiveMessages, config.contextKeepRecentTokens, estimators);
+    let snapshot = await admission();
+    const initialCut = snapshot.totalTokens > snapshot.availableTokens
+      ? await selectCompactionCut(effectiveMessages, config.contextKeepRecentTokens, counter())
+      : null;
+    assertInitialRequestFits(snapshot, initialCut);
     if (snapshot.totalTokens > snapshot.availableTokens) {
-      effectiveMessages = [...(await runCompaction(effectiveMessages, "threshold"))];
-      snapshot = admission();
+      effectiveMessages = [...(await runCompaction(effectiveMessages, "threshold", initialCut))];
+      snapshot = await admission();
       if (snapshot.totalTokens > snapshot.availableTokens) {
         throw new ContextBudgetError(
           `Compacted initial request still requires approximately ${snapshot.totalTokens} tokens; ` +
@@ -337,7 +345,7 @@ export async function runPiSession({
         };
       }
       if (config.contextCompactionEnabled) {
-        const tokens = estimateEffectiveContextTokens(nextContext.messages, estimators);
+        const tokens = await estimateEffectiveContextTokens(nextContext.messages, counter());
         if (bindings.shouldCompact(tokens, model.contextWindow, compactionSettings)) {
           nextContext = {
             ...nextContext,
@@ -459,4 +467,16 @@ export async function runPiSession({
       sessionMs: Math.max(0, clock() - sessionStartedAt),
     }),
   });
+}
+
+export async function runPiSession(options: PiSessionOptions): Promise<Readonly<PiSessionResult>> {
+  if (options.tokenCounter) return runPiSessionWithCounter(options, options.tokenCounter);
+  if (!options.config.contextCompactionEnabled) return runPiSessionWithCounter(options, null);
+
+  const tokenCounter = new GigatokenCounter();
+  try {
+    return await runPiSessionWithCounter(options, tokenCounter);
+  } finally {
+    await tokenCounter.close();
+  }
 }

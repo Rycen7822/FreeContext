@@ -2,7 +2,7 @@ import type { AgentMessage } from "@earendil-works/pi-agent-core";
 import type { AssistantMessage, SimpleStreamOptions, Usage } from "@earendil-works/pi-ai";
 import type { FreeContextConfig } from "../config.js";
 import { ProviderError } from "../errors.js";
-import type { CompactionCut } from "./context-budget.js";
+import type { CompactionCut, ContextTokenCounter } from "./context-budget.js";
 import { estimateEffectiveContextTokens } from "./context-budget.js";
 import type { PiBindings } from "./pi-bindings.js";
 import type { FreeContextModel } from "./model.js";
@@ -52,6 +52,7 @@ export async function compactContext({
   model,
   requestOptions,
   config,
+  tokenCounter,
   signal,
   clock = performance.now.bind(performance),
   timestamp = Date.now,
@@ -61,6 +62,7 @@ export async function compactContext({
   readonly model: FreeContextModel;
   readonly requestOptions: Readonly<SimpleStreamOptions>;
   readonly config: FreeContextConfig;
+  readonly tokenCounter: ContextTokenCounter;
   readonly signal?: AbortSignal;
   readonly clock?: () => number;
   readonly timestamp?: () => number;
@@ -106,10 +108,7 @@ export async function compactContext({
     new Date(timestamp()).toISOString(),
   );
   const contextMessages = [summaryMessage, ...cut.retainedTail];
-  const estimatedTokensAfter = estimateEffectiveContextTokens(contextMessages, {
-    estimateContextTokens: bindings.estimateContextTokens,
-    estimateTokens: bindings.estimateTokens,
-  });
+  const estimatedTokensAfter = await estimateEffectiveContextTokens(contextMessages, tokenCounter);
   if (estimatedTokensAfter >= cut.tokensBefore) {
     throw new ProviderError(
       `Context summarization did not reduce estimated usage (${cut.tokensBefore} -> ${estimatedTokensAfter}).`,

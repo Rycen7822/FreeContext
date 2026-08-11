@@ -24,29 +24,60 @@ export interface CompactionCut {
   readonly estimatedRetainedTokens: number;
 }
 
-export interface ContextEstimators {
-  readonly estimateContextTokens: (messages: AgentMessage[]) => { readonly tokens: number };
-  readonly estimateTokens: (message: AgentMessage) => number;
+export interface ContextTokenCounter {
+  readonly countBatch: (texts: readonly string[]) => Promise<readonly number[]>;
 }
 
-export function estimateEffectiveContextTokens(
-  messages: readonly AgentMessage[],
-  estimators: ContextEstimators,
-): number {
-  let lastSummaryIndex = -1;
+function contentText(content: string | readonly { readonly type: string; readonly text?: string }[]): string {
+  if (typeof content === "string") return content;
+  return content.flatMap((block) => (block.type === "text" && block.text ? [block.text] : [])).join("\n");
+}
+
+function messageText(message: AgentMessage): string {
+  switch (message.role) {
+    case "user":
+    case "custom":
+    case "toolResult":
+      return contentText(message.content);
+    case "assistant":
+      return message.content
+        .flatMap((block) => {
+          if (block.type === "text") return [block.text];
+          if (block.type === "thinking") return [block.thinking];
+          if (block.type === "toolCall") return [`${block.name}\n${JSON.stringify(block.arguments)}`];
+          return [];
+        })
+        .join("\n");
+    case "bashExecution":
+      return `${message.command}\n${message.output}`;
+    case "branchSummary":
+    case "compactionSummary":
+      return message.summary;
+  }
+}
+
+function effectiveStart(messages: readonly AgentMessage[]): number {
   for (let index = messages.length - 1; index >= 0; index -= 1) {
-    if (messages[index]?.role === "compactionSummary") {
-      lastSummaryIndex = index;
-      break;
-    }
+    if (messages[index]?.role === "compactionSummary") return index;
   }
-  if (lastSummaryIndex < 0) return estimators.estimateContextTokens([...messages]).tokens;
-  let tokens = 0;
-  for (let index = lastSummaryIndex; index < messages.length; index += 1) {
-    const message = messages[index];
-    if (message) tokens += estimators.estimateTokens(message);
-  }
-  return tokens;
+  return 0;
+}
+
+async function messageTokenCounts(
+  messages: readonly AgentMessage[],
+  counter: ContextTokenCounter,
+): Promise<readonly number[]> {
+  const counts = await counter.countBatch(messages.map(messageText));
+  if (counts.length !== messages.length) throw new ContextBudgetError("Tokenizer returned an invalid batch length.");
+  return counts;
+}
+
+export async function estimateEffectiveContextTokens(
+  messages: readonly AgentMessage[],
+  counter: ContextTokenCounter,
+): Promise<number> {
+  const counts = await messageTokenCounts(messages, counter);
+  return counts.slice(effectiveStart(messages)).reduce((total, count) => total + count, 0);
 }
 
 function estimationMessage(content: string): AgentMessage {
@@ -59,12 +90,12 @@ function serializedTools(tools: readonly AgentTool[]): string {
   );
 }
 
-export function estimateInitialRequestTokens({
+export async function estimateInitialRequestTokens({
   systemPrompt,
   promptText,
   messages,
   tools,
-  estimators,
+  counter,
   contextWindow,
   reserveTokens,
 }: {
@@ -72,14 +103,18 @@ export function estimateInitialRequestTokens({
   readonly promptText: string;
   readonly messages: readonly AgentMessage[];
   readonly tools: readonly AgentTool[];
-  readonly estimators: ContextEstimators;
+  readonly counter: ContextTokenCounter;
   readonly contextWindow: number;
   readonly reserveTokens: number;
-}): ContextUsageSnapshot {
-  const messageTokens = estimateEffectiveContextTokens(messages, estimators);
-  const fixedTokens = estimators.estimateTokens(
-    estimationMessage(`${systemPrompt}\n${promptText}\n${serializedTools(tools)}`),
-  );
+}): Promise<ContextUsageSnapshot> {
+  const effectiveMessages = messages.slice(effectiveStart(messages));
+  const fixed = estimationMessage(`${systemPrompt}\n${promptText}\n${serializedTools(tools)}`);
+  const counts = await counter.countBatch([...effectiveMessages.map(messageText), messageText(fixed)]);
+  if (counts.length !== effectiveMessages.length + 1) {
+    throw new ContextBudgetError("Tokenizer returned an invalid initial-request batch length.");
+  }
+  const fixedTokens = counts.at(-1) ?? 0;
+  const messageTokens = counts.slice(0, -1).reduce((total, count) => total + count, 0);
   return Object.freeze({
     messageTokens,
     fixedTokens,
@@ -92,12 +127,14 @@ function isRetainedBoundary(message: AgentMessage): boolean {
   return message.role === "user" || message.role === "assistant" || message.role === "compactionSummary";
 }
 
-export function selectCompactionCut(
+export async function selectCompactionCut(
   messages: readonly AgentMessage[],
   keepRecentTokens: number,
-  estimators: ContextEstimators,
-): CompactionCut | null {
+  counter: ContextTokenCounter,
+): Promise<CompactionCut | null> {
   if (messages.length < 2) return null;
+
+  const counts = await messageTokenCounts(messages, counter);
 
   let previousSummary: string | undefined;
   let historyStart = 0;
@@ -115,7 +152,9 @@ export function selectCompactionCut(
   for (let index = messages.length - 1; index >= historyStart; index -= 1) {
     const message = messages[index];
     if (!message) continue;
-    estimatedRetainedTokens += estimators.estimateTokens(message);
+    const messageTokens = counts[index] ?? 0;
+    if (estimatedRetainedTokens > 0 && messageTokens > keepRecentTokens) break;
+    estimatedRetainedTokens += messageTokens;
     cutIndex = index;
     if (estimatedRetainedTokens >= keepRecentTokens) break;
   }
@@ -137,19 +176,17 @@ export function selectCompactionCut(
     messagesToSummarize: Object.freeze(messagesToSummarize),
     retainedTail: Object.freeze(retainedTail),
     previousSummary,
-    tokensBefore: estimateEffectiveContextTokens(messages, estimators),
-    estimatedRetainedTokens: retainedTail.reduce((total, message) => total + estimators.estimateTokens(message), 0),
+    tokensBefore: counts.slice(effectiveStart(messages)).reduce((total, count) => total + count, 0),
+    estimatedRetainedTokens: counts.slice(cutIndex).reduce((total, count) => total + count, 0),
   });
 }
 
 export function assertInitialRequestFits(
   snapshot: ContextUsageSnapshot,
-  messages: readonly AgentMessage[],
-  keepRecentTokens: number,
-  estimators: ContextEstimators,
+  cut: CompactionCut | null,
 ): void {
   if (snapshot.totalTokens <= snapshot.availableTokens) return;
-  if (selectCompactionCut(messages, keepRecentTokens, estimators)) return;
+  if (cut) return;
   throw new ContextBudgetError(
     `Initial request requires approximately ${snapshot.totalTokens} tokens but only ` +
       `${snapshot.availableTokens} are available after the context reserve.`,

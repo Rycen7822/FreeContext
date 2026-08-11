@@ -9,6 +9,10 @@ import { compactContext } from "../src/runtime/context-compaction.js";
 import { createModel, createRequestOptions } from "../src/runtime/model.js";
 import { assistantText, baseConfig, fakeBindings } from "./helpers.js";
 
+const tokenCounter = {
+  countBatch: async (texts: readonly string[]) => texts.map((text) => text.length),
+};
+
 interface CapturedSummaryCall {
   readonly model: Model<string>;
   readonly context: Context;
@@ -59,6 +63,7 @@ test("summary requests use no tools, a fresh session, and the existing authentic
     model,
     requestOptions,
     config,
+    tokenCounter,
     clock: () => 5,
     timestamp: () => 1000,
   });
@@ -106,6 +111,7 @@ test("repeated compaction merges the previous summary and preserves the recent t
     model: createModel(config),
     requestOptions: createRequestOptions(config),
     config,
+    tokenCounter,
   });
   const prompt = calls[0]?.context.messages[0];
   assert.equal(prompt?.role, "user");
@@ -129,6 +135,7 @@ test("a non-reducing or empty summary is rejected without dropping history", asy
       model: createModel(config),
       requestOptions: createRequestOptions(config),
       config,
+      tokenCounter,
     }),
     /did not reduce/u,
   );
@@ -143,6 +150,7 @@ test("a non-reducing or empty summary is rejected without dropping history", asy
       model: createModel(config),
       requestOptions: createRequestOptions(config),
       config,
+      tokenCounter,
     }),
     /empty summary/u,
   );
@@ -162,6 +170,7 @@ test("summary aborts and provider failures propagate once with secrets redacted"
       model: createModel(config),
       requestOptions: createRequestOptions(config),
       config,
+      tokenCounter,
       signal: controller.signal,
     }),
     ProviderError,
@@ -181,6 +190,7 @@ test("summary aborts and provider failures propagate once with secrets redacted"
       model: createModel(config),
       requestOptions: createRequestOptions(config),
       config,
+      tokenCounter,
     }),
     (error) => {
       assert.ok(error instanceof ProviderError);

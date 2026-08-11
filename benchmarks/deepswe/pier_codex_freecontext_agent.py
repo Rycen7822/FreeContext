@@ -204,3 +204,65 @@ class PierCodexFreeContext(PierCodexBase):
             )
         except Exception:
             self.logger.exception("FreeContext task-container cleanup failed")
+
+
+class PierCodexControl(PierCodexFreeContext):
+    """Current-default Codex using the same local runtime without FreeContext."""
+
+    @staticmethod
+    def name() -> str:
+        return "codex-control"
+
+    def network_allowlist(self) -> NetworkAllowlist:
+        return PierCodexBase.network_allowlist(self)
+
+    async def run(
+        self, instruction: str, environment: BaseEnvironment, context: AgentContext
+    ) -> None:
+        await self._upload_control_runtime(environment)
+        try:
+            await PierCodexBase.run(self, instruction, environment, context)
+        finally:
+            await self._cleanup_control_runtime(environment)
+
+    async def _upload_control_runtime(self, environment: BaseEnvironment) -> None:
+        archive = _runtime_archive()
+        if not archive.is_file():
+            raise RuntimeError(f"missing FreeContext runtime archive: {archive}")
+
+        remote_root = _REMOTE_ROOT.as_posix()
+        remote_archive = "/tmp/codex-control-runtime.tar.gz"
+        await self.exec_as_root(
+            environment,
+            command=f"rm -rf {remote_root} {remote_archive}; mkdir -p {remote_root}",
+        )
+        await environment.upload_file(archive, remote_archive)
+
+        default_user = environment.default_user or "agent"
+        await self.exec_as_root(
+            environment,
+            command=(
+                f"tar -xzf {remote_archive} -C {remote_root}; rm -f {remote_archive}; "
+                f"chown -R {default_user} {remote_root}; "
+                f"chmod 755 {_REMOTE_CODEX.as_posix()} "
+                f"{_REMOTE_CODE_MODE_HOST.as_posix()} {_REMOTE_RG.as_posix()}; "
+                f"ln -sfn {_REMOTE_CODEX.as_posix()} /usr/local/bin/codex; "
+                "if ! command -v rg >/dev/null 2>&1; then "
+                f"ln -sfn {_REMOTE_RG.as_posix()} /usr/local/bin/rg; fi"
+            ),
+        )
+
+    async def _cleanup_control_runtime(self, environment: BaseEnvironment) -> None:
+        try:
+            await self.exec_as_root(
+                environment,
+                command=(
+                    "if [ \"$(readlink /usr/local/bin/codex 2>/dev/null || true)\" = "
+                    f"\"{_REMOTE_CODEX.as_posix()}\" ]; then rm -f /usr/local/bin/codex; fi; "
+                    "if [ \"$(readlink /usr/local/bin/rg 2>/dev/null || true)\" = "
+                    f"\"{_REMOTE_RG.as_posix()}\" ]; then rm -f /usr/local/bin/rg; fi; "
+                    f"rm -rf {_REMOTE_ROOT.as_posix()}"
+                ),
+            )
+        except Exception:
+            self.logger.exception("Codex control task-container cleanup failed")

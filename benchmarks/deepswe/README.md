@@ -2,6 +2,8 @@
 
 `pier_codex_freecontext_agent.py` is the canonical Pier adapter for FreeContext-enabled DeepSWE runs. It keeps the main Codex configuration unchanged and injects only the TokenRhythm credential used by the FreeContext subagent.
 
+The same module exports `PierCodexControl` for paired benchmarks. It uploads the identical local Codex runtime but does not register the FreeContext skill, wrapper, guidance, or TokenRhythm credential. Pass the same model, reasoning, authentication, and Codex TOML to both classes so FreeContext remains the only experimental distinction.
+
 The adapter subclasses the existing NoemaLoom Pier Codex base used by the local DeepSWE harness. Put that harness directory (containing `pier_codex_noemaloom_agent.py`) on `PYTHONPATH` together with this directory before passing `pier_codex_freecontext_agent:PierCodexFreeContext` to Pier.
 
 Set `FREECONTEXT_RUNTIME_ARCHIVE` to a task-owned runtime archive containing the built `dist/`, `bin/`, `prompts/`, `skills/`, this directory's `freecontext.toml`, production dependencies, and runtime binaries. The adapter never pulls or removes Docker images and does not clean resources owned by other runs.

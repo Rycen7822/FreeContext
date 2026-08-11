@@ -6,6 +6,7 @@ import type { RepositoryToolSet, ToolExecutables, Workspace } from "../tools/con
 import { createRepositoryTools } from "../tools/index.js";
 import type { FreeContextModel, FreeContextRequestOptions } from "./model.js";
 import { createModel, createRequestOptions } from "./model.js";
+import type { ContextTokenCounter } from "./context-budget.js";
 import type { PiBindings } from "./pi-bindings.js";
 import { loadPiBindings } from "./pi-bindings.js";
 import type { PiSessionEventHandler, PiSessionResult } from "./pi-session.js";
@@ -19,6 +20,7 @@ export interface RouterDependencies {
   readonly systemPrompt?: string;
   readonly clock?: () => number;
   readonly timestamp?: () => number;
+  readonly tokenCounter?: ContextTokenCounter;
 }
 
 export interface PrimaryRouteResult {
@@ -102,6 +104,7 @@ export async function runPrimaryRoute({
         ...(signal ? { signal } : {}),
         ...(onEvent ? { onEvent } : {}),
         clock,
+        ...(dependencies.tokenCounter ? { tokenCounter: dependencies.tokenCounter } : {}),
         ...(dependencies.timestamp ? { timestamp: dependencies.timestamp } : {}),
       });
       primarySessionMs += Math.max(0, clock() - primaryStartedAt);

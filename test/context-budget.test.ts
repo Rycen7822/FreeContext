@@ -4,7 +4,7 @@ import { shouldCompact } from "@earendil-works/pi-agent-core";
 import type { AgentMessage, AgentTool } from "@earendil-works/pi-agent-core";
 import { Type } from "@earendil-works/pi-ai";
 import { ContextBudgetError } from "../src/errors.js";
-import type { ContextEstimators } from "../src/runtime/context-budget.js";
+import type { ContextTokenCounter } from "../src/runtime/context-budget.js";
 import {
   assertInitialRequestFits,
   estimateEffectiveContextTokens,
@@ -13,17 +13,12 @@ import {
 } from "../src/runtime/context-budget.js";
 import { assistantText } from "./helpers.js";
 
-const uniformEstimators: ContextEstimators = {
-  estimateTokens: () => 10,
-  estimateContextTokens: (messages) => ({ tokens: messages.length * 10 }),
+const uniformCounter: ContextTokenCounter = {
+  countBatch: async (texts) => texts.map(() => 10),
 };
 
-const lengthEstimators: ContextEstimators = {
-  estimateTokens: (message) => {
-    if (message.role === "user" && typeof message.content === "string") return message.content.length;
-    return 10;
-  },
-  estimateContextTokens: (messages) => ({ tokens: messages.length * 10 }),
+const lengthCounter: ContextTokenCounter = {
+  countBatch: async (texts) => texts.map((text) => text.length),
 };
 
 const tool: AgentTool = {
@@ -42,40 +37,40 @@ test("compaction threshold is deterministic below, at, and above the reserve bou
   assert.equal(shouldCompact(100, 100, { ...settings, enabled: false }), false);
 });
 
-test("initial admission accounts for system, prompt, messages, and tool schemas", () => {
+test("initial admission accounts for system, prompt, messages, and tool schemas", async () => {
   const messages: AgentMessage[] = [{ role: "user", content: "history", timestamp: 0 }];
-  const snapshot = estimateInitialRequestTokens({
+  const snapshot = await estimateInitialRequestTokens({
     systemPrompt: "system",
     promptText: "prompt",
     messages,
     tools: [tool],
-    estimators: lengthEstimators,
+    counter: lengthCounter,
     contextWindow: 1000,
     reserveTokens: 200,
   });
-  assert.equal(snapshot.messageTokens, 10);
+  assert.equal(snapshot.messageTokens, "history".length);
   assert.ok(snapshot.fixedTokens > "systemprompt".length);
   assert.equal(snapshot.totalTokens, snapshot.messageTokens + snapshot.fixedTokens);
   assert.equal(snapshot.availableTokens, 800);
 });
 
-test("an oversized initial request without compressible history is rejected before a provider call", () => {
-  const snapshot = estimateInitialRequestTokens({
+test("an oversized initial request without compressible history is rejected before a provider call", async () => {
+  const snapshot = await estimateInitialRequestTokens({
     systemPrompt: "s".repeat(100),
     promptText: "p".repeat(100),
     messages: [],
     tools: [],
-    estimators: lengthEstimators,
+    counter: lengthCounter,
     contextWindow: 200,
     reserveTokens: 50,
   });
   assert.throws(
-    () => assertInitialRequestFits(snapshot, [], 20, lengthEstimators),
+    () => assertInitialRequestFits(snapshot, null),
     ContextBudgetError,
   );
 });
 
-test("repeated compaction extracts the previous summary instead of serializing it again", () => {
+test("repeated compaction extracts the previous summary instead of serializing it again", async () => {
   const previous = {
     role: "compactionSummary" as const,
     summary: "prior verified state",
@@ -88,7 +83,7 @@ test("repeated compaction extracts the previous summary instead of serializing i
     assistantText("middle"),
     { role: "user", content: "recent", timestamp: 2 },
   ];
-  const cut = selectCompactionCut(messages, 15, uniformEstimators);
+  const cut = await selectCompactionCut(messages, 15, uniformCounter);
   assert.ok(cut);
   assert.equal(cut.previousSummary, "prior verified state");
   assert.deepEqual(cut.messagesToSummarize, [messages[1]]);
@@ -96,7 +91,7 @@ test("repeated compaction extracts the previous summary instead of serializing i
   assert.equal(cut.messagesToSummarize.includes(previous), false);
 });
 
-test("cut selection keeps an assistant tool call and its following result together", () => {
+test("cut selection keeps an assistant tool call and its following result together", async () => {
   const assistant = assistantText("", {
     content: [{ type: "toolCall", id: "call-1", name: "read", arguments: { path: "a.ts" } }],
     stopReason: "toolUse",
@@ -115,14 +110,14 @@ test("cut selection keeps an assistant tool call and its following result togeth
     result,
     { role: "user", content: "recent", timestamp: 3 },
   ];
-  const cut = selectCompactionCut(messages, 25, uniformEstimators);
+  const cut = await selectCompactionCut(messages, 25, uniformCounter);
   assert.ok(cut);
   assert.equal(cut.retainedTail[0], assistant);
   assert.equal(cut.retainedTail[1], result);
   assert.notEqual(cut.retainedTail[0]?.role, "toolResult");
 });
 
-test("a compaction summary invalidates stale provider usage retained on assistant messages", () => {
+test("a compaction summary invalidates stale provider usage retained on assistant messages", async () => {
   const assistant = assistantText("recent", {
     usage: {
       input: 900,
@@ -138,5 +133,5 @@ test("a compaction summary invalidates stale provider usage retained on assistan
     { role: "compactionSummary", summary: "state", tokensBefore: 1000, timestamp: 0 },
     assistant,
   ];
-  assert.equal(estimateEffectiveContextTokens(messages, uniformEstimators), 20);
+  assert.equal(await estimateEffectiveContextTokens(messages, uniformCounter), 20);
 });

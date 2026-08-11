@@ -2,10 +2,22 @@ import { access } from "node:fs/promises";
 import { constants as fsConstants } from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { spawn } from "node:child_process";
+import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import type { ProcessOptions, ProcessResult } from "./contracts.js";
 
 const DEFAULT_PATH = process.env.PATH || "/usr/local/bin:/usr/bin:/bin";
+
+export type GigatokenWorkerProcess = ChildProcessWithoutNullStreams;
+
+export function spawnGigatokenWorker(python: string, worker: string): GigatokenWorkerProcess {
+  if (!path.isAbsolute(worker)) throw new Error(`Gigatoken worker path must be absolute: ${worker}`);
+  return spawn(python, [worker], {
+    env: sanitizedToolEnv(),
+    shell: false,
+    windowsHide: true,
+    stdio: ["pipe", "pipe", "pipe"],
+  });
+}
 
 export function sanitizedToolEnv(extra: NodeJS.ProcessEnv = {}): NodeJS.ProcessEnv {
   return {
