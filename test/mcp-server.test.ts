@@ -87,13 +87,19 @@ test("MCP server advertises one exact tool and serializes two concurrent calls",
     await client.connect(clientTransport);
 
     assert.equal(client.getInstructions(), SERVER_INSTRUCTIONS);
-    assert.ok(client.getInstructions()?.startsWith(INVOCATION_POLICY));
-    assert.ok(SERVER_INSTRUCTIONS.length <= 512);
+    assert.equal(
+      client.getInstructions(),
+      "FreeContext exposes one read-only gather_context tool. Follow the tool description. Never send secrets/source dumps; retry only for a material gap.",
+    );
+    assert.equal(SERVER_INSTRUCTIONS.length, 147);
+    assert.equal(client.getInstructions()?.includes(INVOCATION_POLICY), false);
     const listed = await client.listTools();
     assert.deepEqual(listed.tools.map(({ name }) => name), ["gather_context"]);
     const tool = listed.tools[0];
     assert.equal(tool?.title, "Gather context with FreeContext");
     assert.equal(tool?.description, TOOL_DESCRIPTION);
+    assert.equal(tool?.description, INVOCATION_POLICY);
+    assert.equal(tool?.description?.length, 510);
     assert.deepEqual(tool?.annotations, {
       readOnlyHint: true,
       destructiveHint: false,

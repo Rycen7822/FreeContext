@@ -58,26 +58,23 @@ test("gather_context metadata makes broad read delegation salient without claimi
     ["familiar workspace use", /familiar workspaces\/known files/u],
     ["single-target skip", /one bounded read\/search in a known target fully answers/u],
     ["parent decisive read", /parent reads decisive\/edit ranges/u],
+    ["compact output and private session", /compact cited evidence plus a private full-session path/u],
   ] as const;
 
   for (const [label, pattern] of fixtures) {
-    assert.match(SERVER_INSTRUCTIONS, pattern, label);
+    assert.match(TOOL_DESCRIPTION, pattern, label);
   }
+  assert.equal(TOOL_DESCRIPTION, INVOCATION_POLICY);
+  assert.equal(TOOL_DESCRIPTION.length, 510);
   assert.equal(
     SERVER_INSTRUCTIONS,
-    `${INVOCATION_POLICY} Never send secrets/source dumps; retry only for a material gap.`,
+    "FreeContext exposes one read-only gather_context tool. Follow the tool description. Never send secrets/source dumps; retry only for a material gap.",
   );
-  assert.equal(SERVER_INSTRUCTIONS.length, 509);
-  assert.ok(SERVER_INSTRUCTIONS.length <= 512);
-  assert.equal(
-    TOOL_DESCRIPTION,
-    "Delegates one atomic read-only exploration request and returns compact cited evidence plus a private full-session path.",
-  );
-  assert.doesNotMatch(TOOL_DESCRIPTION, /Before parent|cross-document|Skip if/u);
+  assert.equal(SERVER_INSTRUCTIONS.length, 147);
   assert.equal(`${SERVER_INSTRUCTIONS}\n${TOOL_DESCRIPTION}`.split(INVOCATION_POLICY).length - 1, 1);
-  const skipRule = SERVER_INSTRUCTIONS.slice(SERVER_INSTRUCTIONS.indexOf("Skip if"));
+  const skipRule = TOOL_DESCRIPTION.slice(TOOL_DESCRIPTION.indexOf("Skip if"));
   assert.doesNotMatch(skipRule, /cross-document|long-document|code\/workspace/u);
-  assert.match(SERVER_INSTRUCTIONS, /FreeContext never edits/u);
+  assert.match(TOOL_DESCRIPTION, /FreeContext never edits/u);
   assert.doesNotMatch(
     `${SERVER_INSTRUCTIONS}\n${TOOL_DESCRIPTION}`,
     /\b(?:run tests|install packages|commit|push|edit files|write files)\b/u,
