@@ -51,4 +51,4 @@ models = ["claude"]
 
 [routes.resilient]
 models = ["claude", "gpt"]
-fallback_on = ["timeout", "rate_limit", "server_error"]
+fallback_on = ["timeout", "rate_limit", "server_error", "connection"]

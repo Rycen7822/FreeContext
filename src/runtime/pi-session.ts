@@ -19,7 +19,7 @@ import { compactContext } from "./context-compaction.js";
 import { GigatokenCounter } from "./gigatoken-counter.js";
 import type { FreeContextModel } from "./model.js";
 import { redactProviderError } from "./model.js";
-import { classifyProviderFailure } from "./provider-failure.js";
+import { classifyProviderFailure, providerStatusCode } from "./provider-failure.js";
 import type { PiBindings } from "./pi-bindings.js";
 
 const FINALIZE_MESSAGE = Object.freeze({
@@ -214,15 +214,18 @@ async function runPiSessionWithCounter({
   let toolExecutionMsMax = 0;
   const toolStarts = new Map<string, number>();
 
-  const providerError = (value: unknown, allowFallback = false): ProviderError =>
-    new ProviderError(
+  const providerError = (value: unknown, allowFallback = false): ProviderError => {
+    const statusCode = providerStatusCode(value);
+    return new ProviderError(
       redactProviderError(value instanceof Error ? value.message : value, config),
       {
         cause: value,
         category: classifyProviderFailure(value),
+        ...(statusCode !== undefined ? { statusCode } : {}),
         safeToFallback: allowFallback && toolCallCount === 0 && !signal?.aborted,
       },
     );
+  };
 
   const eventState = (): PiSessionEventState => ({ turnCount, toolCallCount, providerAttempts });
   const emitCustom = async (event: Exclude<FreeContextRuntimeEvent, AgentEvent>): Promise<void> => {

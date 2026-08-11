@@ -201,7 +201,9 @@ function parseRoutes(value: unknown): Readonly<Record<string, Readonly<RouteDocu
     if (!models.length) throw new ConfigurationError(`${location}.models must contain at least one model.`);
     routes[id] = Object.freeze({
       models: Object.freeze(models),
-      fallbackOn: Object.freeze(stringArray(route, "fallback_on", location, ["timeout", "rate_limit", "server_error"])),
+      fallbackOn: Object.freeze(
+        stringArray(route, "fallback_on", location, ["timeout", "rate_limit", "server_error", "connection"]),
+      ),
     });
   }
   if (!Object.keys(routes).length) throw new ConfigurationError("routes must define at least one route.");

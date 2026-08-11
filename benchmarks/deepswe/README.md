@@ -19,7 +19,9 @@ Set `FREECONTEXT_RUNTIME_ARCHIVE` to a task-owned archive containing the built `
 - enabled tool `gather_context` only;
 - explicit approval for that read-only annotated tool.
 
-Codex starts the MCP launcher once. The root-owned launcher reads the task-owned mode-`0600` TokenRhythm secret, exports `TOKENRHYTHM_API_KEY` only to the FreeContext server process, and `exec`s `bin/freecontext-mcp.mjs` with the bundled TOML and `/logs/agent/freecontext-sessions`. The token is never written into TOML, Codex guidance, a master context, or a FreeContext session. The plaintext copy and launcher are removed after verified export.
+The benchmark host may set `FREECONTEXT_PROVIDER_BOOTSTRAP_PROFILE` to a local profile containing the authorized TokenRhythm URL and API key; it defaults to `/home/xu/.codex/ds.config.toml`. The adapter reads only the `model_providers.tokenrhythm` URL/key, verifies that the URL matches the bundled FreeContext TOML, and ignores the profile's selected model, wire protocol, and other Codex settings. The profile is a bootstrap source, not the main Codex or embedded Pi configuration.
+
+The adapter copies only the extracted key to a task-owned mode-`0600` secret; it never changes the main Codex configuration. Codex starts the MCP launcher once. The root-owned launcher reads that secret, exports `TOKENRHYTHM_API_KEY` only to the FreeContext server process, and `exec`s `bin/freecontext-mcp.mjs` with the bundled TOML and `/logs/agent/freecontext-sessions`. FreeContext's embedded Pi runtime resolves TokenRhythm and `deepseek-v4-flash-0731` from that TOML. The token is never written into TOML, Codex guidance, a master context, or a FreeContext session. The plaintext copy and launcher are removed after verified export.
 
 ## Preserved artifacts
 

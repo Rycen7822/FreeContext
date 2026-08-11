@@ -83,7 +83,9 @@ export function normalizeMaxTokensField(value: unknown, name: string): OpenAIMax
 }
 
 export function normalizeFallbackReason(value: string, name: string): FallbackReason {
-  if (value === "timeout" || value === "rate_limit" || value === "server_error") return value;
+  if (value === "timeout" || value === "rate_limit" || value === "server_error" || value === "connection") {
+    return value;
+  }
   throw new ConfigurationError(`${name} has unsupported fallback reason: ${value}`);
 }
 

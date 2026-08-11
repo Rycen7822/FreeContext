@@ -178,18 +178,36 @@ test("gather_context persists no_evidence, provider failure, and abort terminal 
     {
       expectedStatus: "no_evidence",
       expectedCode: "OUTPUT_VALIDATION_ERROR",
+      expectedCategory: undefined,
+      expectedStatusCode: undefined,
       abort: false,
       error: new OutputValidationError("No locally valid evidence.", { problems: ["Missing evidence."] }),
     },
     {
       expectedStatus: "failed",
       expectedCode: "PROVIDER_ERROR",
+      expectedCategory: "server_error",
+      expectedStatusCode: 503,
       abort: false,
-      error: new ProviderError("provider unavailable"),
+      error: new ProviderError("provider unavailable", {
+        category: "server_error",
+        statusCode: 503,
+        cause: { apiKey: "private-provider-key", baseUrl: "https://private-provider.invalid/v1" },
+      }),
+    },
+    {
+      expectedStatus: "failed",
+      expectedCode: "PROVIDER_ERROR",
+      expectedCategory: "connection",
+      expectedStatusCode: undefined,
+      abort: false,
+      error: new ProviderError("Connection error.", { category: "connection" }),
     },
     {
       expectedStatus: "failed",
       expectedCode: "ABORTED",
+      expectedCategory: undefined,
+      expectedStatusCode: undefined,
       abort: true,
       error: new Error("raw abort reason"),
     },
@@ -224,6 +242,11 @@ test("gather_context persists no_evidence, provider failure, and abort terminal 
       const document = JSON.parse(await readFile(output.sessionFile, "utf8"));
       assert.equal(document.result.status, fixture.expectedStatus);
       assert.equal(document.terminalError.code, fixture.expectedCode);
+      assert.equal(document.terminalError.category, fixture.expectedCategory);
+      assert.equal(document.terminalError.statusCode, fixture.expectedStatusCode);
+      const visible = JSON.stringify({ content: call.content, structuredContent: call.structuredContent });
+      assert.doesNotMatch(visible, /category|statusCode|server_error|503/u);
+      assert.doesNotMatch(JSON.stringify(document), /private-provider-key|private-provider\.invalid/u);
       if (fixture.expectedStatus === "no_evidence") {
         assert.deepEqual(
           (call._meta?.freecontext as { validationProblems?: unknown }).validationProblems,

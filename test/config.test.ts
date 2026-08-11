@@ -50,7 +50,7 @@ max_tokens_field = "max_completion_tokens"
 
 [routes.default]
 models = ["primary", "backup"]
-fallback_on = ["timeout", "rate_limit", "server_error"]
+fallback_on = ["timeout", "rate_limit", "server_error", "connection"]
 
 [routes.backup_only]
 models = ["backup"]
@@ -76,7 +76,7 @@ test("resolveConfig loads TOML catalogs and keeps CLI over environment over file
       processEnv: { ...KEYS, FREECONTEXT_MAX_TURNS: "6" },
     });
     assert.equal(route.route, "default");
-    assert.deepEqual(route.fallbackOn, ["timeout", "rate_limit", "server_error"]);
+    assert.deepEqual(route.fallbackOn, ["timeout", "rate_limit", "server_error", "connection"]);
     assert.equal(route.targets.length, 2);
     assert.equal(route.targets[0]?.target, "primary");
     assert.equal(route.targets[0]?.provider, "primary");
@@ -121,6 +121,7 @@ test("target and route overrides are deterministic", async () => {
       processEnv: { ...KEYS, FREECONTEXT_ROUTE: "backup_only" },
     });
     assert.equal(route.route, "backup_only");
+    assert.deepEqual(route.fallbackOn, ["timeout", "rate_limit", "server_error", "connection"]);
     assert.deepEqual(route.targets.map((item) => item.target), ["backup"]);
   });
 });

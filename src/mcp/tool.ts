@@ -4,6 +4,7 @@ import { FreeContextError, OutputValidationError } from "../errors.js";
 import type { ContextTokenCounter } from "../runtime/context-budget.js";
 import { runExplorer } from "../runtime/run.js";
 import type { ExplorerResult } from "../runtime/run.js";
+import { captureError } from "../runtime/session-capture.js";
 import type { ExplorerCapturedError, ExplorerSessionCapture } from "../runtime/session-capture.js";
 import type { McpRuntimeEvent, McpSessionReservation } from "./session.js";
 import { commitMcpSession, reserveMcpSession } from "./session.js";
@@ -93,7 +94,7 @@ function terminalError(error: unknown, signal?: AbortSignal): Readonly<ExplorerC
     return Object.freeze({ name: "AbortError", code: "ABORTED", message: "FreeContext request was aborted." });
   }
   if (error instanceof FreeContextError) {
-    return Object.freeze({ name: error.name, code: error.code, message: error.message });
+    return captureError(error);
   }
   return Object.freeze({ name: "Error", code: "UNEXPECTED_ERROR", message: "Unexpected FreeContext failure." });
 }

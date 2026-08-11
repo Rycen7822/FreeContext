@@ -14,6 +14,7 @@ function routeConfig(fallbackOn: ResolvedRouteConfig["fallbackOn"] = [
   "timeout",
   "rate_limit",
   "server_error",
+  "connection",
 ]): ResolvedRouteConfig {
   return baseRouteConfig([
     baseConfig({ target: "primary", provider: "primary-provider" }),
@@ -47,13 +48,14 @@ async function runRoute(
   });
 }
 
-test("route falls back in order for timeout, rate-limit, and server failures", async () => {
+test("route falls back in order for configured provider failures", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "freecontext-route-"));
   try {
     const cases: ReadonlyArray<readonly [ResolvedRouteConfig["fallbackOn"][number], () => Error]> = [
       ["timeout", () => new Error("request timed out")],
       ["rate_limit", () => Object.assign(new Error("rate limited"), { status: 429 })],
       ["server_error", () => Object.assign(new Error("service unavailable"), { statusCode: 503 })],
+      ["connection", () => new Error("Connection error.")],
     ];
     for (const [category, createError] of cases) {
       let calls = 0;

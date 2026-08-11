@@ -1,6 +1,6 @@
 import type { AgentMessage, AgentTool } from "@earendil-works/pi-agent-core";
 import type { FreeContextConfig } from "../config.js";
-import { FreeContextError } from "../errors.js";
+import { FreeContextError, ProviderError } from "../errors.js";
 import type { ExplorerOutputValidation, ValidatedEvidenceCitation } from "../output/evidence.js";
 import type { PiSessionMetrics, PiSessionResult } from "./pi-session.js";
 
@@ -45,6 +45,8 @@ export interface ExplorerCapturedError {
   readonly name: string;
   readonly code: string;
   readonly message: string;
+  readonly category?: ProviderError["category"];
+  readonly statusCode?: number;
 }
 
 export type ExplorerCaptureOutcome =
@@ -111,5 +113,9 @@ export function captureError(error: unknown): Readonly<ExplorerCapturedError> {
     name: error instanceof Error ? error.name : "Error",
     code: error instanceof FreeContextError ? error.code : "UNEXPECTED_ERROR",
     message: error instanceof Error ? error.message : String(error),
+    ...(error instanceof ProviderError ? {
+      category: error.category,
+      ...(error.statusCode !== undefined ? { statusCode: error.statusCode } : {}),
+    } : {}),
   });
 }

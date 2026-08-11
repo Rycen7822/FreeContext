@@ -253,6 +253,49 @@ test("provider errors redact configured secrets", async () => {
   );
 });
 
+test("provider errors retain private HTTP status and statusless connection category", async () => {
+  const config = baseConfig();
+  const cases = [
+    {
+      bindings: bindingsWith(async () => {
+        throw Object.assign(new Error("service unavailable"), { status: 503 });
+      }),
+      category: "server_error",
+      statusCode: 503,
+    },
+    {
+      bindings: bindingsWith(async (prompts, _context, _loopConfig, emit) => {
+        const failure = assistantText("", { stopReason: "error", errorMessage: "Connection error." });
+        await emit({ type: "turn_start" });
+        return [...prompts, failure];
+      }),
+      category: "connection",
+      statusCode: undefined,
+    },
+  ] as const;
+
+  for (const fixture of cases) {
+    await assert.rejects(
+      () => runPiSession({
+        bindings: fixture.bindings,
+        model: createModel(config),
+        requestOptions: createRequestOptions(config),
+        config,
+        systemPrompt: "system",
+        promptText: "prompt",
+        tools: [],
+      }),
+      (error) => {
+        assert.ok(error instanceof ProviderError);
+        assert.equal(error.category, fixture.category);
+        assert.equal(error.statusCode, fixture.statusCode);
+        assert.equal(error.safeToFallback, true);
+        return true;
+      },
+    );
+  }
+});
+
 test("a short session never calls the summary transport", async () => {
   const config = baseConfig();
   let summaryCalls = 0;

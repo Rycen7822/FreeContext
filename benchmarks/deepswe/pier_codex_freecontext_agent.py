@@ -18,7 +18,12 @@ from pier_codex_noemaloom_agent import PierCodexBase
 
 _PROJECT_ROOT = Path(__file__).resolve().parents[2]
 _ARCHIVE_VALUE = os.environ.get("FREECONTEXT_RUNTIME_ARCHIVE")
-_PROFILE = Path(os.environ.get("FREECONTEXT_SUBAGENT_PROFILE", "/home/xu/.codex/ds.config.toml"))
+_BOOTSTRAP_PROFILE = Path(
+    os.environ.get(
+        "FREECONTEXT_PROVIDER_BOOTSTRAP_PROFILE", "/home/xu/.codex/ds.config.toml"
+    )
+)
+_FREECONTEXT_CONFIG = _PROJECT_ROOT / "benchmarks/deepswe/freecontext.toml"
 _REMOTE_ROOT = PurePosixPath("/tmp/freecontext-runtime")
 _REMOTE_SKILLS_DIR = _REMOTE_ROOT / "skills"
 _REMOTE_SECRET_ROOT = PurePosixPath("/tmp/freecontext-secrets")
@@ -39,14 +44,21 @@ def _runtime_archive() -> Path:
     return _PROJECT_ROOT / ".work" / "freecontext-runtime.tar.gz"
 
 
-def _tokenrhythm_token() -> str:
-    with _PROFILE.open("rb") as stream:
-        config = tomllib.load(stream)
-    provider_id = config.get("model_provider")
-    provider = config.get("model_providers", {}).get(provider_id, {})
+def _freecontext_api_key() -> str:
+    with _BOOTSTRAP_PROFILE.open("rb") as stream:
+        bootstrap = tomllib.load(stream)
+    provider = bootstrap.get("model_providers", {}).get("tokenrhythm", {})
+    bootstrap_url = provider.get("base_url")
     token = provider.get("experimental_bearer_token")
+    with _FREECONTEXT_CONFIG.open("rb") as stream:
+        freecontext = tomllib.load(stream)
+    configured_url = freecontext.get("providers", {}).get("tokenrhythm", {}).get("base_url")
+    if not isinstance(bootstrap_url, str) or not bootstrap_url.startswith("https://"):
+        raise RuntimeError("missing TokenRhythm HTTPS URL in FreeContext bootstrap profile")
+    if not isinstance(configured_url, str) or bootstrap_url.rstrip("/") != configured_url.rstrip("/"):
+        raise RuntimeError("TokenRhythm bootstrap URL does not match FreeContext configuration")
     if not isinstance(token, str) or not token:
-        raise RuntimeError(f"missing TokenRhythm bearer token in {_PROFILE}")
+        raise RuntimeError("missing TokenRhythm API key in FreeContext bootstrap profile")
     return token
 
 
@@ -147,7 +159,7 @@ approval_mode = "approve"
             secret_path = Path(raw_path)
             os.fchmod(descriptor, 0o600)
             with os.fdopen(descriptor, "w", encoding="utf8") as stream:
-                stream.write(_tokenrhythm_token())
+                stream.write(_freecontext_api_key())
             await environment.upload_file(secret_path, _REMOTE_SECRET.as_posix())
         finally:
             if secret_path is not None:

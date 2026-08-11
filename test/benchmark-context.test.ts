@@ -209,6 +209,10 @@ test("canonical Pier adapter registers atomic MCP without legacy guidance or CLI
     new URL("../benchmarks/deepswe/pier_codex_freecontext_agent.py", import.meta.url),
     "utf8",
   );
+  const freeContextConfig = await readFile(
+    new URL("../benchmarks/deepswe/freecontext.toml", import.meta.url),
+    "utf8",
+  );
   assert.match(source, /\[mcp_servers\.freecontext\]/u);
   assert.match(source, /startup_timeout_sec = 30/u);
   assert.match(source, /tool_timeout_sec = 1800/u);
@@ -226,6 +230,16 @@ test("canonical Pier adapter registers atomic MCP without legacy guidance or CLI
   assert.match(source, /_REMOTE_SKILLS_DIR = _REMOTE_ROOT \/ "skills"/u);
   assert.match(source, /freecontext-benchmark-context\.mjs/u);
   assert.match(source, /benchmarks\/deepswe\/freecontext\.toml/u);
+  assert.match(source, /FREECONTEXT_PROVIDER_BOOTSTRAP_PROFILE/u);
+  assert.match(source, /model_providers", \{\}\)\.get\("tokenrhythm", \{\}\)/u);
+  assert.match(source, /bootstrap_url\.rstrip\("\/"\) != configured_url\.rstrip\("\/"\)/u);
+  assert.doesNotMatch(
+    source,
+    /FREECONTEXT_SUBAGENT_PROFILE|bootstrap\.get\("model_provider"\)|bootstrap\.get\("model"\)|wire_api/u,
+  );
+  assert.match(freeContextConfig, /^api = "openai"$/mu);
+  assert.match(freeContextConfig, /^model_id = "deepseek-v4-flash-0731"$/mu);
+  assert.match(freeContextConfig, /^credential_env = "TOKENRHYTHM_API_KEY"$/mu);
   for (const legacy of [
     "_GUIDANCE",
     "freecontext explore",
