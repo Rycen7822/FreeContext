@@ -49,9 +49,18 @@ export interface InvalidExplorerOutput extends ValidationFields {
 export type UsableExplorerOutput = CompletedExplorerOutput | PartialExplorerOutput;
 export type ExplorerOutputValidation = UsableExplorerOutput | InvalidExplorerOutput;
 
-function extractFinalBlock(text: unknown): string | null {
-  const matches = [...String(text || "").matchAll(/<final_answer>([\s\S]*?)<\/final_answer>/giu)];
-  return matches.at(-1)?.[1]?.trim() ?? null;
+function extractFinalBlock(text: unknown): Readonly<{ block: string | null; recovered: boolean }> {
+  const rawText = String(text || "");
+  const matches = [...rawText.matchAll(/<final_answer>([\s\S]*?)<\/final_answer>/giu)];
+  const complete = matches.at(-1)?.[1];
+  if (complete !== undefined) return { block: complete.trim(), recovered: false };
+
+  const opening = [...rawText.matchAll(/<final_answer>/giu)].at(-1);
+  if (opening?.index === undefined) return { block: null, recovered: false };
+  return {
+    block: rawText.slice(opening.index + opening[0].length).trim(),
+    recovered: true,
+  };
 }
 
 function cleanPath(value: string): string {
@@ -83,8 +92,8 @@ function parseEvidenceLine(line: string, evidence: EvidenceCitation[], problems:
 
 export function parseFinalBlock(text: unknown): ParsedFinalBlock {
   const rawText = String(text || "");
-  const block = extractFinalBlock(rawText);
-  if (!block) {
+  const extracted = extractFinalBlock(rawText);
+  if (extracted.block === null) {
     return {
       rawText,
       block: null,
@@ -95,7 +104,10 @@ export function parseFinalBlock(text: unknown): ParsedFinalBlock {
     };
   }
 
-  const problems: string[] = [];
+  const block = extracted.block;
+  const problems: string[] = extracted.recovered
+    ? ["Missing closing </final_answer>; recovered trailing block."]
+    : [];
   const evidence: EvidenceCitation[] = [];
   const gaps: string[] = [];
   let section: "summary" | "evidence" | "gaps" | null = null;

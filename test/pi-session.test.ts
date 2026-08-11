@@ -220,6 +220,8 @@ test("budget hooks block excess calls and force a no-tool final turn", async () 
   const last = snapshot.context.messages.at(-1);
   assert.equal(last?.role, "user");
   assert.match(typeof last?.content === "string" ? last.content : "", /budget is exhausted/u);
+  assert.match(typeof last?.content === "string" ? last.content : "", /at most 12 strong citations/u);
+  assert.match(typeof last?.content === "string" ? last.content : "", /closing <\/final_answer> tag/u);
   assert.equal(result.metrics.toolCalls, 3);
   assert.equal(result.metrics.finalizationInjected, true);
 });

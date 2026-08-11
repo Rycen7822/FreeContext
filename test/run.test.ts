@@ -117,6 +117,52 @@ test("runExplorer returns primary partial evidence without repair", async () => 
   }
 });
 
+test("runExplorer returns a citable truncated primary without model repair", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "freecontext-run-"));
+  try {
+    await writeFile(path.join(root, "a.js"), "const a = 1;\n", "utf8");
+    const truncated = `<final_answer>
+summary: a is defined.
+evidence:
+- a.js:1-1 — Defines a.
+- a.js:2-`;
+    let invocations = 0;
+    const dependencies = await fakeDependencies(root, []);
+    const bindings = fakeBindings(async (prompts, _context, _config, emit) => {
+      invocations += 1;
+      const response = assistantText(truncated, { stopReason: "length" });
+      await emit({ type: "turn_start" });
+      await emit({ type: "turn_end", message: response, toolResults: [] });
+      return [...prompts, response];
+    });
+    let capture: Readonly<ExplorerSessionCapture> | undefined;
+    const result = await runExplorer({
+      query: "find a",
+      cwd: root,
+      onSessionCapture: (value) => { capture = value; },
+      dependencies: { ...dependencies, bindings },
+    });
+
+    assert.equal(invocations, 1);
+    assert.equal(result.status, "partial");
+    assert.equal(result.metrics.repaired, false);
+    assert.deepEqual(result.evidence.map(({ path, start, end }) => ({ path, start, end })), [
+      { path: "a.js", start: 1, end: 1 },
+    ]);
+    assert.match(result.answer, /<\/final_answer>$/u);
+    assert.equal(capture?.primary.output, truncated);
+    assert.equal(capture?.primaryValidation.status, "partial");
+    assert.equal(capture?.repair, null);
+    assert.equal(capture?.outcome.status, "partial");
+    assert.deepEqual(result.validationProblems, [
+      "Missing closing </final_answer>; recovered trailing block.",
+      "Malformed evidence citation.",
+    ]);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test("runExplorer performs one no-tool format repair", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "freecontext-run-"));
   try {

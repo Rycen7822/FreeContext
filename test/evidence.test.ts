@@ -25,6 +25,57 @@ test("parseFinalBlock extracts the last valid-shaped block", () => {
   });
 });
 
+test("validator safely recovers a dangling explicit final block as partial", async () => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), "freecontext-evidence-"));
+  try {
+    await writeFile(path.join(directory, "sample.js"), "const x = 1;\nexport { x };\n", "utf8");
+    const truncated = `<final_answer>
+summary: The implementation is in the sample module.
+evidence:
+- sample.js:1-1 — Defines the value.
+- sample.js:2-`;
+    const result = await validateExplorerOutput(truncated, await createWorkspace(directory));
+
+    assert.equal(result.status, "partial");
+    assert.deepEqual(result.evidence.map(({ path, start, end }) => ({ path, start, end })), [
+      { path: "sample.js", start: 1, end: 1 },
+    ]);
+    assert.deepEqual(result.problems, [
+      "Missing closing </final_answer>; recovered trailing block.",
+      "Malformed evidence citation.",
+    ]);
+    assert.match(renderFinalAnswer(result), /<\/final_answer>$/u);
+    assert.doesNotMatch(renderFinalAnswer(result), /sample\.js:2-/u);
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("dangling recovery still requires a summary and locally valid evidence", async () => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), "freecontext-evidence-"));
+  try {
+    const result = await validateExplorerOutput(
+      "<final_answer>\nevidence:\n- not a citation",
+      await createWorkspace(directory),
+    );
+    assert.equal(result.status, "invalid");
+    assert.deepEqual(result.problems, [
+      "Missing closing </final_answer>; recovered trailing block.",
+      "Malformed evidence citation.",
+      "Missing non-empty summary.",
+      "No parseable evidence citations were returned.",
+    ]);
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("a complete final block takes precedence over later dangling noise", () => {
+  const parsed = parseFinalBlock(`${VALID}\n<final_answer>\nsummary: unfinished`);
+  assert.equal(parsed.summary, "The implementation is in the sample module.");
+  assert.deepEqual(parsed.problems, []);
+});
+
 test("parser expands explicit comma-separated ranges for one path", () => {
   const parsed = parseFinalBlock(VALID.replace("sample.js:1-2", "sample.js:1, 2-2"));
   assert.deepEqual(

@@ -25,7 +25,7 @@ import type { PiBindings } from "./pi-bindings.js";
 const FINALIZE_MESSAGE = Object.freeze({
   role: "user" as const,
   content:
-    "The repository exploration budget is exhausted. Do not request more tools. Using only evidence already present in the transcript, return the required <final_answer> block now.",
+    "The repository exploration budget is exhausted. Do not request more tools. Using only evidence already present in the transcript, return the required <final_answer> block now with at most 12 strong citations. Keep the summary concise and reserve output for gaps and the closing </final_answer> tag.",
   timestamp: 0,
 });
 
