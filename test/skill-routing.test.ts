@@ -28,6 +28,8 @@ test("FreeContext skill routes broad reading to one atomic MCP tool", async () =
   assert.match(skill, /call `gather_context` once/u);
   assert.match(skill, /mcp__freecontext__gather_context.*ALL_TOOLS.*same `functions\.exec` call/u);
   assert.match(skill, /forward its result to the parent without listing the full catalog/u);
+  assert.match(skill, /exact argument keys `query`.*`workspace`/u);
+  assert.doesNotMatch(skill, /\bworkspace_root\b/u);
   assert.match(skill, /one bounded read\/search in one known target fully answers/u);
   assert.match(skill, /read only decisive\/edit ranges/u);
   assert.match(skill, /Call again only for a material gap named by the result/u);
