@@ -20,23 +20,18 @@ import { GigatokenCounter } from "./gigatoken-counter.js";
 import type { FreeContextModel } from "./model.js";
 import { redactProviderError } from "./model.js";
 import { classifyProviderFailure, providerStatusCode } from "./provider-failure.js";
+import {
+  retryProviderMessage,
+  shouldRetryProviderMessage,
+} from "./provider-retry.js";
 import type { PiBindings } from "./pi-bindings.js";
+import { addUsage, EMPTY_USAGE } from "./usage.js";
 
 const FINALIZE_MESSAGE = Object.freeze({
   role: "user" as const,
   content:
     "The repository exploration budget is exhausted. Do not request more tools. Using only evidence already present in the transcript, return the required <final_answer> block now with at most 12 strong citations. Keep the summary concise and reserve output for gaps and the closing </final_answer> tag.",
   timestamp: 0,
-});
-
-const ZERO_USAGE: Usage = Object.freeze({
-  input: 0,
-  output: 0,
-  cacheRead: 0,
-  cacheWrite: 0,
-  reasoning: 0,
-  totalTokens: 0,
-  cost: Object.freeze({ input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 }),
 });
 
 export type CompactionReason = "threshold" | "overflow";
@@ -62,6 +57,17 @@ export type FreeContextRuntimeEvent =
       readonly attempt: 1;
       readonly tokensBefore: number;
       readonly estimatedTokensAfter: number;
+    }
+  | {
+      readonly type: "provider_retry_scheduled";
+      readonly attempt: number;
+      readonly maxRetries: number;
+      readonly delayMs: number;
+      readonly category: ProviderError["category"];
+    }
+  | {
+      readonly type: "provider_retry_start";
+      readonly attempt: number;
     };
 
 export interface PiSessionEventState {
@@ -79,6 +85,7 @@ export interface PiSessionMetrics {
   readonly turns: number;
   readonly toolCalls: number;
   readonly providerAttempts: number;
+  readonly providerRetries: number;
   readonly finalizationInjected: boolean;
   readonly usage: Readonly<Usage>;
   readonly compactions: number;
@@ -119,29 +126,6 @@ export interface PiSessionOptions {
   readonly tokenCounter?: ContextTokenCounter;
 }
 
-function addUsage(left: Usage, right: Usage): Usage {
-  return {
-    input: left.input + right.input,
-    output: left.output + right.output,
-    cacheRead: left.cacheRead + right.cacheRead,
-    cacheWrite: left.cacheWrite + right.cacheWrite,
-    ...(left.cacheWrite1h !== undefined || right.cacheWrite1h !== undefined
-      ? { cacheWrite1h: (left.cacheWrite1h ?? 0) + (right.cacheWrite1h ?? 0) }
-      : {}),
-    ...(left.reasoning !== undefined || right.reasoning !== undefined
-      ? { reasoning: (left.reasoning ?? 0) + (right.reasoning ?? 0) }
-      : {}),
-    totalTokens: left.totalTokens + right.totalTokens,
-    cost: {
-      input: left.cost.input + right.cost.input,
-      output: left.cost.output + right.cost.output,
-      cacheRead: left.cost.cacheRead + right.cost.cacheRead,
-      cacheWrite: left.cost.cacheWrite + right.cost.cacheWrite,
-      total: left.cost.total + right.cost.total,
-    },
-  };
-}
-
 export function extractAssistantText(message: AgentMessage | undefined): string {
   if (!message || message.role !== "assistant") return "";
   return message.content
@@ -152,7 +136,7 @@ export function extractAssistantText(message: AgentMessage | undefined): string 
 }
 
 function summarizeUsage(messages: readonly AgentMessage[]): Usage {
-  let usage = ZERO_USAGE;
+  let usage = EMPTY_USAGE;
   for (const message of messages) {
     if (message.role === "assistant") usage = addUsage(usage, message.usage);
   }
@@ -165,6 +149,24 @@ function lastAssistant(messages: readonly AgentMessage[]): AssistantMessage | un
     if (message?.role === "assistant") return message;
   }
   return undefined;
+}
+
+function withoutAssistant(
+  messages: readonly AgentMessage[],
+  assistant: AssistantMessage,
+): AgentMessage[] {
+  const identityIndex = messages.lastIndexOf(assistant);
+  const index = identityIndex >= 0
+    ? identityIndex
+    : messages.findLastIndex(
+        (message) =>
+          message.role === "assistant" &&
+          message.timestamp === assistant.timestamp &&
+          message.provider === assistant.provider &&
+          message.model === assistant.model &&
+          message.errorMessage === assistant.errorMessage,
+      );
+  return index >= 0 ? [...messages.slice(0, index), ...messages.slice(index + 1)] : [...messages];
 }
 
 async function runPiSessionWithCounter({
@@ -197,6 +199,7 @@ async function runPiSessionWithCounter({
   let turnCount = 0;
   let toolCallCount = 0;
   let providerAttempts = 0;
+  let providerRetries = 0;
   let finalizationInjected = false;
   let overflowRecovered = false;
   let effectiveMessages = [...initialMessages];
@@ -209,7 +212,7 @@ async function runPiSessionWithCounter({
   let compactionMs = 0;
   let tokensBeforeLastCompaction = 0;
   let estimatedTokensAfterLastCompaction = 0;
-  let compactionUsage = ZERO_USAGE;
+  let compactionUsage = EMPTY_USAGE;
   let toolExecutionMsTotal = 0;
   let toolExecutionMsMax = 0;
   const toolStarts = new Map<string, number>();
@@ -235,7 +238,8 @@ async function runPiSessionWithCounter({
     if (event.type === "turn_start") providerAttempts += 1;
     if (event.type === "turn_end") {
       const overflow = event.message.role === "assistant" && bindings.isContextOverflow(event.message, model.contextWindow);
-      if (!overflow) turnCount += 1;
+      const transientFailure = event.message.role === "assistant" && shouldRetryProviderMessage(event.message);
+      if (!overflow && !transientFailure) turnCount += 1;
     } else if (event.type === "tool_execution_start") {
       toolStarts.set(event.toolCallId, clock());
     } else if (event.type === "tool_execution_end") {
@@ -390,35 +394,7 @@ async function runPiSessionWithCounter({
     effectiveMessages = [...effectiveMessages, ...newMessages];
   }
 
-  let assistant = lastAssistant(newMessages);
-  if (!assistant) throw providerError("Provider returned no assistant message.", true);
-  const overflow = bindings.isContextOverflow(assistant, model.contextWindow);
-  if (overflow && config.contextCompactionEnabled && !overflowRecovered) {
-    overflowRecovered = true;
-    const overflowAssistant = assistant;
-    const identityIndex = effectiveMessages.lastIndexOf(overflowAssistant);
-    const overflowIndex = identityIndex >= 0
-      ? identityIndex
-      : effectiveMessages.findLastIndex(
-          (message) =>
-            message.role === "assistant" &&
-            message.timestamp === overflowAssistant.timestamp &&
-            message.provider === overflowAssistant.provider &&
-            message.model === overflowAssistant.model &&
-            message.errorMessage === overflowAssistant.errorMessage &&
-            bindings.isContextOverflow(message, model.contextWindow),
-        );
-    const withoutOverflow = overflowIndex >= 0
-      ? [...effectiveMessages.slice(0, overflowIndex), ...effectiveMessages.slice(overflowIndex + 1)]
-      : [...effectiveMessages];
-    effectiveMessages = [...(await runCompaction(withoutOverflow, "overflow"))];
-    overflowRetries = 1;
-    await emitCustom({
-      type: "overflow_retry",
-      attempt: 1,
-      tokensBefore: tokensBeforeLastCompaction,
-      estimatedTokensAfter: estimatedTokensAfterLastCompaction,
-    });
+  const continueLoop = async (): Promise<AssistantMessage> => {
     try {
       loopReportedContext = false;
       const continued = await bindings.runAgentLoopContinue(
@@ -429,15 +405,63 @@ async function runPiSessionWithCounter({
         bindings.streamSimple,
       );
       allNewMessages.push(...continued);
-      if (!loopReportedContext) {
-        effectiveMessages.push(...continued);
-      }
-      assistant = lastAssistant(continued);
+      if (!loopReportedContext) effectiveMessages.push(...continued);
+      const next = lastAssistant(continued);
+      if (!next) throw providerError("Provider continuation returned no assistant message.", true);
+      return next;
     } catch (error) {
       if (error instanceof FreeContextError) throw error;
-      throw providerError(error);
+      throw providerError(error, true);
     }
-    if (!assistant) throw providerError("Provider continuation returned no assistant message.");
+  };
+
+  const recoverTransientFailure = async (initial: AssistantMessage): Promise<AssistantMessage> => {
+    return await retryProviderMessage(
+      initial,
+      async (failed) => {
+        effectiveMessages = withoutAssistant(effectiveMessages, failed);
+        return await continueLoop();
+      },
+      {
+        maxRetries: config.providerRetryMaxRetries,
+        baseDelayMs: config.providerRetryBaseDelayMs,
+        shouldRetry: (message) =>
+          !bindings.isContextOverflow(message, model.contextWindow) && shouldRetryProviderMessage(message),
+      },
+      signal,
+      {
+        onRetryScheduled: async (failed, attempt, maxRetries, delayMs) => {
+          await emitCustom({
+            type: "provider_retry_scheduled",
+            attempt,
+            maxRetries,
+            delayMs,
+            category: classifyProviderFailure(failed.errorMessage),
+          });
+        },
+        onRetryStart: async (attempt) => {
+          providerRetries += 1;
+          await emitCustom({ type: "provider_retry_start", attempt });
+        },
+      },
+    );
+  };
+
+  let assistant = lastAssistant(newMessages);
+  if (!assistant) throw providerError("Provider returned no assistant message.", true);
+  assistant = await recoverTransientFailure(assistant);
+  const overflow = bindings.isContextOverflow(assistant, model.contextWindow);
+  if (overflow && config.contextCompactionEnabled && !overflowRecovered) {
+    overflowRecovered = true;
+    effectiveMessages = [...(await runCompaction(withoutAssistant(effectiveMessages, assistant), "overflow"))];
+    overflowRetries = 1;
+    await emitCustom({
+      type: "overflow_retry",
+      attempt: 1,
+      tokensBefore: tokensBeforeLastCompaction,
+      estimatedTokensAfter: estimatedTokensAfterLastCompaction,
+    });
+    assistant = await recoverTransientFailure(await continueLoop());
   }
 
   if (bindings.isContextOverflow(assistant, model.contextWindow)) {
@@ -455,6 +479,7 @@ async function runPiSessionWithCounter({
       turns: turnCount,
       toolCalls: toolCallCount,
       providerAttempts,
+      providerRetries,
       finalizationInjected,
       usage: Object.freeze(summarizeUsage(allNewMessages)),
       compactions,

@@ -36,6 +36,8 @@ const VALUE_OPTIONS = new Map<string, ValueOptionKey>([
   ["--max-turns", "maxTurns"],
   ["--max-tool-calls", "maxToolCalls"],
   ["--request-timeout-ms", "requestTimeoutMs"],
+  ["--provider-retry-max-retries", "providerRetryMaxRetries"],
+  ["--provider-retry-base-delay-ms", "providerRetryBaseDelayMs"],
   ["--tool-timeout-ms", "toolTimeoutMs"],
   ["--max-tool-output-bytes", "maxToolOutputBytes"],
   ["--max-parallel-tools", "maxParallelTools"],
@@ -129,6 +131,11 @@ Core options:
       --format text|json        Output format (default: text)
       --max-turns N             Maximum model turns
       --max-tool-calls N        Maximum repository tool calls
+      --request-timeout-ms N    Provider request timeout in milliseconds
+      --provider-retry-max-retries N
+                                Transient provider retries after the first attempt
+      --provider-retry-base-delay-ms N
+                                Initial exponential retry delay in milliseconds
       --no-context-compaction   Disable proactive compaction and overflow recovery
       --no-repair               Disable one-pass output-contract repair
       --benchmark-session-file PATH

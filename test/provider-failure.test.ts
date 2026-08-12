@@ -18,6 +18,7 @@ test("providerStatusCode reads bounded structured fields before standalone HTTP 
 test("provider failure classification preserves HTTP and timeout precedence", () => {
   assert.equal(classifyProviderFailure({ status: 429 }), "rate_limit");
   assert.equal(classifyProviderFailure(new Error("HTTP 503 service unavailable")), "server_error");
+  assert.equal(classifyProviderFailure(new Error('{"code":"SERVICE_BUSY","message":"服务繁忙，请稍后重试"}')), "server_error");
   assert.equal(classifyProviderFailure(new Error("network timeout")), "timeout");
   assert.equal(classifyProviderFailure(new Error("unrelated provider rejection")), "other");
 });

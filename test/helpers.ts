@@ -35,6 +35,8 @@ export function baseConfig(overrides: Partial<FreeContextConfig> = {}): FreeCont
     maxToolCalls: 8,
     maxOutputTokens: 1024,
     requestTimeoutMs: 2000,
+    providerRetryMaxRetries: 3,
+    providerRetryBaseDelayMs: 1,
     toolTimeoutMs: 2000,
     maxToolOutputBytes: 8192,
     maxParallelTools: 4,

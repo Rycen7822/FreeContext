@@ -18,6 +18,8 @@ default_route = "default"
 prompt_path = "prompt.md"
 max_turns = 7
 max_tool_calls = 12
+provider_retry_max_retries = 4
+provider_retry_base_delay_ms = 5000
 
 [providers.primary]
 api = "anthropic"
@@ -83,6 +85,8 @@ test("resolveConfig loads TOML catalogs and keeps CLI over environment over file
     assert.equal(route.targets[0]?.apiKey, KEYS.PRIMARY_KEY);
     assert.equal(route.targets[0]?.baseUrl, "https://primary.example/v1");
     assert.equal(route.targets[0]?.maxTurns, 5);
+    assert.equal(route.targets[0]?.providerRetryMaxRetries, 4);
+    assert.equal(route.targets[0]?.providerRetryBaseDelayMs, 5000);
     assert.equal(route.targets[0]?.promptPath, path.join(directory, "prompt.md"));
     assert.equal(route.targets[1]?.apiKey, KEYS.BACKUP_KEY);
   });
@@ -167,6 +171,8 @@ test("request authentication keeps secrets outside model metadata", () => {
   const auto = createRequestOptions(automatic);
   assert.equal(auto.apiKey, automatic.apiKey);
   assert.equal(auto.headers.Authorization, undefined);
+  assert.equal(auto.timeoutMs, automatic.requestTimeoutMs);
+  assert.equal(auto.maxRetries, 0);
   assert.equal(JSON.stringify(autoModel).includes(automatic.apiKey), false);
 
   const bearer = createRequestOptions(baseConfig({ authMode: "bearer" }));

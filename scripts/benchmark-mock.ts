@@ -162,6 +162,8 @@ async function main(): Promise<void> {
     maxToolCalls: 1,
     maxOutputTokens: 256,
     requestTimeoutMs: 2_000,
+    providerRetryMaxRetries: 3,
+    providerRetryBaseDelayMs: 1,
     toolTimeoutMs: 2_000,
     maxToolOutputBytes: 8_192,
     maxParallelTools: 1,

@@ -4,6 +4,8 @@ import { Type } from "@earendil-works/pi-ai";
 import { streamSimple } from "@earendil-works/pi-ai/api/openai-completions";
 import { resolveConfig } from "../src/config.js";
 import { createModel, createRequestOptions } from "../src/runtime/model.js";
+import { loadPiBindings } from "../src/runtime/pi-bindings.js";
+import { runPiSession } from "../src/runtime/pi-session.js";
 
 const DUMMY_KEY = "offline-wire-contract-key";
 
@@ -100,5 +102,62 @@ test("bundled TokenRhythm config produces the accepted Pi Chat Completions wire 
     "prompt_cache_key",
   ]) {
     assert.equal(Object.hasOwn(payload, absent), false, absent);
+  }
+});
+
+test("the real Pi transport retries a TokenRhythm SERVICE_BUSY response through the harness", async () => {
+  const configFile = new URL("../benchmarks/deepswe/freecontext.toml", import.meta.url).pathname;
+  const route = await resolveConfig({
+    cli: { configFile },
+    processEnv: { TOKENRHYTHM_API_KEY: DUMMY_KEY },
+  });
+  const selected = route.targets[0];
+  assert.ok(selected);
+  const config = {
+    ...selected,
+    contextCompactionEnabled: false,
+    providerRetryMaxRetries: 3,
+    providerRetryBaseDelayMs: 1,
+  };
+  const originalFetch = globalThis.fetch;
+  let fetchCalls = 0;
+  globalThis.fetch = (async () => {
+    fetchCalls += 1;
+    if (fetchCalls === 1) {
+      return new Response(JSON.stringify({ code: "SERVICE_BUSY", message: "服务繁忙，请稍后重试" }), {
+        status: 503,
+        headers: { "content-type": "application/json" },
+      });
+    }
+    const event = JSON.stringify({
+      id: "chatcmpl-test",
+      object: "chat.completion.chunk",
+      created: 1,
+      model: "deepseek-v4-flash-0731",
+      choices: [{ index: 0, delta: { role: "assistant", content: "ok" }, finish_reason: "stop" }],
+      usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 },
+    });
+    return new Response(`data: ${event}\n\ndata: [DONE]\n\n`, {
+      status: 200,
+      headers: { "content-type": "text/event-stream" },
+    });
+  }) as typeof fetch;
+
+  try {
+    const result = await runPiSession({
+      bindings: await loadPiBindings("openai"),
+      model: createModel(config),
+      requestOptions: createRequestOptions(config),
+      config,
+      systemPrompt: "Reply briefly.",
+      promptText: "Reply with ok.",
+      tools: [],
+    });
+    assert.equal(result.text, "ok");
+    assert.equal(result.metrics.providerAttempts, 2);
+    assert.equal(result.metrics.providerRetries, 1);
+    assert.equal(fetchCalls, 2);
+  } finally {
+    globalThis.fetch = originalFetch;
   }
 });

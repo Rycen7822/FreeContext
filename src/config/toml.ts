@@ -21,6 +21,8 @@ export interface RuntimeDocument {
   readonly maxTurns?: number;
   readonly maxToolCalls?: number;
   readonly requestTimeoutMs?: number;
+  readonly providerRetryMaxRetries?: number;
+  readonly providerRetryBaseDelayMs?: number;
   readonly toolTimeoutMs?: number;
   readonly maxToolOutputBytes?: number;
   readonly maxParallelTools?: number;
@@ -76,6 +78,8 @@ function parseRuntime(value: unknown): Readonly<RuntimeDocument> {
     "max_turns",
     "max_tool_calls",
     "request_timeout_ms",
+    "provider_retry_max_retries",
+    "provider_retry_base_delay_ms",
     "tool_timeout_ms",
     "max_tool_output_bytes",
     "max_parallel_tools",
@@ -85,6 +89,8 @@ function parseRuntime(value: unknown): Readonly<RuntimeDocument> {
   const maxTurns = optionalNumber(table, "max_turns", "runtime");
   const maxToolCalls = optionalNumber(table, "max_tool_calls", "runtime");
   const requestTimeoutMs = optionalNumber(table, "request_timeout_ms", "runtime");
+  const providerRetryMaxRetries = optionalNumber(table, "provider_retry_max_retries", "runtime");
+  const providerRetryBaseDelayMs = optionalNumber(table, "provider_retry_base_delay_ms", "runtime");
   const toolTimeoutMs = optionalNumber(table, "tool_timeout_ms", "runtime");
   const maxToolOutputBytes = optionalNumber(table, "max_tool_output_bytes", "runtime");
   const maxParallelTools = optionalNumber(table, "max_parallel_tools", "runtime");
@@ -94,6 +100,8 @@ function parseRuntime(value: unknown): Readonly<RuntimeDocument> {
     ...(maxTurns !== undefined ? { maxTurns } : {}),
     ...(maxToolCalls !== undefined ? { maxToolCalls } : {}),
     ...(requestTimeoutMs !== undefined ? { requestTimeoutMs } : {}),
+    ...(providerRetryMaxRetries !== undefined ? { providerRetryMaxRetries } : {}),
+    ...(providerRetryBaseDelayMs !== undefined ? { providerRetryBaseDelayMs } : {}),
     ...(toolTimeoutMs !== undefined ? { toolTimeoutMs } : {}),
     ...(maxToolOutputBytes !== undefined ? { maxToolOutputBytes } : {}),
     ...(maxParallelTools !== undefined ? { maxParallelTools } : {}),

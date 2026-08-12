@@ -21,6 +21,8 @@ export interface CliConfigOverrides {
   readonly maxTurns?: string | number;
   readonly maxToolCalls?: string | number;
   readonly requestTimeoutMs?: string | number;
+  readonly providerRetryMaxRetries?: string | number;
+  readonly providerRetryBaseDelayMs?: string | number;
   readonly toolTimeoutMs?: string | number;
   readonly maxToolOutputBytes?: string | number;
   readonly maxParallelTools?: string | number;
@@ -31,6 +33,8 @@ export interface RuntimeConfig {
   readonly maxTurns: number;
   readonly maxToolCalls: number;
   readonly requestTimeoutMs: number;
+  readonly providerRetryMaxRetries: number;
+  readonly providerRetryBaseDelayMs: number;
   readonly toolTimeoutMs: number;
   readonly maxToolOutputBytes: number;
   readonly maxParallelTools: number;

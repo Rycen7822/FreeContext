@@ -256,7 +256,7 @@ test("provider errors redact configured secrets", async () => {
 });
 
 test("provider errors retain private HTTP status and statusless connection category", async () => {
-  const config = baseConfig();
+  const config = baseConfig({ providerRetryMaxRetries: 0 });
   const cases = [
     {
       bindings: bindingsWith(async () => {
@@ -296,6 +296,71 @@ test("provider errors retain private HTTP status and statusless connection categ
       },
     );
   }
+});
+
+test("transient provider failures retry the assistant turn without discarding completed tool results", async () => {
+  const config = baseConfig({ providerRetryMaxRetries: 3, providerRetryBaseDelayMs: 1 });
+  const busy = assistantText("", {
+    stopReason: "error",
+    errorMessage: '{"code":"SERVICE_BUSY","message":"服务繁忙，请稍后重试"}',
+  });
+  const success = assistantText("recovered");
+  const observed: FreeContextRuntimeEvent[] = [];
+  let continuationCalls = 0;
+  let toolExecutions = 0;
+  let continuationContext: AgentContext | undefined;
+  const bindings = fakeBindings(async (prompts, context, loopConfig, emit) => {
+    await emit({ type: "turn_start" });
+    toolExecutions += 1;
+    await emit({ type: "tool_execution_start", toolCallId: "call-1", toolName: "read", args: {} });
+    await emit({
+      type: "tool_execution_end",
+      toolCallId: "call-1",
+      toolName: "read",
+      result: { content: [], details: {} },
+      isError: false,
+    });
+    await emit({ type: "turn_end", message: busy, toolResults: [toolResult] });
+    await loopConfig.shouldStopAfterTurn?.({
+      message: busy,
+      toolResults: [toolResult],
+      context: { ...context, messages: [...context.messages, ...prompts, toolResult, busy] },
+      newMessages: [...prompts, toolResult, busy],
+    });
+    return [...prompts, toolResult, busy];
+  }, {
+    runAgentLoopContinue: async (context, _loopConfig, emit) => {
+      continuationCalls += 1;
+      continuationContext = context;
+      await emit({ type: "turn_start" });
+      await emit({ type: "turn_end", message: success, toolResults: [] });
+      return [success];
+    },
+  });
+
+  const result = await runPiSession({
+    bindings,
+    model: createModel(config),
+    requestOptions: createRequestOptions(config),
+    config,
+    systemPrompt: "system",
+    promptText: "prompt",
+    tools: [readTool],
+    onEvent: (event) => { observed.push(event); },
+  });
+
+  assert.equal(result.text, "recovered");
+  assert.equal(continuationCalls, 1);
+  assert.equal(toolExecutions, 1);
+  assert.equal(continuationContext?.messages.includes(toolResult), true);
+  assert.equal(continuationContext?.messages.includes(busy), false);
+  assert.equal(result.metrics.providerAttempts, 2);
+  assert.equal(result.metrics.providerRetries, 1);
+  assert.equal(result.metrics.turns, 1);
+  assert.deepEqual(
+    observed.filter((event) => event.type.startsWith("provider_retry")).map((event) => event.type),
+    ["provider_retry_scheduled", "provider_retry_start"],
+  );
 });
 
 test("a short session never calls the summary transport", async () => {

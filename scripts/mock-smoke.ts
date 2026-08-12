@@ -68,6 +68,8 @@ try {
     maxToolCalls: 8,
     maxOutputTokens: 1024,
     requestTimeoutMs: 1000,
+    providerRetryMaxRetries: 3,
+    providerRetryBaseDelayMs: 1,
     toolTimeoutMs: 1000,
     maxToolOutputBytes: 8192,
     maxParallelTools: 2,

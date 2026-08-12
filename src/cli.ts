@@ -58,6 +58,12 @@ function createEventReporter(stderr: CliIo["stderr"]): PiSessionEventHandler {
       stderr.write(`[freecontext] compaction ${event.reason} done (${event.estimatedTokensAfter} estimated tokens)\n`);
     } else if (event.type === "overflow_retry") {
       stderr.write("[freecontext] context overflow retry 1\n");
+    } else if (event.type === "provider_retry_scheduled") {
+      stderr.write(
+        `[freecontext] provider ${event.category} retry ${event.attempt}/${event.maxRetries} in ${event.delayMs} ms\n`,
+      );
+    } else if (event.type === "provider_retry_start") {
+      stderr.write(`[freecontext] provider retry ${event.attempt} start\n`);
     }
   };
 }

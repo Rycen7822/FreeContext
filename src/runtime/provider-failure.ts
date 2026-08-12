@@ -38,7 +38,7 @@ export function classifyProviderFailure(value: unknown): ProviderFailureCategory
 
   if (/\b429\b|rate[ -]?limit|too many requests/u.test(text)) return "rate_limit";
   if (/\betimedout\b|\btimeout\b|timed out/u.test(text)) return "timeout";
-  if (/\b5\d\d\b|internal server error|bad gateway|service unavailable|overloaded/u.test(text)) {
+  if (/\b5\d\d\b|internal server error|bad gateway|service unavailable|overloaded|\b(?:service|server)[_ -]?busy\b|服务繁忙/u.test(text)) {
     return "server_error";
   }
   if (CONNECTION_ERROR.test(text)) return "connection";

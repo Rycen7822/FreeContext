@@ -170,9 +170,9 @@ freecontext --route resilient --query 'Trace request routing.'
 freecontext --target gpt --query 'Trace request routing.'
 ```
 
-`--route` and `--target` are mutually exclusive. CLI selection overrides `FREECONTEXT_ROUTE` or `FREECONTEXT_TARGET`, which override `default_route`. Operational limits follow CLI > environment > `[runtime]` > built-in defaults; supported environment overrides include turn/tool limits, timeouts, output/concurrency limits, compaction enablement, and `FREECONTEXT_PROMPT_PATH`.
+`--route` and `--target` are mutually exclusive. CLI selection overrides `FREECONTEXT_ROUTE` or `FREECONTEXT_TARGET`, which override `default_route`. Operational limits follow CLI > environment > `[runtime]` > built-in defaults. Transient provider errors, including 408/409/429/5xx, connection failures, interrupted streams, `SERVICE_BUSY`, and `服务繁忙`, retry the failed assistant turn up to three times by default with 3/6/12-second backoff. Completed repository tool results stay in context and are not executed again. Configure this with `provider_retry_max_retries` and `provider_retry_base_delay_ms`, `FREECONTEXT_PROVIDER_RETRY_MAX_RETRIES` and `FREECONTEXT_PROVIDER_RETRY_BASE_DELAY_MS`, or the matching CLI options; set the retry count to zero to disable it.
 
-A route tries model targets in declared order. Fallback is limited to configured `timeout`, `rate_limit`, and `server_error` failures before any tool call has been accepted in the primary session. Authentication/configuration errors, aborts, generic failures, post-tool failures, compaction, and format repair never switch targets. Once a target succeeds, primary execution, compaction, and repair all keep that same target and authenticated transport.
+A route tries model targets in declared order after the selected target exhausts its retry budget. Fallback is limited to configured `timeout`, `rate_limit`, `server_error`, and `connection` failures before any tool call has been accepted in the primary session. Authentication/configuration errors, aborts, generic failures, post-tool failures, compaction, and format repair never switch targets. Once a target succeeds, primary execution, compaction, and repair all keep that same target and authenticated transport.
 
 #### SenseNova
 
@@ -480,9 +480,9 @@ freecontext --route resilient --query 'Trace request routing.'
 freecontext --target gpt --query 'Trace request routing.'
 ```
 
-`--route` 与 `--target` 互斥。CLI 选择覆盖 `FREECONTEXT_ROUTE` 或 `FREECONTEXT_TARGET`，后者再覆盖 `default_route`。运行限制遵循 CLI > 环境变量 > `[runtime]` > 内置默认值；环境变量可覆盖 turn/tool 上限、超时、输出/并发上限、上下文压缩开关和 `FREECONTEXT_PROMPT_PATH`。
+`--route` 与 `--target` 互斥。CLI 选择覆盖 `FREECONTEXT_ROUTE` 或 `FREECONTEXT_TARGET`，后者再覆盖 `default_route`。运行限制遵循 CLI > 环境变量 > `[runtime]` > 内置默认值。默认情况下，408/409/429/5xx、连接失败、流中断、`SERVICE_BUSY` 和“服务繁忙”等短暂 provider 错误会以 3/6/12 秒退避重试失败的 assistant turn，最多重试三次；已经完成的仓库工具结果会保留在上下文中，不会重复执行。可通过 `provider_retry_max_retries`、`provider_retry_base_delay_ms`，对应的 `FREECONTEXT_PROVIDER_RETRY_MAX_RETRIES`、`FREECONTEXT_PROVIDER_RETRY_BASE_DELAY_MS` 环境变量或 CLI 选项调整；重试次数设为零即可关闭。
 
-Route 按声明顺序尝试模型 target。仅当主会话尚未接受任何工具调用，并且错误属于已配置的 `timeout`、`rate_limit`、`server_error` 时才允许降级。认证/配置错误、取消、普通错误、工具调用后的失败、上下文压缩和格式修复都不会切换 target。某个 target 成功后，主执行、压缩和修复始终复用该 target 及其认证传输。
+选中 target 的重试预算耗尽后，Route 才按声明顺序尝试下一个模型 target。仅当主会话尚未接受任何工具调用，并且错误属于已配置的 `timeout`、`rate_limit`、`server_error` 或 `connection` 时才允许降级。认证/配置错误、取消、普通错误、工具调用后的失败、上下文压缩和格式修复都不会切换 target。某个 target 成功后，主执行、压缩和修复始终复用该 target 及其认证传输。
 
 #### SenseNova
 

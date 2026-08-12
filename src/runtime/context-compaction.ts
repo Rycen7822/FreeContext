@@ -7,6 +7,8 @@ import { estimateEffectiveContextTokens } from "./context-budget.js";
 import type { PiBindings } from "./pi-bindings.js";
 import type { FreeContextModel } from "./model.js";
 import { redactProviderError } from "./model.js";
+import { retryProviderMessage, shouldRetryProviderMessage } from "./provider-retry.js";
+import { addUsage, EMPTY_USAGE } from "./usage.js";
 
 const SUMMARY_SYSTEM_PROMPT = [
   "You compress repository-exploration context without continuing the task.",
@@ -84,15 +86,30 @@ export async function compactContext({
     maxTokens: Math.min(Math.floor(config.contextReserveTokens * 0.8), model.maxTokens),
   };
   if (signal) summaryOptions.signal = signal;
-
-  let response: AssistantMessage;
-  try {
+  const requestSummary = async (): Promise<AssistantMessage> => {
     const stream = await bindings.streamSimple(
       model,
       { systemPrompt: SUMMARY_SYSTEM_PROMPT, messages: [prompt] },
       summaryOptions,
     );
-    response = await stream.result();
+    return await stream.result();
+  };
+
+  let response: AssistantMessage;
+  let retryUsage = EMPTY_USAGE;
+  try {
+    response = await retryProviderMessage(
+      await requestSummary(),
+      requestSummary,
+      {
+        maxRetries: config.providerRetryMaxRetries,
+        baseDelayMs: config.providerRetryBaseDelayMs,
+        shouldRetry: (message) =>
+          !bindings.isContextOverflow(message, model.contextWindow) && shouldRetryProviderMessage(message),
+      },
+      signal,
+      { onRetryScheduled: (failed) => { retryUsage = addUsage(retryUsage, failed.usage); } },
+    );
   } catch (error) {
     throw new ProviderError(redactProviderError(error instanceof Error ? error.message : error, config), { cause: error });
   }
@@ -117,7 +134,7 @@ export async function compactContext({
 
   return Object.freeze({
     contextMessages: Object.freeze(contextMessages),
-    usage: Object.freeze(response.usage),
+    usage: Object.freeze(addUsage(retryUsage, response.usage)),
     tokensBefore: cut.tokensBefore,
     estimatedTokensAfter,
     durationMs: Math.max(0, clock() - startedAt),

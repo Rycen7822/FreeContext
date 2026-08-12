@@ -114,8 +114,7 @@ export function createRequestOptions(config: FreeContextConfig): Readonly<FreeCo
     temperature: config.temperature,
     maxTokens: config.maxOutputTokens,
     timeoutMs: config.requestTimeoutMs,
-    maxRetries: 1,
-    maxRetryDelayMs: 15000,
+    maxRetries: 0,
     cacheRetention: "none",
   };
   if (apiKey) options.apiKey = apiKey;

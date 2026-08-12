@@ -116,6 +116,18 @@ function resolveRuntime(
       180000,
       { min: 1000, max: 1800000, name: "request_timeout_ms" },
     ),
+    providerRetryMaxRetries: parseInteger(
+      cli.providerRetryMaxRetries ?? env.FREECONTEXT_PROVIDER_RETRY_MAX_RETRIES ?? runtime.providerRetryMaxRetries,
+      3,
+      { min: 0, max: 5, name: "provider_retry_max_retries" },
+    ),
+    providerRetryBaseDelayMs: parseInteger(
+      cli.providerRetryBaseDelayMs ??
+        env.FREECONTEXT_PROVIDER_RETRY_BASE_DELAY_MS ??
+        runtime.providerRetryBaseDelayMs,
+      3000,
+      { min: 100, max: 60000, name: "provider_retry_base_delay_ms" },
+    ),
     toolTimeoutMs: parseInteger(cli.toolTimeoutMs ?? env.FREECONTEXT_TOOL_TIMEOUT_MS ?? runtime.toolTimeoutMs, 20000, {
       min: 100,
       max: 300000,

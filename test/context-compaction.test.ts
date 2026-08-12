@@ -95,6 +95,38 @@ test("summary requests use no tools, a fresh session, and the existing authentic
   assert.equal(JSON.stringify(result).includes("header-secret"), false);
 });
 
+test("summary requests retry transient provider busy responses", async () => {
+  const config = baseConfig({ providerRetryMaxRetries: 3, providerRetryBaseDelayMs: 1 });
+  const calls: CapturedSummaryCall[] = [];
+  const responses = [
+    assistantText("", { stopReason: "error", errorMessage: "SERVICE_BUSY 服务繁忙" }),
+    assistantText("compact after retry"),
+  ];
+  const bindings = fakeBindings(async () => [], {
+    streamSimple: (model, context, options) => {
+      calls.push({ model, context, options });
+      const stream = createAssistantMessageEventStream();
+      const response = responses.shift();
+      if (!response) throw new Error("unexpected summary call");
+      stream.end(response);
+      return stream;
+    },
+  });
+
+  const result = await compactContext({
+    cut: compactionCut(),
+    bindings,
+    model: createModel(config),
+    requestOptions: createRequestOptions(config),
+    config,
+    tokenCounter,
+  });
+
+  assert.equal(calls.length, 2);
+  assert.equal(result.contextMessages[0]?.role, "compactionSummary");
+  assert.equal(result.usage.totalTokens, 30);
+});
+
 test("repeated compaction merges the previous summary and preserves the recent tail exactly", async () => {
   const config = baseConfig();
   const calls: CapturedSummaryCall[] = [];
