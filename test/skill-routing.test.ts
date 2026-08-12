@@ -14,7 +14,10 @@ test("FreeContext skill routes broad reading to one atomic MCP tool", async () =
   assert.ok(description);
   assert.ok(Buffer.byteLength(skill, "utf8") <= 1_800);
   assert.ok([...description].length <= 420);
-  assert.match(description, /After loading, call FreeContext next before parent discovery; never batch its read\./u);
+  assert.equal(
+    description,
+    "Route multi-file code/workspace exploration, cross-document keyword/topic search, long-document fact extraction, source-bound planning/review/diagnosis via gather_context, including familiar repositories and known candidate files. When selected, first tool turn reads this skill alone—not plan/pwd/Git/list/search/source; next calls FreeContext. Skip when one bounded read/search in one known target fully answers.",
+  );
 
   for (const trigger of [
     "multi-file code/workspace exploration",
@@ -29,9 +32,12 @@ test("FreeContext skill routes broad reading to one atomic MCP tool", async () =
   assert.match(skill, /call `gather_context` once/u);
   assert.match(
     skill,
-    /Read this skill alone: never batch that read with Git, file listing, search, source\/document reads, or other task work\. Make `gather_context` the next tool action/u,
+    /First tool turn after selecting this skill: read only this file\. Do not combine that read with planning, `pwd`, Git, listing, search, source\/document reads, or sibling work in the same `functions\.exec`\./u,
   );
-  assert.match(skill, /mcp__freecontext__gather_context.*ALL_TOOLS.*same `functions\.exec` call/u);
+  assert.match(
+    skill,
+    /Next tool turn: locate exactly `mcp__freecontext__gather_context` in `ALL_TOOLS` and invoke it in that same `functions\.exec`; do not plan or inspect the workspace first/u,
+  );
   assert.match(skill, /forward its result to the parent without listing the full catalog/u);
   assert.match(skill, /exact argument keys `query`.*`workspace`/u);
   assert.doesNotMatch(skill, /\bworkspace_root\b/u);
@@ -44,8 +50,8 @@ test("FreeContext skill routes broad reading to one atomic MCP tool", async () =
   assert.match(metadata, /^    - type: "mcp"$/mu);
   assert.equal(metadata.match(/^      value: "freecontext"$/gmu)?.length, 1);
   const shortDescription = metadata.match(/^  short_description: "([^"]+)"$/mu)?.[1];
-  assert.ok(shortDescription);
-  assert.ok(shortDescription.length >= 25 && shortDescription.length <= 64);
+  assert.equal(shortDescription, "Read skill alone, then call FreeContext");
+  assert.doesNotMatch(skill, /After loading, call FreeContext next/u);
 
   const routingSurface = `${skill}\n${metadata}`;
   for (const forbidden of [

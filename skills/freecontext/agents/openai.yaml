@@ -1,6 +1,6 @@
 interface:
   display_name: "FreeContext"
-  short_description: "Delegate broad reading before parent discovery"
+  short_description: "Read skill alone, then call FreeContext"
 policy:
   allow_implicit_invocation: true
 dependencies:
