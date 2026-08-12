@@ -1,10 +1,14 @@
 import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
 import path from "node:path";
-import { FreeContextError, OutputValidationError } from "../errors.js";
+import {
+  FreeContextError,
+  OutputValidationError,
+  SessionPersistenceError,
+} from "../errors.js";
 import type { ContextTokenCounter } from "../runtime/context-budget.js";
 import { runExplorer } from "../runtime/run.js";
 import type { ExplorerResult } from "../runtime/run.js";
-import { captureError } from "../runtime/session-capture.js";
+import { captureError, captureRuntimeEvent } from "../runtime/session-capture.js";
 import type { ExplorerCapturedError, ExplorerSessionCapture } from "../runtime/session-capture.js";
 import type { McpRuntimeEvent, McpSessionReservation } from "./session.js";
 import { commitMcpSession, reserveMcpSession } from "./session.js";
@@ -185,7 +189,10 @@ export function createGatherContextHandler(
         ...(dependencies.configFile ? { cli: { configFile: dependencies.configFile } } : {}),
         ...(signal ? { signal } : {}),
         onEvent: (event, state) => {
-          runtimeEvents.push(Object.freeze({ event, state: Object.freeze({ ...state }) }));
+          runtimeEvents.push(Object.freeze({
+            event: captureRuntimeEvent(event),
+            state: Object.freeze({ ...state }),
+          }));
         },
         onSessionCapture: (value) => { capture = value; },
         dependencies: { tokenCounter: dependencies.tokenCounter },
@@ -225,13 +232,14 @@ export function createGatherContextHandler(
       if (committed.sessionFile !== reservation.file.path) {
         throw new Error("Session store returned a mismatched path.");
       }
-    } catch {
+    } catch (caught) {
+      const persistenceStage = caught instanceof SessionPersistenceError ? caught.stage : "unknown";
       const persistenceError = Object.freeze({
         name: "SessionPersistenceError",
         code: "SESSION_PERSISTENCE_ERROR",
         message: "FreeContext could not commit private session storage.",
       });
-      return callResult(errorOutput("failed", persistenceError, null));
+      return callResult(errorOutput("failed", persistenceError, null), { persistenceStage });
     }
 
     if (unexpected !== null) throw unexpected;

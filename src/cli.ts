@@ -13,7 +13,7 @@ import type {
 } from "./runtime/pi-session.js";
 import type { CapturedRuntimeEvent } from "./benchmark/session-file.js";
 import { FreeContextError } from "./errors.js";
-import { captureError } from "./runtime/session-capture.js";
+import { captureError, captureRuntimeEvent } from "./runtime/session-capture.js";
 
 const PACKAGE_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 
@@ -120,7 +120,10 @@ export async function main(
     const onEvent: PiSessionEventHandler | undefined = reporter || cli.benchmarkSessionFile
       ? async (event: FreeContextRuntimeEvent, state: PiSessionEventState) => {
           if (cli.benchmarkSessionFile) {
-            runtimeEvents.push(Object.freeze({ event, state: Object.freeze({ ...state }) }));
+            runtimeEvents.push(Object.freeze({
+              event: captureRuntimeEvent(event),
+              state: Object.freeze({ ...state }),
+            }));
           }
           await reporter?.(event, state);
         }

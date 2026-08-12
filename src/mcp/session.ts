@@ -1,5 +1,9 @@
-import type { ExplorerCapturedError, ExplorerSessionCapture } from "../runtime/session-capture.js";
-import type { FreeContextRuntimeEvent, PiSessionEventState } from "../runtime/pi-session.js";
+import type {
+  CapturedFreeContextRuntimeEvent,
+  ExplorerCapturedError,
+  ExplorerSessionCapture,
+} from "../runtime/session-capture.js";
+import type { PiSessionEventState } from "../runtime/pi-session.js";
 import {
   commitSessionFile,
   reserveSessionFile,
@@ -9,7 +13,7 @@ import { renderGatherContextText } from "./contracts.js";
 import type { GatherContextOutput } from "./contracts.js";
 
 export interface McpRuntimeEvent {
-  readonly event: FreeContextRuntimeEvent;
+  readonly event: CapturedFreeContextRuntimeEvent;
   readonly state: PiSessionEventState;
 }
 
@@ -80,7 +84,6 @@ export async function commitMcpSession({
     result,
     terminalError,
   });
-  const serialized = `${JSON.stringify(document, null, 2)}\n`;
-  const sessionFile = await commitSessionFile(reservation.file, document);
-  return Object.freeze({ sessionFile, sessionBytes: Buffer.byteLength(serialized) });
+  const committed = await commitSessionFile(reservation.file, document);
+  return Object.freeze({ sessionFile: committed.path, sessionBytes: committed.bytes });
 }

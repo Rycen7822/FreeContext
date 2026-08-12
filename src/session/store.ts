@@ -1,12 +1,22 @@
 import { randomUUID } from "node:crypto";
-import { realpath, mkdir, open, stat } from "node:fs/promises";
+import { realpath, mkdir, open, stat, unlink } from "node:fs/promises";
 import type { FileHandle } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { ConfigurationError, SecurityError } from "../errors.js";
+import {
+  ConfigurationError,
+  SecurityError,
+  SessionPersistenceError,
+} from "../errors.js";
+import type { SessionPersistenceStage } from "../errors.js";
 
 export interface SessionFileReservation {
   readonly path: string;
+}
+
+export interface CommittedSessionFile {
+  readonly path: string;
+  readonly bytes: number;
 }
 
 const reservations = new WeakMap<SessionFileReservation, FileHandle>();
@@ -104,15 +114,51 @@ export async function reserveSessionFile({
 export async function commitSessionFile(
   reservation: Readonly<SessionFileReservation>,
   document: unknown,
-): Promise<string> {
+): Promise<Readonly<CommittedSessionFile>> {
   const handle = reservations.get(reservation);
   if (!handle) throw new ConfigurationError("Session reservation is unknown or already committed.");
   reservations.delete(reservation);
+
+  const rejectCommit = async (stage: SessionPersistenceStage, cause: unknown): Promise<never> => {
+    const cleanupErrors: unknown[] = [];
+    try {
+      await handle.close();
+    } catch (error) {
+      cleanupErrors.push(error);
+    }
+    try {
+      await unlink(reservation.path);
+    } catch (error) {
+      if (!isNotFound(error)) cleanupErrors.push(error);
+    }
+    const errorCause = cleanupErrors.length > 0
+      ? new AggregateError([cause, ...cleanupErrors], "Session commit and cleanup failed.")
+      : cause;
+    throw new SessionPersistenceError(stage, { cause: errorCause });
+  };
+
+  let serialized: string;
   try {
-    await handle.writeFile(`${JSON.stringify(document, null, 2)}\n`, { encoding: "utf8" });
-    await handle.sync();
-    return reservation.path;
-  } finally {
-    await handle.close();
+    const json = JSON.stringify(document, null, 2);
+    if (json === undefined) throw new TypeError("Session document is not JSON-serializable.");
+    serialized = `${json}\n`;
+  } catch (error) {
+    return rejectCommit("serialize", error);
   }
+  try {
+    await handle.writeFile(serialized, { encoding: "utf8" });
+  } catch (error) {
+    return rejectCommit("write", error);
+  }
+  try {
+    await handle.sync();
+  } catch (error) {
+    return rejectCommit("sync", error);
+  }
+  try {
+    await handle.close();
+  } catch (error) {
+    return rejectCommit("close", error);
+  }
+  return Object.freeze({ path: reservation.path, bytes: Buffer.byteLength(serialized) });
 }

@@ -3,7 +3,11 @@ import assert from "node:assert/strict";
 import { mkdir, mkdtemp, readFile, readdir, rm } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { OutputValidationError, ProviderError } from "../src/errors.js";
+import {
+  OutputValidationError,
+  ProviderError,
+  SessionPersistenceError,
+} from "../src/errors.js";
 import {
   GatherContextOutputSchema,
   INVOCATION_POLICY,
@@ -283,7 +287,9 @@ test("gather_context reports reservation and commit failures without false sessi
       tokenCounter,
       sessionDirectory: path.join(root, "sessions"),
       runExplorer: explore,
-      commitSession: async () => { throw new Error("disk failure"); },
+      commitSession: async () => {
+        throw new SessionPersistenceError("write", { cause: new Error("private disk detail") });
+      },
     })({ query: "collect evidence", workspace });
     const failedOutput = outputOf(commitFailure);
     assert.equal(calls, 1);
@@ -291,6 +297,11 @@ test("gather_context reports reservation and commit failures without false sessi
     assert.equal(failedOutput.sessionFile, null);
     assert.equal(failedOutput.error?.code, "SESSION_PERSISTENCE_ERROR");
     assert.match(JSON.stringify(commitFailure.content), /Full session: unavailable/u);
+    assert.equal(
+      (commitFailure._meta?.freecontext as { persistenceStage?: string }).persistenceStage,
+      "write",
+    );
+    assert.doesNotMatch(JSON.stringify(commitFailure.content), /private disk detail|during write/u);
   } finally {
     await rm(root, { recursive: true, force: true });
   }

@@ -27,6 +27,20 @@ export class SecurityError extends FreeContextError {
   }
 }
 
+export type SessionPersistenceStage = "serialize" | "write" | "sync" | "close";
+
+export class SessionPersistenceError extends FreeContextError {
+  readonly stage: SessionPersistenceStage;
+
+  constructor(stage: SessionPersistenceStage, options: ErrorOptions = {}) {
+    super(`Session persistence failed during ${stage}.`, {
+      code: "SESSION_PERSISTENCE_ERROR",
+      ...options,
+    });
+    this.stage = stage;
+  }
+}
+
 export type ProviderFailureCategory = "timeout" | "rate_limit" | "server_error" | "connection" | "other";
 
 export interface ProviderErrorOptions extends ErrorOptions {

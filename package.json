@@ -16,7 +16,9 @@
   },
   "files": [
     "bin",
-    "benchmarks",
+    "benchmarks/deepswe/README.md",
+    "benchmarks/deepswe/freecontext.toml",
+    "benchmarks/deepswe/pier_codex_freecontext_agent.py",
     "dist",
     "prompts",
     "skills",

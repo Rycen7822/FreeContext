@@ -1,14 +1,15 @@
 import path from "node:path";
 import { ConfigurationError } from "../errors.js";
-import type { ExplorerCapturedError, ExplorerSessionCapture } from "../runtime/session-capture.js";
 import type {
-  FreeContextRuntimeEvent,
-  PiSessionEventState,
-} from "../runtime/pi-session.js";
+  CapturedFreeContextRuntimeEvent,
+  ExplorerCapturedError,
+  ExplorerSessionCapture,
+} from "../runtime/session-capture.js";
+import type { PiSessionEventState } from "../runtime/pi-session.js";
 import { commitSessionFile, reserveSessionFile } from "../session/store.js";
 
 export interface CapturedRuntimeEvent {
-  readonly event: FreeContextRuntimeEvent;
+  readonly event: CapturedFreeContextRuntimeEvent;
   readonly state: PiSessionEventState;
 }
 
@@ -59,5 +60,5 @@ export async function writeBenchmarkSessionFile({
     runtimeEvents,
     terminalError,
   };
-  return commitSessionFile(reservation, document);
+  return (await commitSessionFile(reservation, document)).path;
 }

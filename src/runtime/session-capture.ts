@@ -1,8 +1,31 @@
 import type { AgentMessage, AgentTool } from "@earendil-works/pi-agent-core";
+import type { AssistantMessageEvent } from "@earendil-works/pi-ai";
 import type { FreeContextConfig } from "../config.js";
 import { FreeContextError, ProviderError } from "../errors.js";
 import type { ExplorerOutputValidation, ValidatedEvidenceCitation } from "../output/evidence.js";
-import type { PiSessionMetrics, PiSessionResult } from "./pi-session.js";
+import type {
+  FreeContextRuntimeEvent,
+  PiSessionMetrics,
+  PiSessionResult,
+} from "./pi-session.js";
+
+type CapturedAssistantEvent<Event> = Event extends Readonly<{
+  type: "error";
+  error: Readonly<{ errorMessage?: string }>;
+}>
+  ? Omit<Event, "error"> & Readonly<{ errorMessage?: string }>
+  : Omit<Event, "partial" | "message">;
+
+export type CapturedAssistantMessageEvent = CapturedAssistantEvent<AssistantMessageEvent>;
+
+type MessageUpdateRuntimeEvent = Extract<FreeContextRuntimeEvent, Readonly<{ type: "message_update" }>>;
+
+export type CapturedFreeContextRuntimeEvent =
+  | Exclude<FreeContextRuntimeEvent, MessageUpdateRuntimeEvent>
+  | Readonly<{
+      type: "message_update";
+      assistantMessageEvent: Readonly<CapturedAssistantMessageEvent>;
+    }>;
 
 export interface ExplorerRuntime {
   readonly route: string;
@@ -72,6 +95,33 @@ export interface ExplorerSessionCapture {
 export type ExplorerSessionCaptureHandler = (
   capture: Readonly<ExplorerSessionCapture>,
 ) => Promise<void> | void;
+
+function captureAssistantMessageEvent(
+  event: AssistantMessageEvent,
+): Readonly<CapturedAssistantMessageEvent> {
+  if (event.type === "done") {
+    return Object.freeze({ type: event.type, reason: event.reason });
+  }
+  if (event.type === "error") {
+    return Object.freeze({
+      type: event.type,
+      reason: event.reason,
+      ...(event.error.errorMessage ? { errorMessage: event.error.errorMessage } : {}),
+    });
+  }
+  const { partial: _partial, ...captured } = event;
+  return Object.freeze(captured);
+}
+
+export function captureRuntimeEvent(
+  event: FreeContextRuntimeEvent,
+): Readonly<CapturedFreeContextRuntimeEvent> {
+  if (event.type !== "message_update") return event;
+  return Object.freeze({
+    type: event.type,
+    assistantMessageEvent: captureAssistantMessageEvent(event.assistantMessageEvent),
+  });
+}
 
 export function captureValidation(
   validation: ExplorerOutputValidation,

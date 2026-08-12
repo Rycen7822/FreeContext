@@ -53,7 +53,7 @@ Evidence citations are validated against the local filesystem. A model cannot fa
 
 `--benchmark-session-file` is an explicit host-side audit feature, not a model tool. Its destination parent must already exist, is resolved through `realpath`, and must remain outside the explored workspace. The writer uses a private `0600` file and refuses to overwrite an existing path. Provider credentials, configured secret values, and request headers are not part of the capture schema.
 
-The file intentionally preserves prompts, model messages, repository tool calls/results, safe tool schemas, effective compacted contexts, and validation outcomes. Benchmark operators must therefore protect and retain these artifacts according to the repository's source-data policy.
+The file intentionally preserves prompts, final model messages, ordered stream deltas, repository tool calls/results, safe tool schemas, effective compacted contexts, and validation outcomes. Repeated growing partial-message snapshots are omitted from each delta because the complete final messages are already retained. A failed serialization or commit removes the incomplete private file instead of leaving a false session artifact. Benchmark operators must therefore protect and retain successful artifacts according to the repository's source-data policy.
 
 ## Residual risks
 

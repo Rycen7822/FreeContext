@@ -272,7 +272,7 @@ freecontext explore -C /workspace \
   --query 'Locate the router and its tests.'
 ```
 
-The capture contains the exact request, system prompts, safe tool schemas, raw primary/repair messages, effective post-compaction contexts, validation results, runtime events, and terminal outcome. It never serializes provider credentials or request headers, requires an existing destination directory outside the explored workspace, creates a private file, and refuses overwrite.
+The capture contains the exact request, system prompts, safe tool schemas, raw primary/repair messages, effective post-compaction contexts, validation results, runtime-event sequence, and terminal outcome. Stream deltas are retained in order, while each delta's redundant growing partial-message snapshots are omitted because the complete final messages are already preserved in the raw capture. The writer serializes the document once, removes an incomplete file if commit fails, never serializes provider credentials or request headers, requires an existing destination directory outside the explored workspace, creates a private file, and refuses overwrite.
 
 After the main Codex run has archived `agent/sessions/**/*.jsonl`, create the self-contained task context document:
 
@@ -582,7 +582,7 @@ freecontext explore -C /workspace \
   --query 'Locate the router and its tests.'
 ```
 
-该文件包含精确请求、system prompt、安全工具 schema、主回答/repair 原文、压缩后的有效上下文、验证结果、运行事件和最终状态；不会序列化 provider 凭据或请求 header。目标父目录必须预先存在且位于被探索工作区之外，文件权限为私有，并且禁止覆盖已有文件。
+该文件包含精确请求、system prompt、安全工具 schema、主回答/repair 原文、压缩后的有效上下文、按顺序保存的运行事件和最终状态。流式 delta 会完整保留；每个 delta 内重复增长的 partial-message 快照会省略，因为最终完整消息已经保存在原始 capture 中。写入器只序列化一次，提交失败时删除不完整文件，并且不会序列化 provider 凭据或请求 header。目标父目录必须预先存在且位于被探索工作区之外，文件权限为私有，并且禁止覆盖已有文件。
 
 主 Codex 运行将 `agent/sessions/**/*.jsonl` 归档后，可生成自包含的任务上下文文档：
 
