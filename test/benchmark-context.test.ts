@@ -189,6 +189,46 @@ test("master context exporter fails when the master context omits a FreeContext 
   }
 });
 
+test("legacy export preserves an unreferenced session without inventing delivered output", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "freecontext-master-"));
+  try {
+    const fixture = await createFixture(root, false, legacySession());
+    const outputPath = await exportMasterAgentContext({
+      agentDir: fixture.agentDir,
+      taskName: "legacy-detached",
+      allowUnreferencedSessions: true,
+      now: () => new Date("2026-08-12T06:00:00.000Z"),
+    });
+    const document = JSON.parse(await readFile(outputPath, "utf8")) as BenchmarkMasterAgentContext;
+
+    assert.equal(document.masterAgentContext[0]?.rawJsonl, fixture.masterRaw);
+    assert.equal(document.freeContextCalls.length, 1);
+    assert.equal(document.freeContextCalls[0]?.referenceFoundInMasterContext, false);
+    assert.equal(document.freeContextCalls[0]?.outputToMasterAgent, null);
+    assert.equal(document.freeContextCalls[0]?.status, "completed");
+    assert.equal((await stat(outputPath)).mode & 0o777, 0o600);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("legacy opt-in never relaxes an unreferenced atomic MCP session", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "freecontext-master-"));
+  try {
+    const fixture = await createFixture(root, false);
+    await assert.rejects(
+      exportMasterAgentContext({
+        agentDir: fixture.agentDir,
+        taskName: "atomic-mismatch",
+        allowUnreferencedSessions: true,
+      }),
+      /does not reference/u,
+    );
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test("master context exporter rejects an MCP session path that differs from its exported file", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "freecontext-master-"));
   try {
@@ -229,6 +269,8 @@ test("canonical Pier adapter registers atomic MCP without legacy guidance or CLI
   assert.match(source, /self\._config_toml = original_config_toml/u);
   assert.match(source, /_REMOTE_SKILLS_DIR = _REMOTE_ROOT \/ "skills"/u);
   assert.match(source, /freecontext-benchmark-context\.mjs/u);
+  assert.match(source, /allow_unreferenced_sessions: bool = False/u);
+  assert.match(source, /--allow-unreferenced-sessions/u);
   assert.match(source, /benchmarks\/deepswe\/freecontext\.toml/u);
   assert.match(source, /FREECONTEXT_PROVIDER_BOOTSTRAP_PROFILE/u);
   assert.match(source, /model_providers", \{\}\)\.get\("tokenrhythm", \{\}\)/u);

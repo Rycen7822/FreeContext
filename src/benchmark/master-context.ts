@@ -14,7 +14,7 @@ export interface MasterAgentContextSource {
 
 export interface FreeContextCallReference {
   readonly promptToFreeContext: string;
-  readonly outputToMasterAgent: string;
+  readonly outputToMasterAgent: string | null;
   readonly fullSessionFile: string;
   readonly runtimeSessionFile: string;
   readonly status: string;
@@ -103,10 +103,12 @@ function sessionStatus(session: FreeContextSessionDocument): string {
 export async function exportMasterAgentContext({
   agentDir,
   taskName,
+  allowUnreferencedSessions = false,
   now = () => new Date(),
 }: Readonly<{
   agentDir: string;
   taskName: string;
+  allowUnreferencedSessions?: boolean;
   now?: () => Date;
 }>): Promise<string> {
   if (!taskName.trim()) throw new Error("Benchmark task name must be non-empty.");
@@ -141,9 +143,17 @@ export async function exportMasterAgentContext({
       throw new Error(`MCP session path does not match exported file: ${filePath}`);
     }
     const referenceFoundInMasterContext = completeMasterContext.includes(runtimeSessionFile);
+    if (
+      !referenceFoundInMasterContext
+      && session.schemaVersion === "freecontext-mcp-session-v1"
+    ) {
+      throw new Error(`Master-agent context does not reference ${runtimeSessionFile}`);
+    }
     return Object.freeze({
       promptToFreeContext: promptToFreeContext(session),
-      outputToMasterAgent: outputToMaster(session, runtimeSessionFile),
+      outputToMasterAgent: referenceFoundInMasterContext
+        ? outputToMaster(session, runtimeSessionFile)
+        : null,
       fullSessionFile: relativePath,
       runtimeSessionFile,
       status: sessionStatus(session),
@@ -152,7 +162,7 @@ export async function exportMasterAgentContext({
   }));
 
   const missingReference = freeContextCalls.find((call) => !call.referenceFoundInMasterContext);
-  if (missingReference) {
+  if (missingReference && !allowUnreferencedSessions) {
     throw new Error(`Master-agent context does not reference ${missingReference.runtimeSessionFile}`);
   }
 

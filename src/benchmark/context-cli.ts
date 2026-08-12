@@ -11,11 +11,25 @@ function option(argv: readonly string[], name: string): string | undefined {
 export async function runBenchmarkContextCli(
   argv: readonly string[] = process.argv.slice(2),
 ): Promise<void> {
+  const allowFlag = "--allow-unreferenced-sessions";
+  const allowUnreferencedSessions = argv.includes(allowFlag);
   const agentDir = option(argv, "--agent-dir");
   const taskName = option(argv, "--task-name");
-  if (!agentDir || !taskName || argv.length !== 4) {
-    throw new Error("usage: freecontext-benchmark-context --agent-dir PATH --task-name NAME");
+  if (
+    !agentDir
+    || !taskName
+    || argv.length !== (allowUnreferencedSessions ? 5 : 4)
+    || argv.filter((value) => value === allowFlag).length > 1
+  ) {
+    throw new Error(
+      "usage: freecontext-benchmark-context --agent-dir PATH --task-name NAME "
+      + "[--allow-unreferenced-sessions]",
+    );
   }
-  const outputPath = await exportMasterAgentContext({ agentDir, taskName });
+  const outputPath = await exportMasterAgentContext({
+    agentDir,
+    taskName,
+    allowUnreferencedSessions,
+  });
   process.stdout.write(`${outputPath}\n`);
 }

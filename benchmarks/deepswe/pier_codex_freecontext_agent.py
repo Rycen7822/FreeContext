@@ -196,15 +196,23 @@ approval_mode = "approve"
             ),
         )
 
-    async def _export_master_context(self, environment: BaseEnvironment) -> None:
+    async def _export_master_context(
+        self,
+        environment: BaseEnvironment,
+        *,
+        allow_unreferenced_sessions: bool = False,
+    ) -> None:
         exporter = (_REMOTE_ROOT / "bin/freecontext-benchmark-context.mjs").as_posix()
         task_name = self.logs_dir.parent.name
+        allow_flag = (
+            " --allow-unreferenced-sessions" if allow_unreferenced_sessions else ""
+        )
         await self.exec_as_agent(
             environment,
             command=(
                 f"{_REMOTE_NODE.as_posix()} {exporter} "
                 f"--agent-dir {_REMOTE_AGENT_DIR.as_posix()} "
-                f"--task-name {shlex.quote(task_name)}"
+                f"--task-name {shlex.quote(task_name)}{allow_flag}"
             ),
         )
 
