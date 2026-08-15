@@ -57,6 +57,15 @@ export function optionalBoolean(table: TomlTable, key: string, location: string)
   return value;
 }
 
+export function optionalIntegerArray(table: TomlTable, key: string, location: string): readonly number[] | undefined {
+  const value = table[key];
+  if (value === undefined) return undefined;
+  if (!Array.isArray(value) || value.some((item) => !Number.isSafeInteger(item))) {
+    throw new ConfigurationError(`${location}.${key} must be an array of integers.`);
+  }
+  return value as number[];
+}
+
 export function stringArray(
   table: TomlTable,
   key: string,

@@ -91,7 +91,7 @@ command = "{_REMOTE_LAUNCHER.as_posix()}"
 env_vars = ["HTTP_PROXY", "HTTPS_PROXY", "http_proxy", "https_proxy", "NO_PROXY", "no_proxy"]
 required = true
 startup_timeout_sec = 30
-tool_timeout_sec = 1800
+tool_timeout_sec = 300
 enabled_tools = ["gather_context"]
 
 [mcp_servers.freecontext.tools.gather_context]

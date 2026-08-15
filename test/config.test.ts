@@ -16,10 +16,9 @@ default_route = "default"
 
 [runtime]
 prompt_path = "prompt.md"
-max_turns = 7
-max_tool_calls = 12
-provider_retry_max_retries = 4
-provider_retry_base_delay_ms = 5000
+max_turns = 5
+max_tool_calls = 18
+provider_retry_delays_ms = [3000, 6000, 12000]
 
 [providers.primary]
 api = "anthropic"
@@ -85,8 +84,7 @@ test("resolveConfig loads TOML catalogs and keeps CLI over environment over file
     assert.equal(route.targets[0]?.apiKey, KEYS.PRIMARY_KEY);
     assert.equal(route.targets[0]?.baseUrl, "https://primary.example/v1");
     assert.equal(route.targets[0]?.maxTurns, 5);
-    assert.equal(route.targets[0]?.providerRetryMaxRetries, 4);
-    assert.equal(route.targets[0]?.providerRetryBaseDelayMs, 5000);
+    assert.deepEqual(route.targets[0]?.providerRetryDelaysMs, [3000, 6000, 12000]);
     assert.equal(route.targets[0]?.promptPath, path.join(directory, "prompt.md"));
     assert.equal(route.targets[1]?.apiKey, KEYS.BACKUP_KEY);
   });
@@ -127,6 +125,19 @@ test("target and route overrides are deterministic", async () => {
     assert.equal(route.route, "backup_only");
     assert.deepEqual(route.fallbackOn, ["timeout", "rate_limit", "server_error", "connection"]);
     assert.deepEqual(route.targets.map((item) => item.target), ["backup"]);
+  });
+});
+
+test("runtime exploration ceilings reject values above five turns or eighteen calls", async () => {
+  await withConfig(baseToml(), async (configFile) => {
+    await assert.rejects(
+      () => resolveConfig({ cli: { configFile, maxTurns: "6" }, processEnv: KEYS }),
+      /max_turns.*\[2, 5\]/u,
+    );
+    await assert.rejects(
+      () => resolveConfig({ cli: { configFile, maxToolCalls: "19" }, processEnv: KEYS }),
+      /max_tool_calls.*\[1, 18\]/u,
+    );
   });
 });
 
@@ -211,6 +222,33 @@ test("invalid OpenAI compatibility and integer values are rejected", async () =>
       () => resolveConfig({ cli: { configFile }, processEnv: { ...KEYS, FREECONTEXT_MAX_TURNS: "8turns" } }),
       /must be an integer/u,
     );
+    await assert.rejects(
+      () => resolveConfig({
+        cli: { configFile, providerRetryDelaysMs: "100,200,300,400,500,600" },
+        processEnv: KEYS,
+      }),
+      /at most 5 values/u,
+    );
+    await assert.rejects(
+      () => resolveConfig({ cli: { configFile, providerRetryDelaysMs: "99" }, processEnv: KEYS }),
+      /integer in \[100, 60000\]/u,
+    );
+  });
+});
+
+test("retry delay vector follows CLI over environment over TOML and supports explicit disable", async () => {
+  await withConfig(baseToml(), async (configFile) => {
+    const fromCli = await resolveConfig({
+      cli: { configFile, providerRetryDelaysMs: "100,200" },
+      processEnv: { ...KEYS, FREECONTEXT_PROVIDER_RETRY_DELAYS_MS: "300,400" },
+    });
+    assert.deepEqual(fromCli.targets[0]?.providerRetryDelaysMs, [100, 200]);
+
+    const disabled = await resolveConfig({
+      cli: { configFile, providerRetryDelaysMs: "" },
+      processEnv: KEYS,
+    });
+    assert.deepEqual(disabled.targets[0]?.providerRetryDelaysMs, []);
   });
 });
 

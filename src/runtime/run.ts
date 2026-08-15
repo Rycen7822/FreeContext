@@ -1,22 +1,25 @@
-import type { Usage } from "@earendil-works/pi-ai";
 import type { CliConfigOverrides } from "../config.js";
 import { redactUrl } from "../config.js";
-import { OutputValidationError } from "../errors.js";
-import type { ExplorerOutputValidation, ValidatedEvidenceCitation } from "../output/evidence.js";
-import { renderFinalAnswer, validateExplorerOutput } from "../output/evidence.js";
-import { buildRepairPrompt, buildUserPrompt, REPAIR_SYSTEM_PROMPT } from "../prompt.js";
+import {
+  FreeContextInvocationContextSchema,
+  normalizeFreeContextRequest,
+} from "../mcp/contracts.js";
+import type {
+  FreeContextInvocationContext,
+  FreeContextRequest,
+  FreeContextResult,
+} from "../mcp/contracts.js";
+import { compileFreeContextResult, parseExplorerCandidate } from "../output/evidence.js";
+import { buildUserPrompt } from "../prompt.js";
 import type { Workspace } from "../tools/contracts.js";
 import { createWorkspace } from "../tools/workspace.js";
 import type { ContextTokenCounter } from "./context-budget.js";
 import { GigatokenCounter } from "./gigatoken-counter.js";
-import type { PiSessionEventHandler, PiSessionMetrics } from "./pi-session.js";
-import { addUsage, EMPTY_USAGE } from "./usage.js";
-import { runPiSession } from "./pi-session.js";
+import type { PiSessionEventHandler } from "./pi-session.js";
 import type { RouterDependencies } from "./router.js";
 import { runPrimaryRoute } from "./router.js";
-import { captureError, capturePiSession, captureValidation } from "./session-capture.js";
+import { captureCompiler, capturePiSession } from "./session-capture.js";
 import type {
-  ExplorerCaptureOutcome,
   ExplorerRuntime,
   ExplorerSessionCaptureHandler,
 } from "./session-capture.js";
@@ -32,74 +35,36 @@ export interface ExplorerDependencies extends RouterDependencies {
 }
 
 export interface RunExplorerOptions {
-  readonly query: string;
-  readonly cwd?: string;
+  readonly request: Readonly<FreeContextRequest>;
+  readonly invocation: Readonly<FreeContextInvocationContext>;
   readonly cli?: CliConfigOverrides;
-  readonly repair?: boolean;
   readonly signal?: AbortSignal;
   readonly onEvent?: PiSessionEventHandler;
   readonly onSessionCapture?: ExplorerSessionCaptureHandler;
   readonly dependencies?: ExplorerDependencies;
 }
 
-export interface ExplorerMetrics {
-  readonly turns: number;
-  readonly toolCalls: number;
-  readonly repaired: boolean;
-  readonly routeAttempts: number;
-  readonly fallbacks: number;
-  readonly primary: PiSessionMetrics;
-  readonly repair: PiSessionMetrics | null;
-  readonly usage: Readonly<Usage>;
-  readonly setupMs: number;
-  readonly primarySessionMs: number;
-  readonly primaryValidationMs: number;
-  readonly repairSessionMs: number;
-  readonly repairValidationMs: number;
-  readonly toolExecutionMsTotal: number;
-  readonly toolExecutionMsMax: number;
-  readonly totalMs: number;
-}
-
-export interface ExplorerResult {
-  readonly status: "completed" | "partial";
-  readonly answer: string;
-  readonly summary: string;
-  readonly evidence: readonly Omit<ValidatedEvidenceCitation, "totalLines">[];
-  readonly gaps: readonly string[];
-  readonly validationProblems: readonly string[];
-  readonly metrics: Readonly<ExplorerMetrics>;
-  readonly runtime: Readonly<ExplorerRuntime>;
-}
-
-const REPAIR_OUTPUT_TOKEN_TARGET = 8192;
-
-function sessionUsage(metrics: PiSessionMetrics): Usage {
-  return addUsage(metrics.usage, metrics.compactionUsage);
-}
-
-async function runExplorerWithCounter({
-  query,
-  cwd = process.cwd(),
-  cli = {},
-  repair = true,
-  signal,
-  onEvent,
-  onSessionCapture,
-  dependencies = {},
-}: RunExplorerOptions, tokenCounter: ContextTokenCounter): Promise<Readonly<ExplorerResult>> {
-  if (typeof query !== "string" || !query.trim()) {
-    throw new OutputValidationError("Repository exploration query must be a non-empty string.");
-  }
-  if (query.length > 100000) {
-    throw new OutputValidationError("Repository exploration query exceeds 100,000 characters.");
-  }
-
+async function runExplorerWithCounter(
+  {
+    request: rawRequest,
+    invocation: rawInvocation,
+    cli = {},
+    signal,
+    onEvent,
+    onSessionCapture,
+    dependencies = {},
+  }: RunExplorerOptions,
+  tokenCounter: ContextTokenCounter,
+): Promise<Readonly<FreeContextResult>> {
+  const request = normalizeFreeContextRequest(rawRequest);
+  const invocation = FreeContextInvocationContextSchema.parse(rawInvocation);
   const clock = dependencies.clock ?? performance.now.bind(performance);
   const startedAt = clock();
-  const workspace = dependencies.workspace ?? (await createWorkspace(cwd));
-  const primaryPrompt = buildUserPrompt(query);
-  const runtimeDependencies = { ...dependencies, tokenCounter };
+  const workspace = dependencies.workspace ?? (await createWorkspace(invocation.workspaceRoot));
+  if (workspace.root !== invocation.workspaceRoot) {
+    throw new Error("Invocation workspaceRoot must be the resolved workspace root.");
+  }
+  const primaryPrompt = buildUserPrompt(request);
   const routed = await runPrimaryRoute({
     cli,
     workspace,
@@ -107,157 +72,52 @@ async function runExplorerWithCounter({
     ...(signal ? { signal } : {}),
     ...(onEvent ? { onEvent } : {}),
     startedAt,
-    dependencies: runtimeDependencies,
+    dependencies: { ...dependencies, tokenCounter },
   });
-  const {
-    config,
-    bindings,
-    repositoryTools,
-    systemPrompt,
-    model,
-    requestOptions,
-    primary,
-    setupMs,
-    primarySessionMs,
-  } = routed;
-  const runtime = Object.freeze({
+  const runtime: Readonly<ExplorerRuntime> = Object.freeze({
     route: routed.route,
-    target: config.target,
-    provider: config.provider,
-    api: config.api,
-    authMode: config.authMode,
-    baseUrl: redactUrl(config.baseUrl),
-    model: config.model,
+    target: routed.config.target,
+    provider: routed.config.provider,
+    api: routed.config.api,
+    authMode: routed.config.authMode,
+    baseUrl: redactUrl(routed.config.baseUrl),
+    model: routed.config.model,
     workspace: workspace.root,
-    promptPath: config.promptPath,
-    tools: Object.freeze([...repositoryTools.names]),
+    promptPath: routed.config.promptPath,
+    tools: Object.freeze([...routed.repositoryTools.names]),
   });
 
-  const primaryValidationStartedAt = clock();
-  const primaryValidation = await validateExplorerOutput(primary.text, workspace);
-  let validation = primaryValidation;
-  const primaryValidationMs = Math.max(0, clock() - primaryValidationStartedAt);
-  let repairRun: Awaited<ReturnType<typeof runPiSession>> | null = null;
-  let repairPrompt: string | null = null;
-  let repairValidation: ExplorerOutputValidation | null = null;
-  let repairSessionMs = 0;
-  let repairValidationMs = 0;
-
-  const publishCapture = async (outcome: ExplorerCaptureOutcome): Promise<void> => {
-    if (!onSessionCapture) return;
-    const repairCapture = repairPrompt === null
-      ? null
-      : Object.freeze({
-          prompt: repairPrompt,
-          session: repairRun
-            ? capturePiSession(repairRun, REPAIR_SYSTEM_PROMPT, repairPrompt, [])
-            : null,
-          validation: repairValidation ? captureValidation(repairValidation) : null,
-        });
+  const compilerStartedAt = clock();
+  const result = await compileFreeContextResult(request, invocation, routed.primary.text);
+  const compilerMs = Math.max(0, clock() - compilerStartedAt);
+  if (onSessionCapture) {
+    const candidate = parseExplorerCandidate(routed.primary.text);
     await onSessionCapture(Object.freeze({
-      schemaVersion: "freecontext-session-v1",
-      request: query,
+      schemaVersion: "freecontext-explorer-capture-v2",
+      request,
+      invocation,
       runtime,
-      primary: capturePiSession(primary, systemPrompt, primaryPrompt, repositoryTools.tools),
-      primaryValidation: captureValidation(primaryValidation),
-      repair: repairCapture,
-      outcome,
-    }));
-  };
-
-  if (validation.status === "invalid" && repair) {
-    const repairStartedAt = clock();
-    repairPrompt = buildRepairPrompt(primary.text, validation.problems);
-    const repairMaxTokens = Math.max(
-      config.maxOutputTokens,
-      Math.min(REPAIR_OUTPUT_TOKEN_TARGET, config.contextReserveTokens),
-    );
-    try {
-      repairRun = await runPiSession({
-        bindings,
-        model: Object.freeze({ ...model, maxTokens: repairMaxTokens }),
-        requestOptions: Object.freeze({ ...requestOptions, maxTokens: repairMaxTokens }),
-        config,
-        systemPrompt: REPAIR_SYSTEM_PROMPT,
-        promptText: repairPrompt,
-        tools: [],
-        initialMessages: primary.contextMessages,
-        maxTurns: 1,
-        maxToolCalls: 0,
-        ...(signal ? { signal } : {}),
-        ...(onEvent ? { onEvent } : {}),
-        clock,
-        tokenCounter,
-        ...(dependencies.timestamp ? { timestamp: dependencies.timestamp } : {}),
-      });
-    } catch (error) {
-      await publishCapture(Object.freeze({
-        status: "repair_error",
-        error: captureError(error),
-      }));
-      throw error;
-    }
-    repairSessionMs = Math.max(0, clock() - repairStartedAt);
-    const repairValidationStartedAt = clock();
-    repairValidation = await validateExplorerOutput(repairRun.text, workspace);
-    validation = repairValidation;
-    repairValidationMs = Math.max(0, clock() - repairValidationStartedAt);
-  }
-
-  if (validation.status === "invalid") {
-    const error = new OutputValidationError(
-      `Explorer output failed validation: ${validation.problems.join("; ") || "unknown validation error"}`,
-      { problems: validation.problems, rawOutput: repairRun?.text ?? primary.text },
-    );
-    await publishCapture(Object.freeze({
-      status: "output_validation_error",
-      error: captureError(error),
-    }));
-    throw error;
-  }
-
-  const primaryUsage = sessionUsage(primary.metrics);
-  const repairUsage = repairRun ? sessionUsage(repairRun.metrics) : EMPTY_USAGE;
-  const evidence = validation.evidence.map(({ totalLines: _totalLines, ...item }) => Object.freeze(item));
-  const answer = renderFinalAnswer(validation);
-  const result = Object.freeze({
-    status: validation.status,
-    answer,
-    summary: validation.summary,
-    evidence: Object.freeze(evidence),
-    gaps: Object.freeze([...validation.gaps]),
-    validationProblems: Object.freeze([...validation.problems]),
-    metrics: Object.freeze({
-      turns: primary.metrics.turns + (repairRun?.metrics.turns ?? 0),
-      toolCalls: primary.metrics.toolCalls + (repairRun?.metrics.toolCalls ?? 0),
-      repaired: Boolean(repairRun),
-      routeAttempts: routed.routeAttempts,
-      fallbacks: routed.fallbacks,
-      primary: primary.metrics,
-      repair: repairRun?.metrics ?? null,
-      usage: Object.freeze(addUsage(primaryUsage, repairUsage)),
-      setupMs,
-      primarySessionMs,
-      primaryValidationMs,
-      repairSessionMs,
-      repairValidationMs,
-      toolExecutionMsTotal:
-        primary.metrics.toolExecutionMsTotal + (repairRun?.metrics.toolExecutionMsTotal ?? 0),
-      toolExecutionMsMax: Math.max(
-        primary.metrics.toolExecutionMsMax,
-        repairRun?.metrics.toolExecutionMsMax ?? 0,
+      primary: capturePiSession(
+        routed.primary,
+        routed.systemPrompt,
+        primaryPrompt,
+        routed.repositoryTools.tools,
       ),
-      totalMs: Math.max(0, clock() - startedAt),
-    }),
-    runtime,
-  });
-  await publishCapture(validation.status === "partial"
-    ? Object.freeze({ status: "partial", answer, problemCount: validation.problems.length })
-    : Object.freeze({ status: "completed", answer }));
+      compiler: captureCompiler(candidate),
+      metrics: Object.freeze({
+        routeAttempts: routed.routeAttempts,
+        fallbacks: routed.fallbacks,
+        setupMs: routed.setupMs,
+        primarySessionMs: routed.primarySessionMs,
+        compilerMs,
+        totalMs: Math.max(0, clock() - startedAt),
+      }),
+    }));
+  }
   return result;
 }
 
-export async function runExplorer(options: RunExplorerOptions): Promise<Readonly<ExplorerResult>> {
+export async function runExplorer(options: RunExplorerOptions): Promise<Readonly<FreeContextResult>> {
   if (options.dependencies?.tokenCounter) {
     return runExplorerWithCounter(options, options.dependencies.tokenCounter);
   }

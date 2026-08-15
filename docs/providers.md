@@ -62,7 +62,7 @@ Every target selected by a route must have its named credential available. The d
 
 ## Timeout and retry
 
-`[runtime]` owns provider resilience. `request_timeout_ms` limits each request; `provider_retry_max_retries` defaults to three retries after the first attempt, and `provider_retry_base_delay_ms` defaults to 3000 ms, producing 3/6/12-second exponential waits. Transient HTTP, connection, timeout, interrupted-stream, `SERVICE_BUSY`, and `服务繁忙` failures retry only the failed assistant turn. Successful repository tool results remain in context and are never replayed. Retry waits honor cancellation, verbose mode reports scheduling and starts, and exhausted failures enter route fallback only when the configured route and pre-tool safety boundary permit it.
+`[runtime]` owns provider resilience. `request_timeout_ms` limits each request, while `provider_retry_delays_ms` owns the complete retry-wait vector and defaults to `[3000, 6000, 12000]`; each wait receives up to ±20% jitter. Retryability comes from bounded structured HTTP/provider/transport metadata, Pi's retry signal, or the exact TokenRhythm compatibility response, not broad natural-language matching. Only the failed assistant turn is retried, successful repository tool results remain in context, and the Pi transport has its own retries disabled. Retry waits honor cancellation, verbose mode reports their base and actual delays, and exhausted failures enter route fallback only when the configured route and pre-tool safety boundary permit it. Use an empty vector to disable retries.
 
 ## SenseNova profile
 

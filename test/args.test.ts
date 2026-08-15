@@ -22,15 +22,13 @@ test("argument parser accepts TOML routing and context controls", () => {
     "--config",
     "/tmp/freecontext.toml",
     "--route=fast",
-    "--provider-retry-max-retries=4",
-    "--provider-retry-base-delay-ms=5000",
+    "--provider-retry-delays-ms=3000,6000,12000",
     "--no-context-compaction",
     "query",
   ]);
   assert.equal(parsed.configFile, "/tmp/freecontext.toml");
   assert.equal(parsed.route, "fast");
-  assert.equal(parsed.providerRetryMaxRetries, "4");
-  assert.equal(parsed.providerRetryBaseDelayMs, "5000");
+  assert.equal(parsed.providerRetryDelaysMs, "3000,6000,12000");
   assert.equal(parsed.contextCompactionEnabled, false);
   assert.equal(parsed.query, "query");
 

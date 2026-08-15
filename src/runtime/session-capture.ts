@@ -2,7 +2,11 @@ import type { AgentMessage, AgentTool } from "@earendil-works/pi-agent-core";
 import type { AssistantMessageEvent } from "@earendil-works/pi-ai";
 import type { FreeContextConfig } from "../config.js";
 import { FreeContextError, ProviderError } from "../errors.js";
-import type { ExplorerOutputValidation, ValidatedEvidenceCitation } from "../output/evidence.js";
+import type {
+  FreeContextInvocationContext,
+  FreeContextRequest,
+} from "../mcp/contracts.js";
+import type { ParsedExplorerCandidate } from "../output/evidence.js";
 import type {
   FreeContextRuntimeEvent,
   PiSessionMetrics,
@@ -40,12 +44,10 @@ export interface ExplorerRuntime {
   readonly tools: readonly string[];
 }
 
-export interface ExplorerValidationCapture {
-  readonly valid: boolean;
-  readonly status: ExplorerOutputValidation["status"];
+export interface ExplorerCompilerCapture {
   readonly summary: string;
-  readonly evidence: readonly ValidatedEvidenceCitation[];
-  readonly gaps: readonly string[];
+  readonly evidenceCount: number;
+  readonly gapCount: number;
   readonly problems: readonly string[];
 }
 
@@ -72,24 +74,23 @@ export interface ExplorerCapturedError {
   readonly statusCode?: number;
 }
 
-export type ExplorerCaptureOutcome =
-  | Readonly<{ status: "completed"; answer: string }>
-  | Readonly<{ status: "partial"; answer: string; problemCount: number }>
-  | Readonly<{ status: "output_validation_error"; error: ExplorerCapturedError }>
-  | Readonly<{ status: "repair_error"; error: ExplorerCapturedError }>;
+export interface ExplorerCaptureMetrics {
+  readonly routeAttempts: number;
+  readonly fallbacks: number;
+  readonly setupMs: number;
+  readonly primarySessionMs: number;
+  readonly compilerMs: number;
+  readonly totalMs: number;
+}
 
 export interface ExplorerSessionCapture {
-  readonly schemaVersion: "freecontext-session-v1";
-  readonly request: string;
+  readonly schemaVersion: "freecontext-explorer-capture-v2";
+  readonly request: Readonly<FreeContextRequest>;
+  readonly invocation: Readonly<FreeContextInvocationContext>;
   readonly runtime: Readonly<ExplorerRuntime>;
   readonly primary: Readonly<ExplorerPiSessionCapture>;
-  readonly primaryValidation: Readonly<ExplorerValidationCapture>;
-  readonly repair: Readonly<{
-    readonly prompt: string;
-    readonly session: Readonly<ExplorerPiSessionCapture> | null;
-    readonly validation: Readonly<ExplorerValidationCapture> | null;
-  }> | null;
-  readonly outcome: ExplorerCaptureOutcome;
+  readonly compiler: Readonly<ExplorerCompilerCapture>;
+  readonly metrics: Readonly<ExplorerCaptureMetrics>;
 }
 
 export type ExplorerSessionCaptureHandler = (
@@ -123,16 +124,14 @@ export function captureRuntimeEvent(
   });
 }
 
-export function captureValidation(
-  validation: ExplorerOutputValidation,
-): Readonly<ExplorerValidationCapture> {
+export function captureCompiler(
+  candidate: Readonly<ParsedExplorerCandidate>,
+): Readonly<ExplorerCompilerCapture> {
   return Object.freeze({
-    valid: validation.valid,
-    status: validation.status,
-    summary: validation.summary,
-    evidence: Object.freeze(validation.evidence.map((item) => Object.freeze({ ...item }))),
-    gaps: Object.freeze([...validation.gaps]),
-    problems: Object.freeze([...validation.problems]),
+    summary: candidate.summary,
+    evidenceCount: candidate.evidence.length,
+    gapCount: candidate.gaps.length,
+    problems: Object.freeze([...candidate.problems]),
   });
 }
 
@@ -159,10 +158,15 @@ export function capturePiSession(
 }
 
 export function captureError(error: unknown): Readonly<ExplorerCapturedError> {
+  const message = error instanceof FreeContextError
+    ? error.message
+    : error instanceof Error
+      ? "Unexpected internal failure."
+      : "Unexpected non-error failure.";
   return Object.freeze({
     name: error instanceof Error ? error.name : "Error",
     code: error instanceof FreeContextError ? error.code : "UNEXPECTED_ERROR",
-    message: error instanceof Error ? error.message : String(error),
+    message,
     ...(error instanceof ProviderError ? {
       category: error.category,
       ...(error.statusCode !== undefined ? { statusCode: error.statusCode } : {}),

@@ -12,7 +12,6 @@ export type CliOptions = Mutable<CliConfigOverrides> & {
   help?: boolean;
   version?: boolean;
   verbose?: boolean;
-  noRepair?: boolean;
   benchmarkSessionFile?: string;
 };
 
@@ -20,7 +19,7 @@ type ValueOptionKey = Exclude<
   keyof CliConfigOverrides,
   "apiKey" | "contextCompactionEnabled"
 > | "query" | "cwd" | "format" | "benchmarkSessionFile";
-type FlagOptionKey = "help" | "version" | "verbose" | "noRepair" | "contextCompactionEnabled";
+type FlagOptionKey = "help" | "version" | "verbose" | "contextCompactionEnabled";
 
 const VALUE_OPTIONS = new Map<string, ValueOptionKey>([
   ["-q", "query"],
@@ -36,8 +35,7 @@ const VALUE_OPTIONS = new Map<string, ValueOptionKey>([
   ["--max-turns", "maxTurns"],
   ["--max-tool-calls", "maxToolCalls"],
   ["--request-timeout-ms", "requestTimeoutMs"],
-  ["--provider-retry-max-retries", "providerRetryMaxRetries"],
-  ["--provider-retry-base-delay-ms", "providerRetryBaseDelayMs"],
+  ["--provider-retry-delays-ms", "providerRetryDelaysMs"],
   ["--tool-timeout-ms", "toolTimeoutMs"],
   ["--max-tool-output-bytes", "maxToolOutputBytes"],
   ["--max-parallel-tools", "maxParallelTools"],
@@ -49,7 +47,6 @@ const FLAG_OPTIONS = new Map<string, Readonly<{ key: FlagOptionKey; value: boole
   ["-V", { key: "version", value: true }],
   ["--version", { key: "version", value: true }],
   ["--verbose", { key: "verbose", value: true }],
-  ["--no-repair", { key: "noRepair", value: true }],
   ["--no-context-compaction", { key: "contextCompactionEnabled", value: false }],
 ]);
 
@@ -129,15 +126,12 @@ Core options:
       --target NAME            Select one model target and disable fallback
       --prompt PATH            Load the system prompt from this Markdown file
       --format text|json        Output format (default: text)
-      --max-turns N             Maximum model turns
-      --max-tool-calls N        Maximum repository tool calls
+      --max-turns N             Model turns (2-5; default 5)
+      --max-tool-calls N        Repository tool calls (1-18; default 18)
       --request-timeout-ms N    Provider request timeout in milliseconds
-      --provider-retry-max-retries N
-                                Transient provider retries after the first attempt
-      --provider-retry-base-delay-ms N
-                                Initial exponential retry delay in milliseconds
+      --provider-retry-delays-ms LIST
+                                Comma-separated retry waits; empty disables retries
       --no-context-compaction   Disable proactive compaction and overflow recovery
-      --no-repair               Disable one-pass output-contract repair
       --benchmark-session-file PATH
                                 Save the full benchmark-only session outside the explored workspace
       --verbose                 Emit lifecycle diagnostics to stderr

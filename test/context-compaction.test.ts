@@ -96,10 +96,10 @@ test("summary requests use no tools, a fresh session, and the existing authentic
 });
 
 test("summary requests retry transient provider busy responses", async () => {
-  const config = baseConfig({ providerRetryMaxRetries: 3, providerRetryBaseDelayMs: 1 });
+  const config = baseConfig({ providerRetryDelaysMs: [1, 2, 4] });
   const calls: CapturedSummaryCall[] = [];
   const responses = [
-    assistantText("", { stopReason: "error", errorMessage: "SERVICE_BUSY 服务繁忙" }),
+    assistantText("", { stopReason: "error", errorMessage: '{"code":"SERVICE_BUSY","message":"服务繁忙，请稍后重试"}' }),
     assistantText("compact after retry"),
   ];
   const bindings = fakeBindings(async () => [], {

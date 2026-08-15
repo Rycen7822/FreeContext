@@ -1,10 +1,11 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { chmod, mkdir, mkdtemp, readFile, rm, stat } from "node:fs/promises";
+import { createHash } from "node:crypto";
+import { chmod, mkdir, mkdtemp, readFile, readdir, rm, stat } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { SecurityError, SessionPersistenceError } from "../src/errors.js";
-import { commitSessionFile, reserveSessionFile } from "../src/session/store.js";
+import { cancelSessionFile, commitSessionFile, reserveSessionFile } from "../src/session/store.js";
 
 test("session store reserves and commits one private parseable file outside the workspace", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "freecontext-store-"));
@@ -19,7 +20,11 @@ test("session store reserves and commits one private parseable file outside the 
     });
     assert.equal(reservation.path, path.join(sessions, "00000000-0000-4000-8000-000000000001.json"));
     assert.equal((await stat(sessions)).mode & 0o777, 0o700);
-    assert.equal((await stat(reservation.path)).mode & 0o777, 0o600);
+    await assert.rejects(stat(reservation.path), /ENOENT/u);
+    const pending = await readdir(sessions);
+    assert.equal(pending.length, 2);
+    assert.ok(pending.every((name) => name.startsWith(".") && (name.endsWith(".tmp") || name.endsWith(".lock"))));
+    for (const name of pending) assert.equal((await stat(path.join(sessions, name))).mode & 0o777, 0o600);
 
     const payload = { status: "failed", error: { code: "PROVIDER_ERROR", message: "unavailable" } };
     let serializations = 0;
@@ -31,9 +36,14 @@ test("session store reserves and commits one private parseable file outside the 
     };
     const committed = await commitSessionFile(reservation, document);
     const raw = await readFile(reservation.path, "utf8");
-    assert.deepEqual(committed, { path: reservation.path, bytes: Buffer.byteLength(raw) });
+    assert.deepEqual(committed, {
+      path: reservation.path,
+      bytes: Buffer.byteLength(raw),
+      sha256: createHash("sha256").update(raw).digest("hex"),
+    });
     assert.equal(serializations, 1);
     assert.deepEqual(JSON.parse(raw), payload);
+    assert.deepEqual(await readdir(sessions), [path.basename(reservation.path)]);
     await assert.rejects(commitSessionFile(reservation, document), /already committed/u);
     await assert.rejects(
       reserveSessionFile({
@@ -41,8 +51,27 @@ test("session store reserves and commits one private parseable file outside the 
         sessionDirectory: sessions,
         uuid: () => "00000000-0000-4000-8000-000000000001",
       }),
-      /EEXIST/u,
+      (error: unknown) => Boolean(error && typeof error === "object" && "code" in error && error.code === "EEXIST"),
     );
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("cancelled reservations leave no final, temp, or lock file", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "freecontext-store-"));
+  const workspace = path.join(root, "workspace");
+  const sessions = path.join(root, "state", "sessions");
+  try {
+    await mkdir(workspace);
+    const reservation = await reserveSessionFile({
+      workspaceRoot: workspace,
+      sessionDirectory: sessions,
+      uuid: () => "00000000-0000-4000-8000-000000000099",
+    });
+    await cancelSessionFile(reservation);
+    assert.deepEqual(await readdir(sessions), []);
+    await assert.rejects(commitSessionFile(reservation, { status: "late" }), /already committed/u);
   } finally {
     await rm(root, { recursive: true, force: true });
   }

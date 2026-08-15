@@ -4,7 +4,7 @@
     "args": ["bin/freecontext-mcp.mjs"],
     "cwd": ".",
     "startup_timeout_sec": 30,
-    "tool_timeout_sec": 1800,
+    "tool_timeout_sec": 300,
     "required": false
   }
 }

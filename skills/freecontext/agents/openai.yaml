@@ -1,8 +1,8 @@
 interface:
   display_name: "FreeContext"
-  short_description: "Read skill alone, then call FreeContext"
+  short_description: "Manual bridge to FreeContext MCP"
 policy:
-  allow_implicit_invocation: true
+  allow_implicit_invocation: false
 dependencies:
   tools:
     - type: "mcp"

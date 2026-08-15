@@ -7,7 +7,8 @@ import { estimateEffectiveContextTokens } from "./context-budget.js";
 import type { PiBindings } from "./pi-bindings.js";
 import type { FreeContextModel } from "./model.js";
 import { redactProviderError } from "./model.js";
-import { retryProviderMessage, shouldRetryProviderMessage } from "./provider-retry.js";
+import { normalizeAssistantFailure } from "./provider-failure.js";
+import { retryProviderMessage, type ProviderAttempt, type ProviderRetryCallbacks } from "./provider-retry.js";
 import { addUsage, EMPTY_USAGE } from "./usage.js";
 
 const SUMMARY_SYSTEM_PROMPT = [
@@ -58,6 +59,7 @@ export async function compactContext({
   signal,
   clock = performance.now.bind(performance),
   timestamp = Date.now,
+  providerRetryCallbacks = {},
 }: {
   readonly cut: CompactionCut;
   readonly bindings: PiBindings;
@@ -68,6 +70,7 @@ export async function compactContext({
   readonly signal?: AbortSignal;
   readonly clock?: () => number;
   readonly timestamp?: () => number;
+  readonly providerRetryCallbacks?: Readonly<ProviderRetryCallbacks>;
 }): Promise<Readonly<ContextCompactionResult>> {
   if (cut.messagesToSummarize.length === 0 || cut.retainedTail.length === 0) {
     throw new ProviderError("Context compaction has no valid history cut.");
@@ -94,22 +97,31 @@ export async function compactContext({
     );
     return await stream.result();
   };
+  const attemptOf = (message: AssistantMessage): ProviderAttempt => ({
+    message,
+    failure: message.stopReason === "error" && !bindings.isContextOverflow(message, model.contextWindow)
+      ? normalizeAssistantFailure(message, { provider: config.provider, baseUrl: config.baseUrl })
+      : null,
+  });
 
   let response: AssistantMessage;
   let retryUsage = EMPTY_USAGE;
   try {
-    response = await retryProviderMessage(
-      await requestSummary(),
-      requestSummary,
-      {
-        maxRetries: config.providerRetryMaxRetries,
-        baseDelayMs: config.providerRetryBaseDelayMs,
-        shouldRetry: (message) =>
-          !bindings.isContextOverflow(message, model.contextWindow) && shouldRetryProviderMessage(message),
-      },
+    const attempt = await retryProviderMessage(
+      attemptOf(await requestSummary()),
+      async () => attemptOf(await requestSummary()),
+      { delaysMs: config.providerRetryDelaysMs },
       signal,
-      { onRetryScheduled: (failed) => { retryUsage = addUsage(retryUsage, failed.usage); } },
+      {
+        onFailure: async (observation) => { await providerRetryCallbacks.onFailure?.(observation); },
+        onRetryScheduled: async (schedule) => {
+          retryUsage = addUsage(retryUsage, schedule.failedMessage.usage);
+          await providerRetryCallbacks.onRetryScheduled?.(schedule);
+        },
+        onRetryStart: async (schedule) => { await providerRetryCallbacks.onRetryStart?.(schedule); },
+      },
     );
+    response = attempt.message;
   } catch (error) {
     throw new ProviderError(redactProviderError(error instanceof Error ? error.message : error, config), { cause: error });
   }

@@ -1,31 +1,44 @@
-import { isRetryableAssistantError } from "@earendil-works/pi-ai";
 import type { AssistantMessage } from "@earendil-works/pi-ai";
+import type { ProviderFailureSignal } from "./provider-failure.js";
 
-const PROVIDER_BUSY = /\b(?:service|server)[_ -]?busy\b|服务繁忙/iu;
-const MAX_RETRY_DELAY_MS = 60000;
+const DEFAULT_JITTER_RATIO = 0.2;
+
+export interface ProviderAttempt {
+  readonly message: AssistantMessage;
+  readonly failure: Readonly<ProviderFailureSignal> | null;
+}
 
 export interface ProviderRetryPolicy {
+  readonly delaysMs: readonly number[];
+  readonly random?: () => number;
+  readonly sleep?: (delayMs: number, signal?: AbortSignal) => Promise<boolean>;
+}
+
+export interface ProviderRetrySchedule {
+  readonly failedMessage: AssistantMessage;
+  readonly failure: Readonly<ProviderFailureSignal>;
+  readonly attempt: number;
   readonly maxRetries: number;
   readonly baseDelayMs: number;
-  readonly shouldRetry?: (message: AssistantMessage) => boolean;
+  readonly delayMs: number;
+}
+
+export interface ProviderFailureObservation {
+  readonly failedMessage: AssistantMessage;
+  readonly failure: Readonly<ProviderFailureSignal>;
+  readonly attempt: number;
+  readonly willRetry: boolean;
 }
 
 export interface ProviderRetryCallbacks {
-  readonly onRetryScheduled?: (
-    message: AssistantMessage,
-    attempt: number,
-    maxRetries: number,
-    delayMs: number,
-  ) => Promise<void> | void;
-  readonly onRetryStart?: (attempt: number) => Promise<void> | void;
+  readonly onFailure?: (observation: Readonly<ProviderFailureObservation>) => Promise<void> | void;
+  readonly onRetryScheduled?: (schedule: Readonly<ProviderRetrySchedule>) => Promise<void> | void;
+  readonly onRetryStart?: (schedule: Readonly<ProviderRetrySchedule>) => Promise<void> | void;
 }
 
-export function shouldRetryProviderMessage(message: AssistantMessage): boolean {
-  return isRetryableAssistantError(message) || Boolean(message.errorMessage && PROVIDER_BUSY.test(message.errorMessage));
-}
-
-function providerRetryDelayMs(baseDelayMs: number, attempt: number): number {
-  return Math.min(baseDelayMs * 2 ** Math.max(0, attempt - 1), MAX_RETRY_DELAY_MS);
+function jitteredDelayMs(baseDelayMs: number, random: () => number): number {
+  const centered = Math.max(0, Math.min(1, random())) * 2 - 1;
+  return Math.max(0, Math.round(baseDelayMs * (1 + centered * DEFAULT_JITTER_RATIO)));
 }
 
 async function waitForProviderRetry(delayMs: number, signal?: AbortSignal): Promise<boolean> {
@@ -43,24 +56,42 @@ async function waitForProviderRetry(delayMs: number, signal?: AbortSignal): Prom
   });
 }
 
+function abortedAttempt(current: Readonly<ProviderAttempt>): ProviderAttempt {
+  const { errorMessage: _errorMessage, ...aborted } = current.message;
+  return { message: { ...aborted, stopReason: "aborted" }, failure: null };
+}
+
 export async function retryProviderMessage(
-  initial: AssistantMessage,
-  retry: (failed: AssistantMessage) => Promise<AssistantMessage>,
-  policy: ProviderRetryPolicy,
+  initial: Readonly<ProviderAttempt>,
+  retry: (failed: Readonly<ProviderAttempt>) => Promise<ProviderAttempt>,
+  policy: Readonly<ProviderRetryPolicy>,
   signal?: AbortSignal,
-  callbacks: ProviderRetryCallbacks = {},
-): Promise<AssistantMessage> {
+  callbacks: Readonly<ProviderRetryCallbacks> = {},
+): Promise<ProviderAttempt> {
   let current = initial;
-  for (let attempt = 1; attempt <= policy.maxRetries; attempt += 1) {
-    if (!(policy.shouldRetry ?? shouldRetryProviderMessage)(current)) break;
-    const delayMs = providerRetryDelayMs(policy.baseDelayMs, attempt);
-    await callbacks.onRetryScheduled?.(current, attempt, policy.maxRetries, delayMs);
-    if (!(await waitForProviderRetry(delayMs, signal)) || signal?.aborted) {
-      const { errorMessage: _errorMessage, ...aborted } = current;
-      return { ...aborted, stopReason: "aborted" };
-    }
-    await callbacks.onRetryStart?.(attempt);
+  const random = policy.random ?? Math.random;
+  const sleep = policy.sleep ?? waitForProviderRetry;
+  let attempt = 1;
+  for (let index = 0; ; index += 1) {
+    const failure = current.failure;
+    if (!failure) break;
+    const willRetry = failure.retryable && index < policy.delaysMs.length;
+    await callbacks.onFailure?.({ failedMessage: current.message, failure, attempt, willRetry });
+    if (!willRetry) break;
+    const baseDelayMs = policy.delaysMs[index] ?? 0;
+    const schedule: ProviderRetrySchedule = {
+      failedMessage: current.message,
+      failure,
+      attempt: index + 1,
+      maxRetries: policy.delaysMs.length,
+      baseDelayMs,
+      delayMs: jitteredDelayMs(baseDelayMs, random),
+    };
+    await callbacks.onRetryScheduled?.(schedule);
+    if (!(await sleep(schedule.delayMs, signal)) || signal?.aborted) return abortedAttempt(current);
+    await callbacks.onRetryStart?.(schedule);
     current = await retry(current);
+    attempt += 1;
   }
   return current;
 }

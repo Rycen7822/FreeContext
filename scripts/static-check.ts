@@ -29,6 +29,7 @@ const forbidden: readonly (readonly [RegExp, string])[] = [
 
 const failures: string[] = [];
 const hostPersistenceModules = new Set([
+  path.join("src", "benchmark", "cost-cli.ts"),
   path.join("src", "benchmark", "master-context.ts"),
   path.join("src", "session", "store.ts"),
 ]);
@@ -63,10 +64,12 @@ if (packageSource.includes(fullCodingAgentPackage)) {
 const pluginManifest = JSON.parse(await readFile(path.join(root, ".codex-plugin", "plugin.json"), "utf8")) as {
   mcpServers?: unknown;
   skills?: unknown;
+  hooks?: unknown;
 };
 if (pluginManifest.mcpServers !== "./.mcp.json" || pluginManifest.skills !== "./skills/") {
   failures.push("plugin.json: expected bundled MCP plus shadow skill paths");
 }
+if (Object.hasOwn(pluginManifest, "hooks")) failures.push("plugin.json: FreeContext must not register hooks");
 const bundledMcp = JSON.parse(await readFile(path.join(root, ".mcp.json"), "utf8")) as Record<string, unknown>;
 const expectedBundledMcp = {
   freecontext: {
@@ -74,7 +77,7 @@ const expectedBundledMcp = {
     args: ["bin/freecontext-mcp.mjs"],
     cwd: ".",
     startup_timeout_sec: 30,
-    tool_timeout_sec: 1_800,
+    tool_timeout_sec: 300,
     required: false,
   },
 };
@@ -92,8 +95,8 @@ for (const required of [
   "readOnlyHint: true",
   "destructiveHint: false",
   "openWorldHint: true",
-  "inputSchema: GatherContextInputSchema",
-  "outputSchema: GatherContextOutputSchema",
+  "inputSchema: FreeContextRequestSchema",
+  "outputSchema: FreeContextResultSchema",
 ]) {
   if (!mcpServer.includes(required)) failures.push(`src/mcp/server.ts: missing ${required}`);
 }
@@ -112,11 +115,30 @@ if (mcpEntries.some(({ source }) => /\bexplore_repository\b/u.test(source))) {
 if (mcpEntries.some(({ source }) => /runPiSession|runPrimaryRoute/u.test(source))) {
   failures.push("src/mcp: duplicated explorer runtime");
 }
+for (const [pattern, label] of [
+  [/io\.modelcontextprotocol\/related-task/u, "private related-task metadata"],
+  [/freecontext\/workspace-revision/u, "private workspace revision metadata"],
+  [/\b(?:TaskRegistry|TaskClaim|createTaskRegistry|DUPLICATE_TASK|FreeContextHostContext)\b/u, "retired host identity or task dedupe"],
+  [/\btaskId\b/u, "parent task identity in production MCP"],
+] as const) {
+  if (mcpEntries.some(({ source }) => pattern.test(source))) failures.push(`src/mcp: ${label}`);
+}
 if (mcpEntries.some(({ file, source }) => (
   path.relative(root, file) !== path.join("src", "mcp", "server.ts") &&
   /\bMcpServer\b|StdioServerTransport/u.test(source)
 ))) {
   failures.push("src/mcp: transport owner escaped server.ts");
+}
+
+const mcpSession = await readFile(path.join(root, "src", "mcp", "session.ts"), "utf8");
+if (!mcpSession.includes('schemaVersion: "freecontext-mcp-session-v3"') ||
+    mcpSession.includes('schemaVersion: "freecontext-mcp-session-v2"')) {
+  failures.push("src/mcp/session.ts: production must write only freecontext-mcp-session-v3");
+}
+const lifecycle = await readFile(path.join(root, "src", "mcp", "lifecycle.ts"), "utf8");
+if (!lifecycle.includes('schemaVersion: "freecontext-late-result-v2"') ||
+    lifecycle.includes('schemaVersion: "freecontext-late-result-v1"')) {
+  failures.push("src/mcp/lifecycle.ts: production must write only freecontext-late-result-v2");
 }
 
 const processWrapper = await readFile(path.join(root, "src", "tools", "process.ts"), "utf8");

@@ -173,26 +173,22 @@ test("hook-reported effective context remains authoritative when its length matc
 });
 
 test("budget hooks block excess calls and force a no-tool final turn", async () => {
-  const config = baseConfig({ maxTurns: 3, maxToolCalls: 2 });
+  const config = baseConfig({ maxTurns: 5, maxToolCalls: 18 });
   let snapshot: AgentLoopTurnUpdate | undefined;
   const final = assistantText("done");
   const bindings = bindingsWith(async (prompts, context, loopConfig, emit) => {
     await emit({ type: "turn_start" });
-    assert.equal(await loopConfig.beforeToolCall?.({
-      assistantMessage: final,
-      toolCall: { type: "toolCall", id: "1", name: "read", arguments: {} },
-      args: {},
-      context,
-    }), undefined);
-    assert.equal(await loopConfig.beforeToolCall?.({
-      assistantMessage: final,
-      toolCall: { type: "toolCall", id: "2", name: "read", arguments: {} },
-      args: {},
-      context,
-    }), undefined);
+    for (let call = 1; call <= 18; call += 1) {
+      assert.equal(await loopConfig.beforeToolCall?.({
+        assistantMessage: final,
+        toolCall: { type: "toolCall", id: String(call), name: "read", arguments: {} },
+        args: {},
+        context,
+      }), undefined);
+    }
     const blocked = await loopConfig.beforeToolCall?.({
       assistantMessage: final,
-      toolCall: { type: "toolCall", id: "3", name: "read", arguments: {} },
+      toolCall: { type: "toolCall", id: "19", name: "read", arguments: {} },
       args: {},
       context,
     });
@@ -220,10 +216,165 @@ test("budget hooks block excess calls and force a no-tool final turn", async () 
   const last = snapshot.context.messages.at(-1);
   assert.equal(last?.role, "user");
   assert.match(typeof last?.content === "string" ? last.content : "", /budget is exhausted/u);
-  assert.match(typeof last?.content === "string" ? last.content : "", /at most 12 strong citations/u);
+  assert.match(typeof last?.content === "string" ? last.content : "", /at most 6 role\/question\/focus evidence spans/u);
   assert.match(typeof last?.content === "string" ? last.content : "", /closing <\/final_answer> tag/u);
-  assert.equal(result.metrics.toolCalls, 3);
+  assert.equal(result.metrics.toolCalls, 18);
+  assert.equal(result.metrics.blockedToolCalls, 1);
   assert.equal(result.metrics.finalizationInjected, true);
+  assert.equal(result.metrics.finalizationReason, "tool_limit");
+});
+
+test("a role-complete candidate ends exploration before the turn limit", async () => {
+  const config = baseConfig();
+  const final = assistantText(
+    "<final_answer>\nsummary: Implementation found.\nevidence:\n" +
+      "- [implementation][impl] src/index.ts:1-3 (focus 2) — Defines the entry point.\n" +
+      "gaps:\n-\n</final_answer>",
+  );
+  let shouldStop = false;
+  const bindings = bindingsWith(async (prompts, context, loopConfig, emit) => {
+    await emit({ type: "turn_start" });
+    shouldStop = await loopConfig.shouldStopAfterTurn?.({
+      message: final,
+      toolResults: [],
+      context: { ...context, messages: [...prompts, final] },
+      newMessages: [...prompts, final],
+    }) ?? false;
+    await emit({ type: "turn_end", message: final, toolResults: [] });
+    return [...prompts, final];
+  });
+  const result = await runPiSession({
+    bindings,
+    model: createModel(config),
+    requestOptions: createRequestOptions(config),
+    config,
+    systemPrompt: "system",
+    promptText: "Evidence questions:\n- [implementation][impl][required] Locate the entry point.",
+    tools: [readTool],
+  });
+
+  assert.equal(shouldStop, true);
+  assert.equal(result.metrics.turns, 1);
+  assert.equal(result.metrics.finalizationReason, "coverage");
+});
+
+test("a valid partial candidate is terminal instead of triggering a repair turn", async () => {
+  const config = baseConfig();
+  const final = assistantText(
+    "<final_answer>\nsummary: Implementation found; tests remain unresolved.\nevidence:\n" +
+      "- [implementation][impl] src/index.ts:1-3 (focus 2) — Defines the entry point.\n" +
+      "gaps:\n- [tests] No test evidence was found.\n</final_answer>",
+  );
+  let shouldStop = false;
+  const bindings = bindingsWith(async (prompts, context, loopConfig, emit) => {
+    await emit({ type: "turn_start" });
+    shouldStop = await loopConfig.shouldStopAfterTurn?.({
+      message: final,
+      toolResults: [],
+      context: { ...context, messages: [...prompts, final] },
+      newMessages: [...prompts, final],
+    }) ?? false;
+    await emit({ type: "turn_end", message: final, toolResults: [] });
+    return [...prompts, final];
+  });
+  const result = await runPiSession({
+    bindings,
+    model: createModel(config),
+    requestOptions: createRequestOptions(config),
+    config,
+    systemPrompt: "system",
+    promptText:
+      "Evidence questions:\n- [implementation][impl][required] Locate the entry point.\n" +
+      "- [test][tests][required] Locate the tests.",
+    tools: [readTool],
+  });
+
+  assert.equal(shouldStop, true);
+  assert.equal(result.metrics.turns, 1);
+  assert.equal(result.metrics.finalizationReason, "partial_candidate");
+});
+
+test("the fifth turn starts without tools and receives one finalization instruction", async () => {
+  const config = baseConfig();
+  const exploratory = assistantText("Still exploring.");
+  let fifthTurnContext: AgentContext | undefined;
+  const bindings = bindingsWith(async (prompts, context, loopConfig, emit) => {
+    let activeContext: AgentContext = { ...context, messages: [...prompts] };
+    for (let turn = 1; turn <= 4; turn += 1) {
+      await emit({ type: "turn_start" });
+      const result = {
+        ...toolResult,
+        toolCallId: `call-${turn}`,
+        content: [{ type: "text" as const, text: `src/file-${turn}.ts:1-2` }],
+      };
+      const update = await loopConfig.prepareNextTurn?.({
+        message: exploratory,
+        context: activeContext,
+        newMessages: [exploratory, result],
+        toolResults: [result],
+      });
+      if (update?.context) activeContext = update.context;
+      await emit({ type: "turn_end", message: exploratory, toolResults: [result] });
+    }
+    fifthTurnContext = activeContext;
+    return [...prompts, exploratory];
+  });
+  const result = await runPiSession({
+    bindings,
+    model: createModel(config),
+    requestOptions: createRequestOptions(config),
+    config,
+    systemPrompt: "system",
+    promptText: "prompt",
+    tools: [readTool],
+  });
+
+  assert.deepEqual(fifthTurnContext?.tools, []);
+  const finalizationMessages = fifthTurnContext?.messages.filter(
+    (message) => message.role === "user" && typeof message.content === "string" &&
+      message.content.includes("exploration budget is exhausted"),
+  ) ?? [];
+  assert.equal(finalizationMessages.length, 1);
+  assert.equal(result.metrics.turns, 4);
+  assert.equal(result.metrics.finalizationInjected, true);
+  assert.equal(result.metrics.finalizationReason, "turn_limit");
+  assert.deepEqual(result.metrics.evidenceProgress.map((progress) => progress.totalKeys), [1, 2, 3, 4]);
+});
+
+test("two turns without new normalized evidence force finalization", async () => {
+  const config = baseConfig();
+  const exploratory = assistantText("No new evidence yet.");
+  let finalContext: AgentContext | undefined;
+  const bindings = bindingsWith(async (prompts, context, loopConfig, emit) => {
+    let activeContext: AgentContext = { ...context, messages: [...prompts] };
+    for (let turn = 1; turn <= 2; turn += 1) {
+      await emit({ type: "turn_start" });
+      const update = await loopConfig.prepareNextTurn?.({
+        message: exploratory,
+        context: activeContext,
+        newMessages: [exploratory],
+        toolResults: [],
+      });
+      if (update?.context) activeContext = update.context;
+      await emit({ type: "turn_end", message: exploratory, toolResults: [] });
+    }
+    finalContext = activeContext;
+    return [...prompts, exploratory];
+  });
+  const result = await runPiSession({
+    bindings,
+    model: createModel(config),
+    requestOptions: createRequestOptions(config),
+    config,
+    systemPrompt: "system",
+    promptText: "prompt",
+    tools: [readTool],
+  });
+
+  assert.deepEqual(finalContext?.tools, []);
+  assert.equal(result.metrics.finalizationInjected, true);
+  assert.equal(result.metrics.finalizationReason, "stagnation");
+  assert.deepEqual(result.metrics.evidenceProgress.map((progress) => progress.newKeys), [[], []]);
 });
 
 test("provider errors redact configured secrets", async () => {
@@ -255,8 +406,8 @@ test("provider errors redact configured secrets", async () => {
   );
 });
 
-test("provider errors retain private HTTP status and statusless connection category", async () => {
-  const config = baseConfig({ providerRetryMaxRetries: 0 });
+test("provider errors retain private HTTP status and structured connection category", async () => {
+  const config = baseConfig({ providerRetryDelaysMs: [] });
   const cases = [
     {
       bindings: bindingsWith(async () => {
@@ -267,7 +418,7 @@ test("provider errors retain private HTTP status and statusless connection categ
     },
     {
       bindings: bindingsWith(async (prompts, _context, _loopConfig, emit) => {
-        const failure = assistantText("", { stopReason: "error", errorMessage: "Connection error." });
+        const failure = assistantText("", { stopReason: "error", errorMessage: '{"code":"ECONNRESET"}' });
         await emit({ type: "turn_start" });
         return [...prompts, failure];
       }),
@@ -299,7 +450,7 @@ test("provider errors retain private HTTP status and statusless connection categ
 });
 
 test("transient provider failures retry the assistant turn without discarding completed tool results", async () => {
-  const config = baseConfig({ providerRetryMaxRetries: 3, providerRetryBaseDelayMs: 1 });
+  const config = baseConfig({ providerRetryDelaysMs: [1, 2, 4] });
   const busy = assistantText("", {
     stopReason: "error",
     errorMessage: '{"code":"SERVICE_BUSY","message":"服务繁忙，请稍后重试"}',
@@ -357,6 +508,11 @@ test("transient provider failures retry the assistant turn without discarding co
   assert.equal(result.metrics.providerAttempts, 2);
   assert.equal(result.metrics.providerRetries, 1);
   assert.equal(result.metrics.turns, 1);
+  const failedAttempt = observed.find((event) => event.type === "provider_attempt_failed");
+  assert.ok(failedAttempt && failedAttempt.scope === "primary");
+  assert.equal(failedAttempt.willRetry, true);
+  assert.equal(failedAttempt.failure.reason, "retryable_provider_code");
+  assert.deepEqual(failedAttempt.usage, busy.usage);
   assert.deepEqual(
     observed.filter((event) => event.type.startsWith("provider_retry")).map((event) => event.type),
     ["provider_retry_scheduled", "provider_retry_start"],
@@ -603,9 +759,10 @@ test("a recognized overflow compacts once and continues with the same budgets an
     false,
   );
   assert.equal(continuationContext?.messages[0]?.role, "compactionSummary");
-  assert.equal(result.metrics.providerAttempts, 2);
+  assert.equal(result.metrics.providerAttempts, 3);
   assert.equal(result.metrics.turns, 1);
-  assert.equal(result.metrics.toolCalls, 2);
+  assert.equal(result.metrics.toolCalls, 1);
+  assert.equal(result.metrics.blockedToolCalls, 1);
   assert.equal(result.metrics.overflowCompactions, 1);
   assert.equal(result.metrics.overflowRetries, 1);
   assert.ok(events.some((event) => event.type === "overflow_retry"));

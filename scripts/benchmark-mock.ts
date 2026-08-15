@@ -3,13 +3,14 @@ import type { AgentMessage } from "@earendil-works/pi-agent-core";
 import { createAssistantMessageEventStream } from "@earendil-works/pi-ai";
 import type { AssistantMessage } from "@earendil-works/pi-ai";
 import type { FreeContextConfig } from "../src/config.js";
+import { FreeContextResultSchema } from "../src/mcp/contracts.js";
+import type { FreeContextRequest } from "../src/mcp/contracts.js";
 import { createGatherContextHandler } from "../src/mcp/tool.js";
 import type { ContextTokenCounter } from "../src/runtime/context-budget.js";
 import { createModel, createRequestOptions } from "../src/runtime/model.js";
 import { loadPiBindings } from "../src/runtime/pi-bindings.js";
 import type { PiBindings } from "../src/runtime/pi-bindings.js";
 import { runPiSession } from "../src/runtime/pi-session.js";
-import type { ExplorerResult } from "../src/runtime/run.js";
 
 type Scenario = "baseline" | "context" | "mcp";
 
@@ -78,31 +79,61 @@ async function runMcpScenario(runs: number, warmup: number): Promise<void> {
   const handler = createGatherContextHandler({
     tokenCounter,
     sessionDirectory: "/benchmark-sessions",
-    runExplorer: async () => {
+    runExplorer: async (options) => {
       toolCalls += 1;
-      return {
-        status: "completed",
-        answer: "validated",
+      return FreeContextResultSchema.parse({
+        status: "ready",
         summary: "Mock MCP context.",
-        evidence: [{ path: "document.md", start: 1, end: 1, reason: "Supports the result." }],
-        gaps: ["none"],
-        validationProblems: [],
-        metrics: {},
-        runtime: { workspace: "/benchmark-workspace" },
-      } as unknown as Readonly<ExplorerResult>;
+        evidence: [{
+          role: "implementation",
+          path: "document.md",
+          startLine: 1,
+          endLine: 1,
+          focusLine: 1,
+          questionId: "impl",
+          why: "Supports the result.",
+        }],
+        gaps: [{ questionId: "tests", reason: "No test fixture is needed." }],
+        nextAction: { kind: "read", path: "document.md", startLine: 1, endLine: 1, reason: "Read the evidence." },
+        errorCode: null,
+        sessionId: options.invocation.sessionId,
+        sessionFile: options.invocation.sessionFile,
+      });
     },
-    reserveSession: async ({ request, workspace }) => ({
-      file: { path: `/benchmark-sessions/${sessionIndex += 1}.json` },
-      startedAt: "2026-08-11T00:00:00.000Z",
-      request,
-      workspace,
-    }),
+    reserveSession: async ({ request, invocationId, callId, workspaceRoot, workspaceRevision }) => {
+      const sessionId = String(sessionIndex += 1);
+      const sessionFile = `/benchmark-sessions/${sessionId}.json`;
+      return {
+        file: { path: sessionFile },
+        startedAt: "2026-08-11T00:00:00.000Z",
+        request,
+        invocation: { invocationId, callId, workspaceRoot, workspaceRevision, sessionId, sessionFile },
+      };
+    },
     commitSession: async ({ reservation }) => ({
       sessionFile: reservation.file.path,
       sessionBytes: 2_048,
+      sessionFileSha256: "0".repeat(64),
     }),
   });
-  const runOnce = () => handler({ query: "collect benchmark context", workspace: "/benchmark-workspace" });
+  const request: FreeContextRequest = {
+    taskText: "collect benchmark context",
+    knownRefs: [],
+    evidenceQuestions: [
+      { id: "impl", role: "implementation", question: "Where is it implemented?", required: true },
+      { id: "tests", role: "test", question: "How is it tested?", required: false },
+    ],
+  };
+  let callIndex = 0;
+  const runOnce = () => {
+    callIndex += 1;
+    return handler(request, {
+      invocationId: `invocation-${callIndex}`,
+      callId: `call-${callIndex}`,
+      workspaceRoot: "/benchmark-workspace",
+      workspaceRevision: "benchmark-revision",
+    });
+  };
 
   for (let index = 0; index < warmup; index += 1) await runOnce();
   toolCalls = 0;
@@ -162,8 +193,7 @@ async function main(): Promise<void> {
     maxToolCalls: 1,
     maxOutputTokens: 256,
     requestTimeoutMs: 2_000,
-    providerRetryMaxRetries: 3,
-    providerRetryBaseDelayMs: 1,
+    providerRetryDelaysMs: [1, 2, 4],
     toolTimeoutMs: 2_000,
     maxToolOutputBytes: 8_192,
     maxParallelTools: 1,

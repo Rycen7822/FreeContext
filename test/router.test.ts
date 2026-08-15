@@ -52,10 +52,10 @@ test("route falls back in order for configured provider failures", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "freecontext-route-"));
   try {
     const cases: ReadonlyArray<readonly [ResolvedRouteConfig["fallbackOn"][number], () => Error]> = [
-      ["timeout", () => new Error("request timed out")],
+      ["timeout", () => Object.assign(new Error("request timed out"), { code: "ETIMEDOUT" })],
       ["rate_limit", () => Object.assign(new Error("rate limited"), { status: 429 })],
       ["server_error", () => Object.assign(new Error("service unavailable"), { statusCode: 503 })],
-      ["connection", () => new Error("Connection error.")],
+      ["connection", () => Object.assign(new Error("connection failed"), { code: "ECONNRESET" })],
     ];
     for (const [category, createError] of cases) {
       let calls = 0;

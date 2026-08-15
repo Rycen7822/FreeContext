@@ -1,157 +1,153 @@
-import test from "node:test";
 import assert from "node:assert/strict";
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { parseFinalBlock, renderFinalAnswer, validateExplorerOutput } from "../src/output/evidence.js";
-import { createWorkspace } from "../src/tools/workspace.js";
+import test from "node:test";
+import type { FreeContextInvocationContext, FreeContextRequest } from "../src/mcp/contracts.js";
+import { serializeForModel } from "../src/mcp/contracts.js";
+import { compileFreeContextResult, parseExplorerCandidate } from "../src/output/evidence.js";
 
-const VALID = `<final_answer>
-summary: The implementation is in the sample module.
+const request = (): FreeContextRequest => ({
+  taskText: "Trace the routing implementation and its tests.",
+  knownRefs: [{ kind: "path", path: "src/router.ts" }],
+  evidenceQuestions: [
+    { id: "implementation", role: "implementation", question: "Where is routing implemented?", required: true },
+    { id: "tests", role: "test", question: "Where is routing tested?", required: true },
+  ],
+});
+
+const invocation = (root: string): FreeContextInvocationContext => ({
+  invocationId: "invocation-1",
+  callId: "call-1",
+  workspaceRoot: root,
+  workspaceRevision: "revision-1",
+  sessionId: "session-1",
+  sessionFile: path.join(root, ".freecontext-sessions/session-1.json"),
+});
+
+async function withWorkspace(run: (root: string) => Promise<void>): Promise<void> {
+  const root = await mkdtemp(path.join(os.tmpdir(), "freecontext-compiler-"));
+  try {
+    await mkdir(path.join(root, "src"), { recursive: true });
+    await mkdir(path.join(root, "test"), { recursive: true });
+    await writeFile(path.join(root, "src/router.ts"), Array.from({ length: 160 }, (_, index) => `export const line${index + 1} = ${index + 1};`).join("\n"));
+    await writeFile(path.join(root, "test/router.test.ts"), "test('router', () => route());\n");
+    await run(root);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+}
+
+test("parser reads the role/question/focus final block contract", () => {
+  const parsed = parseExplorerCandidate(`<final_answer>
+summary: Routing evidence is verified.
 evidence:
-- sample.js:1-2 — Defines and returns the value.
+- [implementation][implementation] src/router.ts:1-120 (focus 60) — Defines the routing branch.
 gaps:
-- none
-</final_answer>`;
-
-test("parseFinalBlock extracts the last valid-shaped block", () => {
-  const parsed = parseFinalBlock(`noise\n${VALID}`);
-  assert.equal(parsed.summary, "The implementation is in the sample module.");
+- [tests] Tests were not inspected.
+</final_answer>`);
+  assert.equal(parsed.problems.length, 0);
   assert.deepEqual(parsed.evidence[0], {
-    path: "sample.js",
-    start: 1,
-    end: 2,
-    reason: "Defines and returns the value.",
+    role: "implementation",
+    questionId: "implementation",
+    path: "src/router.ts",
+    startLine: 1,
+    endLine: 120,
+    focusLine: 60,
+    why: "Defines the routing branch.",
   });
+  assert.deepEqual(parsed.gaps, [{ questionId: "tests", reason: "Tests were not inspected." }]);
 });
 
-test("validator safely recovers a dangling explicit final block as partial", async () => {
-  const directory = await mkdtemp(path.join(os.tmpdir(), "freecontext-evidence-"));
-  try {
-    await writeFile(path.join(directory, "sample.js"), "const x = 1;\nexport { x };\n", "utf8");
-    const truncated = `<final_answer>
-summary: The implementation is in the sample module.
+test("compiler validates, crops, orders, and emits a ready result", async () => withWorkspace(async (root) => {
+  const result = await compileFreeContextResult(request(), invocation(root), `<final_answer>
+summary: Routing and tests are verified.
 evidence:
-- sample.js:1-1 — Defines the value.
-- sample.js:2-`;
-    const result = await validateExplorerOutput(truncated, await createWorkspace(directory));
-
-    assert.equal(result.status, "partial");
-    assert.deepEqual(result.evidence.map(({ path, start, end }) => ({ path, start, end })), [
-      { path: "sample.js", start: 1, end: 1 },
-    ]);
-    assert.deepEqual(result.problems, [
-      "Missing closing </final_answer>; recovered trailing block.",
-      "Malformed evidence citation.",
-    ]);
-    assert.match(renderFinalAnswer(result), /<\/final_answer>$/u);
-    assert.doesNotMatch(renderFinalAnswer(result), /sample\.js:2-/u);
-  } finally {
-    await rm(directory, { recursive: true, force: true });
-  }
-});
-
-test("dangling recovery still requires a summary and locally valid evidence", async () => {
-  const directory = await mkdtemp(path.join(os.tmpdir(), "freecontext-evidence-"));
-  try {
-    const result = await validateExplorerOutput(
-      "<final_answer>\nevidence:\n- not a citation",
-      await createWorkspace(directory),
-    );
-    assert.equal(result.status, "invalid");
-    assert.deepEqual(result.problems, [
-      "Missing closing </final_answer>; recovered trailing block.",
-      "Malformed evidence citation.",
-      "Missing non-empty summary.",
-      "No parseable evidence citations were returned.",
-    ]);
-  } finally {
-    await rm(directory, { recursive: true, force: true });
-  }
-});
-
-test("a complete final block takes precedence over later dangling noise", () => {
-  const parsed = parseFinalBlock(`${VALID}\n<final_answer>\nsummary: unfinished`);
-  assert.equal(parsed.summary, "The implementation is in the sample module.");
-  assert.deepEqual(parsed.problems, []);
-});
-
-test("parser expands explicit comma-separated ranges for one path", () => {
-  const parsed = parseFinalBlock(VALID.replace("sample.js:1-2", "sample.js:1, 2-2"));
-  assert.deepEqual(
-    parsed.evidence.map(({ path, start, end }) => ({ path, start, end })),
-    [
-      { path: "sample.js", start: 1, end: 1 },
-      { path: "sample.js", start: 2, end: 2 },
-    ],
-  );
-  assert.deepEqual(parsed.problems, []);
-});
-
-test("validator confirms paths and real line ranges", async () => {
-  const directory = await mkdtemp(path.join(os.tmpdir(), "freecontext-evidence-"));
-  try {
-    await writeFile(path.join(directory, "sample.js"), "const x = 1;\nexport { x };\n", "utf8");
-    const workspace = await createWorkspace(directory);
-    const result = await validateExplorerOutput(VALID, workspace);
-    assert.equal(result.valid, true);
-    assert.equal(renderFinalAnswer(result), VALID);
-
-    const invalid = await validateExplorerOutput(VALID.replace("1-2", "1-8"), workspace);
-    assert.equal(invalid.valid, false);
-    assert.match(invalid.problems.join("\n"), /exceeds file length/u);
-  } finally {
-    await rm(directory, { recursive: true, force: true });
-  }
-});
-
-test("validator preserves 27 valid citations when one citation is malformed", async () => {
-  const directory = await mkdtemp(path.join(os.tmpdir(), "freecontext-evidence-"));
-  try {
-    const source = Array.from({ length: 27 }, (_, index) => `line ${index + 1}`).join("\n");
-    await writeFile(path.join(directory, "sample.js"), `${source}\n`, "utf8");
-    const citations = Array.from(
-      { length: 27 },
-      (_, index) => `- sample.js:${index + 1}-${index + 1} — Evidence ${index + 1}.`,
-    );
-    const output = `<final_answer>
-summary: Twenty-seven lines are supported.
-evidence:
-${citations.join("\n")}
-- fabricated-secret.txt has no valid citation range
+- [test][tests] test/router.test.ts:1-1 (focus 1) — Covers routing behavior.
+- [implementation][implementation] src/router.ts:1-120 (focus 60) — Defines the routing branch.
 gaps:
-- none
-</final_answer>`;
-    const result = await validateExplorerOutput(output, await createWorkspace(directory));
+-
+</final_answer>`);
+  assert.equal(result.status, "ready");
+  assert.equal(result.errorCode, null);
+  assert.deepEqual(result.evidence.map((item) => item.questionId), ["implementation", "tests"]);
+  const first = result.evidence[0];
+  assert.ok(first);
+  assert.equal(first.endLine - first.startLine + 1, 80);
+  assert.equal(result.nextAction.kind, "read");
+  assert.equal(result.nextAction.path, "src/router.ts");
+  assert.match(serializeForModel(result), /\[implementation\]\[implementation\] src\/router\.ts:/u);
+}));
 
-    assert.equal(result.status, "partial");
-    assert.equal(result.valid, true);
-    assert.equal(result.evidence.length, 27);
-    assert.deepEqual(result.gaps, ["Validation: Malformed evidence citation."]);
-    assert.deepEqual(result.problems, ["Malformed evidence citation."]);
-    assert.doesNotMatch(renderFinalAnswer(result), /fabricated-secret/u);
-  } finally {
-    await rm(directory, { recursive: true, force: true });
+test("compiler turns role mismatch and rejected generated paths into explicit gaps", async () => withWorkspace(async (root) => {
+  const result = await compileFreeContextResult(request(), invocation(root), `<final_answer>
+summary: Only one valid item remains.
+evidence:
+- [implementation][implementation] src/router.ts:10-20 (focus 15) — Defines routing.
+- [caller][tests] test/router.test.ts:1-1 (focus 1) — Wrong requested role.
+- [test][tests] dist/router.test.ts:1-1 (focus 1) — Generated output.
+gaps:
+- [tests] Test evidence remains unresolved.
+</final_answer>`);
+  assert.equal(result.status, "partial");
+  assert.equal(result.errorCode, null);
+  assert.deepEqual(result.evidence.map((item) => item.questionId), ["implementation"]);
+  assert.deepEqual(result.gaps, [{ questionId: "tests", reason: "Test evidence remains unresolved." }]);
+}));
+
+test("compiler does not treat a trailing newline as an extra citable line", async () => withWorkspace(async (root) => {
+  const result = await compileFreeContextResult(request(), invocation(root), `<final_answer>
+summary: The requested range is outside the test file.
+evidence:
+- [test][tests] test/router.test.ts:2-2 (focus 2) — This line does not exist.
+gaps:
+- [implementation] Implementation was not inspected.
+</final_answer>`);
+  assert.equal(result.status, "not_found");
+  assert.deepEqual(result.gaps.find((gap) => gap.questionId === "tests"), {
+    questionId: "tests",
+    reason: "Evidence range exceeded the file length.",
+  });
+}));
+
+test("normal empty evidence is not_found while malformed output is failed", async () => withWorkspace(async (root) => {
+  const notFound = await compileFreeContextResult(request(), invocation(root), `<final_answer>
+summary: No matching implementation was found.
+evidence:
+-
+gaps:
+- [implementation] No matching implementation.
+- [tests] No matching tests.
+</final_answer>`);
+  assert.equal(notFound.status, "not_found");
+  assert.equal(notFound.errorCode, null);
+  assert.equal(notFound.nextAction.kind, "direct_search");
+
+  const failed = await compileFreeContextResult(request(), invocation(root), "not a final block");
+  assert.equal(failed.status, "failed");
+  assert.equal(failed.errorCode, "INTERNAL_ERROR");
+  assert.equal(failed.evidence.length, 0);
+}));
+
+test("compiler drops lower-ranked spans until the canonical text fits 8 KiB", async () => withWorkspace(async (root) => {
+  const segments = Array.from({ length: 80 }, (_, index) => `segment-${index.toString().padStart(3, "0")}`);
+  const directory = path.join(root, ...segments);
+  await mkdir(directory, { recursive: true });
+  const relativeDirectory = path.relative(root, directory).split(path.sep).join("/");
+  const evidence: string[] = [];
+  for (let index = 0; index < 6; index += 1) {
+    const filename = `router-${index}.ts`;
+    await writeFile(path.join(directory, filename), `unique ${index}\n`);
+    evidence.push(`- [implementation][implementation] ${relativeDirectory}/${filename}:1-1 (focus 1) — ${"detail ".repeat(20)}${index}`);
   }
-});
-
-test("validator rejects fabricated and sensitive paths", async () => {
-  const directory = await mkdtemp(path.join(os.tmpdir(), "freecontext-evidence-"));
-  try {
-    await writeFile(path.join(directory, ".env"), "TOKEN=x\n", "utf8");
-    const workspace = await createWorkspace(directory);
-    const result = await validateExplorerOutput(
-      VALID.replace("sample.js:1-2", ".env:1-1"),
-      workspace,
-    );
-    assert.equal(result.valid, false);
-    assert.match(result.problems.join("\n"), /sensitive/u);
-  } finally {
-    await rm(directory, { recursive: true, force: true });
-  }
-});
-
-test("parser reports malformed output instead of accepting prose", () => {
-  const parsed = parseFinalBlock("The answer is src/a.js");
-  assert.deepEqual(parsed.problems, ["Missing <final_answer> block."]);
-});
+  const result = await compileFreeContextResult(request(), invocation(root), `<final_answer>
+summary: ${"summary ".repeat(60)}
+evidence:
+${evidence.join("\n")}
+gaps:
+- [tests] No test evidence.
+</final_answer>`);
+  assert.equal(result.status, "partial");
+  assert.ok(result.evidence.length >= 1 && result.evidence.length < 6);
+  assert.ok(Buffer.byteLength(serializeForModel(result), "utf8") <= 8_192);
+}));

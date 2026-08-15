@@ -1,0 +1,101 @@
+import assert from "node:assert/strict";
+import test from "node:test";
+import {
+  analyzeFreeContextConsumption,
+  collectParentRepositoryActions,
+} from "../src/benchmark/consumption-analysis.js";
+import type { ParentRepositoryActionEvent } from "../src/benchmark/consumption-analysis.js";
+import type { FreeContextResult } from "../src/mcp/contracts.js";
+
+function result(status: FreeContextResult["status"] = "ready"): FreeContextResult {
+  return {
+    status,
+    summary: "Routing evidence found.",
+    evidence: status === "not_found" || status === "failed" ? [] : [{
+      role: "implementation",
+      path: "src/router.ts",
+      startLine: 10,
+      endLine: 20,
+      focusLine: 15,
+      questionId: "implementation",
+      why: "Defines routing.",
+    }],
+    gaps: status === "partial" ? [{ questionId: "tests", reason: "Tests remain unresolved." }] : [],
+    nextAction: status === "not_found" || status === "failed"
+      ? { kind: "direct_search", reason: "Search directly." }
+      : { kind: "read", path: "src/router.ts", startLine: 10, endLine: 20, reason: "Read the evidence." },
+    errorCode: status === "failed" ? "INTERNAL_ERROR" : null,
+    sessionId: "session-1",
+    sessionFile: "/logs/agent/freecontext-sessions/session-1.json",
+  };
+}
+
+function action(
+  sequence: number,
+  overrides: Partial<ParentRepositoryActionEvent["action"]> = {},
+): ParentRepositoryActionEvent {
+  return {
+    schemaVersion: "freecontext-parent-action-v1",
+    taskId: "task-1",
+    callId: "call-1",
+    repetition: "r1",
+    sequence,
+    action: {
+      kind: "read",
+      path: "src/router.ts",
+      startLine: 10,
+      endLine: 20,
+      broad: false,
+      gapQuestionIds: [],
+      ...overrides,
+    },
+  };
+}
+
+test("collector accepts only explicit host action events for the selected call", () => {
+  const raw = [
+    "not-json",
+    JSON.stringify({ payload: action(2, { kind: "search", path: null, startLine: null, endLine: null, broad: true }) }),
+    JSON.stringify(action(1)),
+    JSON.stringify({ ...action(3), callId: "other-call" }),
+  ].join("\n");
+  const actions = collectParentRepositoryActions(raw, "call-1");
+  assert.deepEqual(actions.map(({ sequence }) => sequence), [1, 2]);
+  assert.throws(
+    () => collectParentRepositoryActions(`${JSON.stringify(action(1))}\n${JSON.stringify(action(1))}`, "call-1"),
+    /Duplicate parent-action sequence/u,
+  );
+});
+
+test("audit detects targeted-first consumption and later repeated broad search", () => {
+  const audit = analyzeFreeContextConsumption(result(), [
+    action(1),
+    action(2, { kind: "search", path: null, startLine: null, endLine: null, broad: true }),
+  ]);
+  assert.ok(audit);
+  assert.equal(audit.firstRepositoryAction?.kind, "read");
+  assert.equal(audit.firstActionEvidenceHit, true);
+  assert.equal(audit.evidenceConsumed, true);
+  assert.equal(audit.firstEvidenceHitSequence, 1);
+  assert.equal(audit.broadSearchCount, 1);
+  assert.equal(audit.repeatedBroadSearch, true);
+});
+
+test("partial audit counts only named-gap searches after evidence consumption", () => {
+  const audit = analyzeFreeContextConsumption(result("partial"), [
+    action(1, { kind: "search", path: null, startLine: null, endLine: null, gapQuestionIds: ["tests"] }),
+    action(2),
+    action(3, { kind: "search", path: null, startLine: null, endLine: null, gapQuestionIds: ["tests"] }),
+    action(4, { kind: "search", path: null, startLine: null, endLine: null, gapQuestionIds: ["unrelated"] }),
+  ]);
+  assert.ok(audit);
+  assert.equal(audit.firstActionEvidenceHit, false);
+  assert.equal(audit.evidenceConsumed, true);
+  assert.equal(audit.partialGapSearchCount, 1);
+});
+
+test("absence of host events stays unobserved for every result status", () => {
+  for (const status of ["ready", "partial", "not_found", "failed"] as const) {
+    assert.equal(analyzeFreeContextConsumption(result(status), []), null);
+  }
+});

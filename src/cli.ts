@@ -1,19 +1,20 @@
+import { randomUUID } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import path from "node:path";
 import { parseArgs, HELP_TEXT } from "./cli/args.js";
 import { runDoctor } from "./cli/doctor.js";
 import type { DoctorReport } from "./cli/doctor.js";
+import { FreeContextRequestSchema, FreeContextResultSchema, serializeForModel } from "./mcp/contracts.js";
+import type { FreeContextRequest } from "./mcp/contracts.js";
+import { createGatherContextHandler } from "./mcp/tool.js";
+import { GigatokenCounter } from "./runtime/gigatoken-counter.js";
 import { runExplorer } from "./runtime/run.js";
-import type { ExplorerCapturedError, ExplorerResult, ExplorerSessionCapture } from "./runtime/run.js";
-import type {
-  FreeContextRuntimeEvent,
-  PiSessionEventHandler,
-  PiSessionEventState,
-} from "./runtime/pi-session.js";
-import type { CapturedRuntimeEvent } from "./benchmark/session-file.js";
+import type { FreeContextRuntimeEvent, PiSessionEventHandler } from "./runtime/pi-session.js";
+import { resolveWorkspaceRevision } from "./runtime/workspace-revision.js";
+import { defaultSessionDirectory } from "./session/store.js";
+import { createWorkspace } from "./tools/workspace.js";
 import { FreeContextError } from "./errors.js";
-import { captureError, captureRuntimeEvent } from "./runtime/session-capture.js";
 
 const PACKAGE_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 
@@ -59,26 +60,24 @@ function createEventReporter(stderr: CliIo["stderr"]): PiSessionEventHandler {
     } else if (event.type === "overflow_retry") {
       stderr.write("[freecontext] context overflow retry 1\n");
     } else if (event.type === "provider_retry_scheduled") {
-      stderr.write(
-        `[freecontext] provider ${event.category} retry ${event.attempt}/${event.maxRetries} in ${event.delayMs} ms\n`,
-      );
+      stderr.write(`[freecontext] provider ${event.category} retry ${event.attempt}/${event.maxRetries} in ${event.delayMs} ms (base ${event.baseDelayMs} ms)\n`);
     } else if (event.type === "provider_retry_start") {
       stderr.write(`[freecontext] provider retry ${event.attempt} start\n`);
     }
   };
 }
 
-function jsonResult(result: ExplorerResult) {
-  return {
-    status: result.status,
-    summary: result.summary,
-    evidence: result.evidence,
-    gaps: result.gaps,
-    validationProblems: result.validationProblems,
-    metrics: result.metrics,
-    runtime: result.runtime,
-    answer: result.answer,
-  };
+function canonicalCliRequest(taskText: string): Readonly<FreeContextRequest> {
+  return FreeContextRequestSchema.parse({
+    taskText,
+    knownRefs: [],
+    evidenceQuestions: [
+      { id: "implementation", role: "implementation", question: "Locate the primary implementation or source passages needed to answer the task.", required: true },
+      { id: "caller", role: "caller", question: "Locate important callers, consumers, or downstream references relevant to the task.", required: false },
+      { id: "test", role: "test", question: "Locate tests or executable examples that verify the relevant behavior.", required: false },
+      { id: "contract", role: "contract", question: "Locate public contracts, configuration, or documentation constraints relevant to the task.", required: false },
+    ],
+  });
 }
 
 function renderDoctor(report: DoctorReport): string {
@@ -101,16 +100,14 @@ export async function main(
     io.stdout.write(`${await readPackageVersion()}\n`);
     return 0;
   }
-
   if (cli.command === "doctor") {
     const report = await runDoctor(cli);
-    if (cli.format === "json") io.stdout.write(`${JSON.stringify(report, null, 2)}\n`);
-    else io.stdout.write(`${renderDoctor(report)}\n`);
+    io.stdout.write(cli.format === "json" ? `${JSON.stringify(report, null, 2)}\n` : `${renderDoctor(report)}\n`);
     return report.ok ? 0 : 1;
   }
 
-  const query = cli.query || (await readStdin(io.stdin));
-  if (!query) {
+  const taskText = cli.query || (await readStdin(io.stdin));
+  if (!taskText) {
     io.stderr.write("freecontext: CONFIGURATION_ERROR: an exploration query is required\n");
     return 2;
   }
@@ -119,71 +116,45 @@ export async function main(
   const abort = () => controller.abort(new Error("Interrupted"));
   process.once("SIGINT", abort);
   process.once("SIGTERM", abort);
+  const tokenCounter = new GigatokenCounter();
   try {
-    const explorationCwd = cli.cwd || process.cwd();
-    const runtimeEvents: CapturedRuntimeEvent[] = [];
+    const workspace = await createWorkspace(cli.cwd || process.cwd());
     const reporter = cli.verbose ? createEventReporter(io.stderr) : undefined;
-    const onEvent: PiSessionEventHandler | undefined = reporter || cli.benchmarkSessionFile
-      ? async (event: FreeContextRuntimeEvent, state: PiSessionEventState) => {
-          if (cli.benchmarkSessionFile) {
-            runtimeEvents.push(Object.freeze({
-              event: captureRuntimeEvent(event),
-              state: Object.freeze({ ...state }),
-            }));
-          }
-          await reporter?.(event, state);
-        }
-      : undefined;
-    let sessionWritten = false;
-    let sessionCapture: Readonly<ExplorerSessionCapture> | null = null;
-    const persistSession = async (
-      capture: Readonly<ExplorerSessionCapture> | null,
-      terminalError: Readonly<ExplorerCapturedError> | null,
-      cliOutput: string,
-    ): Promise<void> => {
-      if (!cli.benchmarkSessionFile) return;
-      const { writeBenchmarkSessionFile } = await import("./benchmark/session-file.js");
-      await writeBenchmarkSessionFile({
-        filePath: cli.benchmarkSessionFile,
-        workspaceRoot: capture?.runtime.workspace ?? explorationCwd,
-        request: query,
-        cwd: explorationCwd,
-        cliOutput,
-        capture,
-        runtimeEvents,
-        terminalError,
-      });
-      sessionWritten = true;
-    };
-
-    let result: Readonly<ExplorerResult>;
-    try {
-      result = await (dependencies.runExplorer ?? runExplorer)({
-        query,
-        cwd: explorationCwd,
+    const explorer = dependencies.runExplorer ?? runExplorer;
+    const handler = createGatherContextHandler({
+      tokenCounter,
+      ...(cli.benchmarkSessionFile
+        ? { sessionFile: path.resolve(cli.benchmarkSessionFile) }
+        : { sessionDirectory: defaultSessionDirectory() }),
+      ...(cli.configFile ? { configFile: cli.configFile } : {}),
+      runExplorer: async (options) => explorer({
+        ...options,
         cli,
-        repair: !cli.noRepair,
-        signal: controller.signal,
-        ...(onEvent ? { onEvent } : {}),
-        ...(cli.benchmarkSessionFile
-          ? { onSessionCapture: (capture) => { sessionCapture = capture; } }
-          : {}),
-      });
-    } catch (error) {
-      if (cli.benchmarkSessionFile && !sessionWritten) {
-        const terminalError = captureError(error);
-        const cliOutput = `freecontext: ${terminalError.code}: ${terminalError.message}\n`;
-        await persistSession(sessionCapture, terminalError, cliOutput);
-      }
-      throw error;
-    }
-    const cliOutput = cli.format === "json"
-      ? `${JSON.stringify(jsonResult(result), null, 2)}\n`
-      : `${result.answer}\n`;
-    await persistSession(sessionCapture, null, cliOutput);
-    io.stdout.write(cliOutput);
-    return 0;
+        ...(reporter ? {
+          onEvent: async (event, state) => {
+            await options.onEvent?.(event, state);
+            await reporter(event, state);
+          },
+        } : {}),
+      }),
+    });
+    const call = await handler(
+      canonicalCliRequest(taskText),
+      {
+        invocationId: `manual-invocation-${randomUUID()}`,
+        callId: `manual-call-${randomUUID()}`,
+        workspaceRoot: workspace.root,
+        workspaceRevision: await resolveWorkspaceRevision(workspace.root),
+      },
+      controller.signal,
+    );
+    const result = FreeContextResultSchema.parse(call.structuredContent);
+    io.stdout.write(cli.format === "json"
+      ? `${JSON.stringify(result, null, 2)}\n`
+      : `${serializeForModel(result)}\n`);
+    return result.status === "failed" ? 1 : 0;
   } finally {
+    await tokenCounter.close();
     process.removeListener("SIGINT", abort);
     process.removeListener("SIGTERM", abort);
   }

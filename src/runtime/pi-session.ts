@@ -8,6 +8,7 @@ import type {
 import type { AssistantMessage, SimpleStreamOptions, Usage } from "@earendil-works/pi-ai";
 import type { FreeContextConfig } from "../config.js";
 import { ContextBudgetError, FreeContextError, ProviderError } from "../errors.js";
+import { parseExplorerCandidate } from "../output/evidence.js";
 import {
   assertInitialRequestFits,
   estimateEffectiveContextTokens,
@@ -19,22 +20,30 @@ import { compactContext } from "./context-compaction.js";
 import { GigatokenCounter } from "./gigatoken-counter.js";
 import type { FreeContextModel } from "./model.js";
 import { redactProviderError } from "./model.js";
-import { classifyProviderFailure, providerStatusCode } from "./provider-failure.js";
-import {
-  retryProviderMessage,
-  shouldRetryProviderMessage,
-} from "./provider-retry.js";
+import { normalizeAssistantFailure, normalizeProviderFailure } from "./provider-failure.js";
+import type { ProviderFailureSignal } from "./provider-failure.js";
+import { retryProviderMessage } from "./provider-retry.js";
+import type { ProviderAttempt, ProviderRetryCallbacks } from "./provider-retry.js";
 import type { PiBindings } from "./pi-bindings.js";
 import { addUsage, EMPTY_USAGE } from "./usage.js";
 
 const FINALIZE_MESSAGE = Object.freeze({
   role: "user" as const,
   content:
-    "The repository exploration budget is exhausted. Do not request more tools. Using only evidence already present in the transcript, return the required <final_answer> block now with at most 12 strong citations. Keep the summary concise and reserve output for gaps and the closing </final_answer> tag.",
+    "The repository exploration budget is exhausted. Do not request more tools. Using only evidence already present in the transcript, return the required <final_answer> block now with at most 6 role/question/focus evidence spans. Keep the summary concise, name every unresolved question under gaps, and reserve output for the closing </final_answer> tag.",
   timestamp: 0,
 });
+export const EXPLORER_MAX_TURNS = 5;
+export const EXPLORER_MAX_TOOL_CALLS = 18;
 
 export type CompactionReason = "threshold" | "overflow";
+export type FinalizationReason = "coverage" | "partial_candidate" | "stagnation" | "turn_limit" | "tool_limit";
+
+export interface TurnEvidenceProgress {
+  readonly turn: number;
+  readonly newKeys: readonly string[];
+  readonly totalKeys: number;
+}
 
 export type FreeContextRuntimeEvent =
   | AgentEvent
@@ -59,14 +68,26 @@ export type FreeContextRuntimeEvent =
       readonly estimatedTokensAfter: number;
     }
   | {
+      readonly type: "provider_attempt_failed";
+      readonly scope: "primary" | "compaction";
+      readonly attempt: number;
+      readonly willRetry: boolean;
+      readonly failure: Readonly<ProviderFailureSignal>;
+      readonly usage: Readonly<Usage>;
+    }
+  | {
       readonly type: "provider_retry_scheduled";
+      readonly scope: "primary" | "compaction";
       readonly attempt: number;
       readonly maxRetries: number;
+      readonly baseDelayMs: number;
       readonly delayMs: number;
       readonly category: ProviderError["category"];
+      readonly failure: Readonly<ProviderFailureSignal>;
     }
   | {
       readonly type: "provider_retry_start";
+      readonly scope: "primary" | "compaction";
       readonly attempt: number;
     };
 
@@ -81,12 +102,43 @@ export type PiSessionEventHandler = (
   state: PiSessionEventState,
 ) => Promise<void> | void;
 
+function createProviderRetryCallbacks(
+  scope: "primary" | "compaction",
+  emit: (event: Exclude<FreeContextRuntimeEvent, AgentEvent>) => Promise<void>,
+  recordRetryStart: () => void,
+): Readonly<ProviderRetryCallbacks> {
+  return {
+    onFailure: async ({ failedMessage, failure, attempt, willRetry }) => {
+      await emit({ type: "provider_attempt_failed", scope, attempt, willRetry, failure, usage: failedMessage.usage });
+    },
+    onRetryScheduled: async ({ failure, attempt, maxRetries, baseDelayMs, delayMs }) => {
+      await emit({
+        type: "provider_retry_scheduled",
+        scope,
+        attempt,
+        maxRetries,
+        baseDelayMs,
+        delayMs,
+        category: failure.category,
+        failure,
+      });
+    },
+    onRetryStart: async ({ attempt }) => {
+      recordRetryStart();
+      await emit({ type: "provider_retry_start", scope, attempt });
+    },
+  };
+}
+
 export interface PiSessionMetrics {
   readonly turns: number;
   readonly toolCalls: number;
   readonly providerAttempts: number;
   readonly providerRetries: number;
   readonly finalizationInjected: boolean;
+  readonly finalizationReason: FinalizationReason | null;
+  readonly blockedToolCalls: number;
+  readonly evidenceProgress: readonly Readonly<TurnEvidenceProgress>[];
   readonly usage: Readonly<Usage>;
   readonly compactions: number;
   readonly thresholdCompactions: number;
@@ -133,6 +185,49 @@ export function extractAssistantText(message: AgentMessage | undefined): string 
     .map((block) => block.text)
     .join("")
     .trim();
+}
+
+function normalizedEvidenceKey(
+  toolName: string,
+  details: unknown,
+  fallbackText = "",
+): string | null {
+  if (toolName !== "read" && toolName !== "rg" && toolName !== "glob" && toolName !== "bat") return null;
+  if (details && typeof details === "object") {
+    const value = details as Record<string, unknown>;
+    const target = typeof value.path === "string" ? value.path.replace(/\\/gu, "/").toLowerCase() : ".";
+    if (toolName === "read" || toolName === "bat") {
+      const start = Number(value.startLine ?? 1);
+      const end = Number(value.actualEndLine ?? value.endLine ?? start);
+      return `${toolName}:${target}:${start}-${end}`;
+    }
+    const pattern = typeof value.pattern === "string" ? value.pattern.replace(/\s+/gu, " ").trim() : "";
+    return `${toolName}:${target}:${pattern}`;
+  }
+  const header = fallbackText.split(/\r?\n/u, 1)[0]?.trim().toLowerCase();
+  return header ? `${toolName}:${header}` : null;
+}
+
+function requiredEvidence(promptText: string): ReadonlyMap<string, string> {
+  const required = new Map<string, string>();
+  for (const match of promptText.matchAll(/- \[([^\]]+)\]\[([^\]]+)\]\[required\]/gu)) {
+    const role = match[1];
+    const questionId = match[2];
+    if (role && questionId) required.set(questionId, role);
+  }
+  return required;
+}
+
+function candidateCompletion(
+  text: string,
+  required: ReadonlyMap<string, string>,
+): "coverage" | "partial_candidate" | null {
+  const candidate = parseExplorerCandidate(text);
+  if (candidate.block === null || candidate.problems.length > 0) return null;
+  const coverage = new Map(candidate.evidence.map((item) => [item.questionId, item.role]));
+  return [...required].every(([questionId, role]) => coverage.get(questionId) === role)
+    ? "coverage"
+    : "partial_candidate";
 }
 
 function summarizeUsage(messages: readonly AgentMessage[]): Usage {
@@ -185,6 +280,8 @@ async function runPiSessionWithCounter({
   clock = performance.now.bind(performance),
   timestamp = Date.now,
 }: PiSessionOptions, tokenCounter: ContextTokenCounter | null): Promise<Readonly<PiSessionResult>> {
+  const turnLimit = Math.min(maxTurns, EXPLORER_MAX_TURNS);
+  const toolCallLimit = Math.min(maxToolCalls, EXPLORER_MAX_TOOL_CALLS);
   const sessionStartedAt = clock();
   const counter = (): ContextTokenCounter => {
     if (!tokenCounter) throw new ContextBudgetError("Context compaction requires the Gigatoken counter.");
@@ -201,6 +298,8 @@ async function runPiSessionWithCounter({
   let providerAttempts = 0;
   let providerRetries = 0;
   let finalizationInjected = false;
+  let finalizationReason: FinalizationReason | null = null;
+  let blockedToolCalls = 0;
   let overflowRecovered = false;
   let effectiveMessages = [...initialMessages];
   let effectiveTools = [...tools];
@@ -216,30 +315,73 @@ async function runPiSessionWithCounter({
   let toolExecutionMsTotal = 0;
   let toolExecutionMsMax = 0;
   const toolStarts = new Map<string, number>();
+  const allEvidenceKeys = new Set<string>();
+  const currentTurnKeys = new Set<string>();
+  const evidenceProgress: TurnEvidenceProgress[] = [];
+  const requiredQuestions = requiredEvidence(promptText);
+  let currentProgressRecorded = false;
+  let stagnantTurns = 0;
+
+  const addEvidenceKey = (key: string | null): void => {
+    if (!key || allEvidenceKeys.has(key)) return;
+    allEvidenceKeys.add(key);
+    currentTurnKeys.add(key);
+  };
+  const recordEvidenceProgress = (): void => {
+    if (currentProgressRecorded) return;
+    const newKeys = Object.freeze([...currentTurnKeys].sort());
+    evidenceProgress.push(Object.freeze({
+      turn: Math.max(1, turnCount + 1),
+      newKeys,
+      totalKeys: allEvidenceKeys.size,
+    }));
+    stagnantTurns = newKeys.length === 0 ? stagnantTurns + 1 : 0;
+    currentProgressRecorded = true;
+  };
+  const requestFinalization = (reason: FinalizationReason): void => {
+    finalizationReason ??= reason;
+  };
 
   const providerError = (value: unknown, allowFallback = false): ProviderError => {
-    const statusCode = providerStatusCode(value);
+    const failure = normalizeProviderFailure(value, { provider: config.provider, baseUrl: config.baseUrl });
     return new ProviderError(
       redactProviderError(value instanceof Error ? value.message : value, config),
       {
         cause: value,
-        category: classifyProviderFailure(value),
-        ...(statusCode !== undefined ? { statusCode } : {}),
+        category: failure.category,
+        ...(failure.statusCode !== null ? { statusCode: failure.statusCode } : {}),
         safeToFallback: allowFallback && toolCallCount === 0 && !signal?.aborted,
       },
     );
   };
+  const assistantFailures = new WeakMap<AssistantMessage, Readonly<ProviderFailureSignal> | null>();
+  const assistantFailure = (message: AssistantMessage): Readonly<ProviderFailureSignal> | null => {
+    if (assistantFailures.has(message)) return assistantFailures.get(message) ?? null;
+    const failure = message.stopReason === "error" && !bindings.isContextOverflow(message, model.contextWindow)
+      ? normalizeAssistantFailure(message, { provider: config.provider, baseUrl: config.baseUrl })
+      : null;
+    assistantFailures.set(message, failure);
+    return failure;
+  };
+  const attemptOf = (message: AssistantMessage): ProviderAttempt => ({ message, failure: assistantFailure(message) });
 
   const eventState = (): PiSessionEventState => ({ turnCount, toolCallCount, providerAttempts });
   const emitCustom = async (event: Exclude<FreeContextRuntimeEvent, AgentEvent>): Promise<void> => {
     await onEvent?.(event, eventState());
   };
   const emit = async (event: AgentEvent): Promise<void> => {
-    if (event.type === "turn_start") providerAttempts += 1;
+    if (event.type === "turn_start") {
+      providerAttempts += 1;
+      currentTurnKeys.clear();
+      currentProgressRecorded = false;
+    }
     if (event.type === "turn_end") {
       const overflow = event.message.role === "assistant" && bindings.isContextOverflow(event.message, model.contextWindow);
-      const transientFailure = event.message.role === "assistant" && shouldRetryProviderMessage(event.message);
-      if (!overflow && !transientFailure) turnCount += 1;
+      const transientFailure = event.message.role === "assistant" && Boolean(assistantFailure(event.message)?.retryable);
+      if (!overflow && !transientFailure) {
+        recordEvidenceProgress();
+        turnCount += 1;
+      }
     } else if (event.type === "tool_execution_start") {
       toolStarts.set(event.toolCallId, clock());
     } else if (event.type === "tool_execution_end") {
@@ -249,6 +391,9 @@ async function runPiSessionWithCounter({
         toolExecutionMsTotal += duration;
         toolExecutionMsMax = Math.max(toolExecutionMsMax, duration);
         toolStarts.delete(event.toolCallId);
+      }
+      if (!event.isError) {
+        addEvidenceKey(normalizedEvidenceKey(event.toolName, event.result.details));
       }
     }
     await onEvent?.(event, eventState());
@@ -265,6 +410,7 @@ async function runPiSessionWithCounter({
     }
     const attempt = compactions + 1;
     await emitCustom({ type: "compaction_start", reason, attempt, tokensBefore: cut.tokensBefore });
+    providerAttempts += 1;
     const result = await compactContext({
       cut,
       bindings,
@@ -275,6 +421,10 @@ async function runPiSessionWithCounter({
       ...(signal ? { signal } : {}),
       clock,
       timestamp,
+      providerRetryCallbacks: createProviderRetryCallbacks("compaction", emitCustom, () => {
+        providerAttempts += 1;
+        providerRetries += 1;
+      }),
     });
     compactions += 1;
     if (reason === "threshold") thresholdCompactions += 1;
@@ -330,20 +480,32 @@ async function runPiSessionWithCounter({
     convertToLlm: bindings.convertToLlm,
     toolExecution: "parallel",
     beforeToolCall: async () => {
-      toolCallCount += 1;
-      if (toolCallCount > maxToolCalls) {
+      if (toolCallCount >= toolCallLimit) {
+        blockedToolCalls += 1;
+        requestFinalization("tool_limit");
         return {
           block: true,
-          reason: `Repository exploration tool-call budget exceeded (${maxToolCalls}). Finalize from existing evidence.`,
+          reason: `Repository exploration tool-call budget reached (${toolCallLimit}). Finalize from existing evidence.`,
         };
       }
+      toolCallCount += 1;
       return undefined;
     },
     prepareNextTurn: async ({ context, toolResults }) => {
       loopReportedContext = true;
       let nextContext: AgentContext = context;
-      const exhausted = turnCount >= maxTurns - 1 || toolCallCount >= maxToolCalls;
-      if (!finalizationInjected && toolResults.length > 0 && exhausted) {
+      for (const result of toolResults) {
+        const text = result.content
+          .flatMap((block) => block.type === "text" ? [block.text] : [])
+          .join("\n");
+        addEvidenceKey(normalizedEvidenceKey(result.toolName, null, text));
+      }
+      recordEvidenceProgress();
+      const completedTurns = Math.max(turnCount, evidenceProgress.length);
+      if (toolCallCount >= toolCallLimit) requestFinalization("tool_limit");
+      else if (completedTurns >= turnLimit - 1) requestFinalization("turn_limit");
+      else if (stagnantTurns >= 2) requestFinalization("stagnation");
+      if (!finalizationInjected && finalizationReason !== null) {
         finalizationInjected = true;
         nextContext = {
           ...context,
@@ -364,11 +526,16 @@ async function runPiSessionWithCounter({
       effectiveTools = [...(nextContext.tools ?? [])];
       return nextContext === context ? undefined : { context: nextContext };
     },
-    shouldStopAfterTurn: async ({ context }) => {
+    shouldStopAfterTurn: async ({ context, message }) => {
       loopReportedContext = true;
       effectiveMessages = [...context.messages];
       effectiveTools = [...(context.tools ?? [])];
-      return turnCount >= maxTurns;
+      const completion = candidateCompletion(extractAssistantText(message), requiredQuestions);
+      if (completion) {
+        requestFinalization(completion);
+        return true;
+      }
+      return turnCount >= turnLimit;
     },
   };
 
@@ -416,35 +583,19 @@ async function runPiSessionWithCounter({
   };
 
   const recoverTransientFailure = async (initial: AssistantMessage): Promise<AssistantMessage> => {
-    return await retryProviderMessage(
-      initial,
+    const recovered = await retryProviderMessage(
+      attemptOf(initial),
       async (failed) => {
-        effectiveMessages = withoutAssistant(effectiveMessages, failed);
-        return await continueLoop();
+        effectiveMessages = withoutAssistant(effectiveMessages, failed.message);
+        return attemptOf(await continueLoop());
       },
-      {
-        maxRetries: config.providerRetryMaxRetries,
-        baseDelayMs: config.providerRetryBaseDelayMs,
-        shouldRetry: (message) =>
-          !bindings.isContextOverflow(message, model.contextWindow) && shouldRetryProviderMessage(message),
-      },
+      { delaysMs: config.providerRetryDelaysMs },
       signal,
-      {
-        onRetryScheduled: async (failed, attempt, maxRetries, delayMs) => {
-          await emitCustom({
-            type: "provider_retry_scheduled",
-            attempt,
-            maxRetries,
-            delayMs,
-            category: classifyProviderFailure(failed.errorMessage),
-          });
-        },
-        onRetryStart: async (attempt) => {
-          providerRetries += 1;
-          await emitCustom({ type: "provider_retry_start", attempt });
-        },
-      },
+      createProviderRetryCallbacks("primary", emitCustom, () => {
+        providerRetries += 1;
+      }),
     );
+    return recovered.message;
   };
 
   let assistant = lastAssistant(newMessages);
@@ -481,6 +632,12 @@ async function runPiSessionWithCounter({
       providerAttempts,
       providerRetries,
       finalizationInjected,
+      finalizationReason,
+      blockedToolCalls,
+      evidenceProgress: Object.freeze(evidenceProgress.map((progress) => Object.freeze({
+        ...progress,
+        newKeys: Object.freeze([...progress.newKeys]),
+      }))),
       usage: Object.freeze(summarizeUsage(allNewMessages)),
       compactions,
       thresholdCompactions,

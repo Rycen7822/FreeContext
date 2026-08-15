@@ -47,7 +47,10 @@ test("benchmark session writer creates a private non-overwriting file outside th
       terminalError: { name: "ProviderError", code: "PROVIDER_ERROR", message: "unavailable" },
     });
     assert.equal((await stat(target)).mode & 0o777, 0o600);
-    await assert.rejects(writeBenchmarkSessionFile(options), /EEXIST/u);
+    await assert.rejects(
+      writeBenchmarkSessionFile(options),
+      (error: unknown) => Boolean(error && typeof error === "object" && "code" in error && error.code === "EEXIST"),
+    );
   } finally {
     await rm(root, { recursive: true, force: true });
   }

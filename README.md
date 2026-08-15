@@ -170,7 +170,9 @@ freecontext --route resilient --query 'Trace request routing.'
 freecontext --target gpt --query 'Trace request routing.'
 ```
 
-`--route` and `--target` are mutually exclusive. CLI selection overrides `FREECONTEXT_ROUTE` or `FREECONTEXT_TARGET`, which override `default_route`. Operational limits follow CLI > environment > `[runtime]` > built-in defaults. Transient provider errors, including 408/409/429/5xx, connection failures, interrupted streams, `SERVICE_BUSY`, and `服务繁忙`, retry the failed assistant turn up to three times by default with 3/6/12-second backoff. Completed repository tool results stay in context and are not executed again. Configure this with `provider_retry_max_retries` and `provider_retry_base_delay_ms`, `FREECONTEXT_PROVIDER_RETRY_MAX_RETRIES` and `FREECONTEXT_PROVIDER_RETRY_BASE_DELAY_MS`, or the matching CLI options; set the retry count to zero to disable it.
+`--route` and `--target` are mutually exclusive. CLI selection overrides `FREECONTEXT_ROUTE` or `FREECONTEXT_TARGET`, which override `default_route`. Operational limits follow CLI > environment > `[runtime]` > built-in defaults. Repository exploration defaults to, and is hard-capped at, 5 model turns and 18 accepted tool calls. Turns 1–4 permit read-only exploration; turn 5 is finalization-only. A valid complete or partial candidate stops immediately, and two consecutive turns without new normalized read/search evidence also enter finalization. Configure the limits with `max_turns` and `max_tool_calls`, their `FREECONTEXT_MAX_TURNS` and `FREECONTEXT_MAX_TOOL_CALLS` environment variables, or the matching CLI options.
+
+Transient failures identified by structured HTTP/provider/transport metadata, Pi's retry signal, or the exact TokenRhythm compatibility response retry only the failed assistant turn. The default retry-wait vector is 3/6/12 seconds with up to ±20% jitter. Completed repository tool results stay in context and are not executed again. Configure the full vector with `provider_retry_delays_ms = [3000, 6000, 12000]`, `FREECONTEXT_PROVIDER_RETRY_DELAYS_MS=3000,6000,12000`, or `--provider-retry-delays-ms 3000,6000,12000`; use an empty vector to disable retries.
 
 A route tries model targets in declared order after the selected target exhausts its retry budget. Fallback is limited to configured `timeout`, `rate_limit`, `server_error`, and `connection` failures before any tool call has been accepted in the primary session. Authentication/configuration errors, aborts, generic failures, post-tool failures, compaction, and format repair never switch targets. Once a target succeeds, primary execution, compaction, and repair all keep that same target and authenticated transport.
 
@@ -272,7 +274,7 @@ freecontext explore -C /workspace \
   --query 'Locate the router and its tests.'
 ```
 
-The capture contains the exact request, system prompts, safe tool schemas, raw primary/repair messages, effective post-compaction contexts, validation results, runtime-event sequence, and terminal outcome. Stream deltas are retained in order, while each delta's redundant growing partial-message snapshots are omitted because the complete final messages are already preserved in the raw capture. The writer serializes the document once, removes an incomplete file if commit fails, never serializes provider credentials or request headers, requires an existing destination directory outside the explored workspace, creates a private file, and refuses overwrite.
+The capture contains the exact request, system prompts, safe tool schemas, raw primary messages, effective post-compaction contexts, compiler result, typed runtime-event sequence, and terminal outcome. Stream deltas are retained in order, while each delta's redundant growing partial-message snapshots are omitted because the complete final messages are already preserved in the raw capture. The writer serializes the document once, removes an incomplete file if commit fails, never serializes provider credentials or request headers, requires an existing destination directory outside the explored workspace, creates a private file, and refuses overwrite.
 
 After the main Codex run has archived `agent/sessions/**/*.jsonl`, create the self-contained task context document:
 
@@ -281,6 +283,8 @@ freecontext-benchmark-context --agent-dir /logs/agent --task-name TaskNameXXX
 ```
 
 This writes `master-agent-context.json`, preserving the complete raw main-agent context and indexing every FreeContext prompt, compact output, and separate `freecontext-sessions/*.json` address. Export fails if the main-agent context does not contain the corresponding full-session reference. The ready-to-use Pier integration is documented in [`benchmarks/deepswe/README.md`](benchmarks/deepswe/README.md).
+
+For accepted benchmark trials, `freecontext-benchmark-costs INPUT.json OUTPUT.json` uses one persistent Python Gigatoken worker with `o200k_base` and a single `encode_batch()` pass. Its input lists `{ "taskId", "success", "agentDir" }` records. The report keeps local main-visible counts, delivered FreeContext output, main provider-native usage, subagent provider-native usage, and additive provider-native system totals in explicitly separate domains, with per-call, per-task, and per-success rates.
 
 ### Tests
 
@@ -480,7 +484,9 @@ freecontext --route resilient --query 'Trace request routing.'
 freecontext --target gpt --query 'Trace request routing.'
 ```
 
-`--route` 与 `--target` 互斥。CLI 选择覆盖 `FREECONTEXT_ROUTE` 或 `FREECONTEXT_TARGET`，后者再覆盖 `default_route`。运行限制遵循 CLI > 环境变量 > `[runtime]` > 内置默认值。默认情况下，408/409/429/5xx、连接失败、流中断、`SERVICE_BUSY` 和“服务繁忙”等短暂 provider 错误会以 3/6/12 秒退避重试失败的 assistant turn，最多重试三次；已经完成的仓库工具结果会保留在上下文中，不会重复执行。可通过 `provider_retry_max_retries`、`provider_retry_base_delay_ms`，对应的 `FREECONTEXT_PROVIDER_RETRY_MAX_RETRIES`、`FREECONTEXT_PROVIDER_RETRY_BASE_DELAY_MS` 环境变量或 CLI 选项调整；重试次数设为零即可关闭。
+`--route` 与 `--target` 互斥。CLI 选择覆盖 `FREECONTEXT_ROUTE` 或 `FREECONTEXT_TARGET`，后者再覆盖 `default_route`。运行限制遵循 CLI > 环境变量 > `[runtime]` > 内置默认值。仓库探索默认使用并硬性限制为 5 个模型回合和 18 次已接受工具调用：前 4 回合允许只读探索，第 5 回合仅生成最终结果；得到有效的完整或部分候选结果时立即停止，连续两个回合没有新增规范化读/搜证据时也会提前进入收敛。可通过 `max_turns`、`max_tool_calls`，对应的 `FREECONTEXT_MAX_TURNS`、`FREECONTEXT_MAX_TOOL_CALLS` 环境变量或 CLI 选项配置这些限制。
+
+仅当结构化 HTTP/provider/transport 元数据、Pi 的重试信号或 TokenRhythm 的精确兼容响应判定为短暂故障时，FreeContext 才会重试失败的 assistant turn。默认等待向量为 3/6/12 秒，并带最多 ±20% 抖动；已经完成的仓库工具结果会保留在上下文中，不会重复执行。可通过 `provider_retry_delays_ms = [3000, 6000, 12000]`、`FREECONTEXT_PROVIDER_RETRY_DELAYS_MS=3000,6000,12000` 或 `--provider-retry-delays-ms 3000,6000,12000` 配置完整向量；使用空向量即可关闭重试。
 
 选中 target 的重试预算耗尽后，Route 才按声明顺序尝试下一个模型 target。仅当主会话尚未接受任何工具调用，并且错误属于已配置的 `timeout`、`rate_limit`、`server_error` 或 `connection` 时才允许降级。认证/配置错误、取消、普通错误、工具调用后的失败、上下文压缩和格式修复都不会切换 target。某个 target 成功后，主执行、压缩和修复始终复用该 target 及其认证传输。
 
@@ -582,7 +588,7 @@ freecontext explore -C /workspace \
   --query 'Locate the router and its tests.'
 ```
 
-该文件包含精确请求、system prompt、安全工具 schema、主回答/repair 原文、压缩后的有效上下文、按顺序保存的运行事件和最终状态。流式 delta 会完整保留；每个 delta 内重复增长的 partial-message 快照会省略，因为最终完整消息已经保存在原始 capture 中。写入器只序列化一次，提交失败时删除不完整文件，并且不会序列化 provider 凭据或请求 header。目标父目录必须预先存在且位于被探索工作区之外，文件权限为私有，并且禁止覆盖已有文件。
+该文件包含精确请求、system prompt、安全工具 schema、主回答原文、压缩后的有效上下文、编译结果、类型化运行事件和最终状态。流式 delta 会完整保留；每个 delta 内重复增长的 partial-message 快照会省略，因为最终完整消息已经保存在原始 capture 中。写入器只序列化一次，提交失败时删除不完整文件，并且不会序列化 provider 凭据或请求 header。目标父目录必须预先存在且位于被探索工作区之外，文件权限为私有，并且禁止覆盖已有文件。
 
 主 Codex 运行将 `agent/sessions/**/*.jsonl` 归档后，可生成自包含的任务上下文文档：
 
@@ -591,6 +597,8 @@ freecontext-benchmark-context --agent-dir /logs/agent --task-name TaskNameXXX
 ```
 
 命令生成 `master-agent-context.json`：完整保留主 agent 原始上下文，并为每次 FreeContext 调用记录 prompt、返回给主 agent 的紧凑输出，以及独立 `freecontext-sessions/*.json` 文件地址。如果主 agent 上下文没有包含对应完整会话引用，导出会直接失败。可直接复用的 Pier 集成见 [`benchmarks/deepswe/README.md`](benchmarks/deepswe/README.md)。
+
+对于已接受的 benchmark trial，可运行 `freecontext-benchmark-costs INPUT.json OUTPUT.json`。输入列出 `{ "taskId", "success", "agentDir" }` 记录；命令只初始化一个 Python Gigatoken worker，以 `o200k_base` 对全部文本执行一次 `encode_batch()`。报告分别保留本地主 agent 可见文本、交付给主 agent 的 FreeContext 输出、主 agent provider-native usage、subagent provider-native usage 和可相加的 provider-native 系统总量，并给出 per-call、per-task、per-success 指标，绝不把本地 Gigatoken 计数与 provider-native usage 混为同一域。
 
 ### 测试
 

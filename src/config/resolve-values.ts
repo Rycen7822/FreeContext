@@ -23,6 +23,19 @@ export function parseInteger(value: unknown, fallback: number, { min, max, name 
   return parsed;
 }
 
+export function parseIntegerArray(
+  value: unknown,
+  fallback: readonly number[],
+  bounds: NumericBounds & Readonly<{ maxItems: number }>,
+): readonly number[] {
+  if (value === undefined) return Object.freeze([...fallback]);
+  const entries = Array.isArray(value) ? value : String(value).trim() ? String(value).split(",") : [];
+  if (entries.length > bounds.maxItems) {
+    throw new ConfigurationError(`${bounds.name} must contain at most ${bounds.maxItems} values.`);
+  }
+  return Object.freeze(entries.map((entry) => parseInteger(entry, bounds.min, bounds)));
+}
+
 export function parseNumber(value: unknown, fallback: number, { min, max, name }: NumericBounds): number {
   if (value === undefined || (typeof value === "string" && !value.trim())) return fallback;
   const parsed = typeof value === "number" ? value : Number(String(value).trim());

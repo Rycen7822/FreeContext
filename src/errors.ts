@@ -27,7 +27,7 @@ export class SecurityError extends FreeContextError {
   }
 }
 
-export type SessionPersistenceStage = "serialize" | "write" | "sync" | "close";
+export type SessionPersistenceStage = "serialize" | "write" | "sync" | "close" | "rename" | "directory_sync";
 
 export class SessionPersistenceError extends FreeContextError {
   readonly stage: SessionPersistenceStage;

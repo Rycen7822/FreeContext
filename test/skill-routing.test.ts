@@ -1,8 +1,9 @@
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
+import { FREECONTEXT_ELIGIBILITY_POLICY } from "../src/mcp/contracts.js";
 
-test("FreeContext skill routes broad reading to one atomic MCP tool", async () => {
+test("manual fallback does not auto-trigger and invokes one MCP tool without copying eligibility policy", async () => {
   const [skill, metadata] = await Promise.all([
     readFile(new URL("../skills/freecontext/SKILL.md", import.meta.url), "utf8"),
     readFile(new URL("../skills/freecontext/agents/openai.yaml", import.meta.url), "utf8"),
@@ -12,52 +13,47 @@ test("FreeContext skill routes broad reading to one atomic MCP tool", async () =
     /^---\nname: freecontext\ndescription: (?<description>[^\n]+)\n---\n/u,
   )?.groups?.description;
   assert.ok(description);
-  assert.ok(Buffer.byteLength(skill, "utf8") <= 1_800);
+  assert.ok(Buffer.byteLength(skill, "utf8") <= 3_200);
   assert.ok([...description].length <= 420);
   assert.equal(
     description,
-    "Route multi-file code/workspace exploration, cross-document keyword/topic search, long-document fact extraction, source-bound planning/review/diagnosis via gather_context, including familiar repositories and known candidate files. When selected, first tool turn reads this skill alone—not plan/pwd/Git/list/search/source; next calls FreeContext. Skip when one bounded read/search in one known target fully answers.",
+    "Manual FreeContext compatibility bridge. Use only when the user explicitly requests FreeContext or when diagnosing an unavailable gather_context MCP tool; never auto-trigger for ordinary exploration or document search.",
   );
-
-  for (const trigger of [
-    "multi-file code/workspace exploration",
-    "cross-document keyword/topic search",
-    "long-document fact extraction",
-    "source-bound planning/review/diagnosis",
-    "including familiar repositories and known candidate files",
-    "task spans files, documents, evidence classes, or long-document sections",
-  ]) {
-    assert.ok(skill.includes(trigger), `missing routing trigger: ${trigger}`);
-  }
-  assert.match(skill, /call `gather_context` once/u);
+  for (const gate of FREECONTEXT_ELIGIBILITY_POLICY.gates) assert.equal(skill.includes(gate.instruction), false);
+  assert.match(skill, /Locate exactly `mcp__freecontext__gather_context`/u);
   assert.match(
     skill,
-    /First tool turn after selecting this skill: read only this file\. Do not combine that read with planning, `pwd`, Git, listing, search, source\/document reads, or sibling work in the same `functions\.exec`\./u,
+    /Never select it automatically for repository exploration, multi-document search, long-document extraction, planning, review, or diagnosis\./u,
   );
   assert.match(
     skill,
-    /Next tool turn: locate exactly `mcp__freecontext__gather_context` in `ALL_TOOLS` and invoke it in that same `functions\.exec`; do not plan or inspect the workspace first/u,
+    /Locate exactly `mcp__freecontext__gather_context` in `ALL_TOOLS` and invoke it once in that same `functions\.exec`/u,
   );
-  assert.match(skill, /forward its result to the parent without listing the full catalog/u);
-  assert.match(skill, /exact argument keys `query`.*`workspace`/u);
-  assert.doesNotMatch(skill, /\bworkspace_root\b/u);
-  assert.match(skill, /one bounded read\/search in one known target fully answers/u);
-  assert.match(skill, /read only decisive\/edit ranges/u);
-  assert.match(skill, /Call again only for a material gap named by the result/u);
+  assert.equal(skill.match(/await tools\.mcp__freecontext__gather_context\(args\)/gu)?.length, 1);
+  assert.equal(skill.match(/\bnotify\(/gu)?.length, 1);
+  assert.equal(skill.match(/functions\.wait/gu)?.length, 1);
+  assert.match(skill, /yield_time_ms: 300000, max_tokens: 10000/u);
+  assert.match(skill, /terminalTexts\.length !== 1/u);
+  assert.doesNotMatch(skill, /JSON\.stringify/u);
+  assert.match(skill, /FreeContext installs no waiting Hook/u);
+  assert.match(skill, /Pass only `taskText`, `knownRefs`, and 2–5 typed `evidenceQuestions`/u);
+  assert.doesNotMatch(skill, /exact argument keys `query`|\bworkspace_root\b/u);
+  assert.match(skill, /read the returned `nextAction` span before broader exploration/u);
+  assert.match(skill, /never replay the same request/u);
 
-  assert.match(metadata, /^  allow_implicit_invocation: true$/mu);
+  assert.match(metadata, /^  allow_implicit_invocation: false$/mu);
   assert.equal(metadata.match(/^    - type:/gmu)?.length, 1);
   assert.match(metadata, /^    - type: "mcp"$/mu);
   assert.equal(metadata.match(/^      value: "freecontext"$/gmu)?.length, 1);
   const shortDescription = metadata.match(/^  short_description: "([^"]+)"$/mu)?.[1];
-  assert.equal(shortDescription, "Read skill alone, then call FreeContext");
+  assert.equal(shortDescription, "Manual bridge to FreeContext MCP");
   assert.doesNotMatch(skill, /After loading, call FreeContext next/u);
 
   const routingSurface = `${skill}\n${metadata}`;
   for (const forbidden of [
     /freecontext explore/u,
     /_GUIDANCE/u,
-    /\b(?:shell|poll(?:ing)?|wait)\b/iu,
+    /\b(?:shell|poll(?:ing)?)\b/iu,
     /\bexplore_repository\b/u,
     /default_prompt:/u,
     /https?:\/\//u,
@@ -68,4 +64,87 @@ test("FreeContext skill routes broad reading to one atomic MCP tool", async () =
   ]) {
     assert.doesNotMatch(routingSurface, forbidden);
   }
+});
+
+test("caller template emits only one canonical text and one slow reminder", async () => {
+  const skill = await readFile(new URL("../skills/freecontext/SKILL.md", import.meta.url), "utf8");
+  const caller = skill.match(/```js\n(?<code>[\s\S]+?)\n```/u)?.groups?.code;
+  assert.ok(caller);
+
+  type ToolResult = Readonly<{
+    content: readonly Readonly<{ type: string; text?: string }>[];
+    structuredContent?: unknown;
+    _meta?: unknown;
+  }>;
+  type Caller = (
+    allTools: readonly Readonly<{ name: string }>[],
+    tools: Readonly<{ mcp__freecontext__gather_context: (args: unknown) => Promise<ToolResult> }>,
+    schedule: (callback: () => void, delayMs: number) => number,
+    notify: (message: string) => void,
+    text: (message: string) => void,
+    cancel: (handle: number) => void,
+    args: unknown,
+  ) => Promise<void>;
+  const execute = new Function(
+    "ALL_TOOLS",
+    "tools",
+    "setTimeout",
+    "notify",
+    "text",
+    "clearTimeout",
+    "args",
+    `"use strict"; return (async () => {\n${caller}\n})();`,
+  ) as Caller;
+
+  function start(call: () => Promise<ToolResult>) {
+    const state = {
+      calls: 0,
+      timers: [] as { callback: () => void; delayMs: number }[],
+      notifications: [] as string[],
+      outputs: [] as string[],
+      cancelled: [] as number[],
+    };
+    const promise = execute(
+      [{ name: "mcp__freecontext__gather_context" }],
+      { mcp__freecontext__gather_context: async () => { state.calls += 1; return call(); } },
+      (callback, delayMs) => { state.timers.push({ callback, delayMs }); return state.timers.length; },
+      (message) => state.notifications.push(message),
+      (message) => state.outputs.push(message),
+      (handle) => state.cancelled.push(handle),
+      { taskText: "inspect" },
+    );
+    return { promise, state };
+  }
+
+  const fast = start(async () => ({
+    content: [{ type: "text", text: "terminal" }, { type: "image" }],
+    structuredContent: { status: "ready" },
+    _meta: { private: true },
+  }));
+  await fast.promise;
+  assert.equal(fast.state.calls, 1);
+  assert.equal(fast.state.timers.length, 1);
+  assert.equal(fast.state.timers[0]?.delayMs, 8_000);
+  assert.deepEqual(fast.state.notifications, []);
+  assert.deepEqual(fast.state.outputs, ["terminal"]);
+  assert.deepEqual(fast.state.cancelled, [1]);
+
+  let finishSlow!: (result: ToolResult) => void;
+  const slowResult = new Promise<ToolResult>((resolve) => { finishSlow = resolve; });
+  const slow = start(() => slowResult);
+  await Promise.resolve();
+  slow.state.timers[0]?.callback();
+  finishSlow({ content: [{ type: "text", text: "slow terminal" }] });
+  await slow.promise;
+  assert.equal(slow.state.calls, 1);
+  assert.equal(slow.state.notifications.length, 1);
+  assert.deepEqual(slow.state.outputs, ["slow terminal"]);
+  assert.deepEqual(slow.state.cancelled, [1]);
+
+  const malformed = start(async () => ({
+    content: [{ type: "text", text: "first" }, { type: "text", text: "second" }],
+  }));
+  await assert.rejects(malformed.promise, /no unique terminal text result/u);
+  assert.deepEqual(malformed.state.outputs, []);
+  assert.deepEqual(malformed.state.cancelled, [1]);
 });

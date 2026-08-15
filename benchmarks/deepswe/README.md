@@ -15,7 +15,7 @@ Put the directory containing `pier_codex_noemaloom_agent.py` on `PYTHONPATH` tog
 Set `FREECONTEXT_RUNTIME_ARCHIVE` to a task-owned archive containing the built `dist/`, `bin/`, `prompts/`, `skills/freecontext/SKILL.md`, `skills/freecontext/agents/openai.yaml`, this directory's `freecontext.toml`, production dependencies, and runtime binaries. The treatment registers:
 
 - startup timeout `30` seconds;
-- tool timeout `1800` seconds;
+- tool timeout `105` seconds, leaving a fixed 15-second transport-finalization margin beyond FreeContext's 90-second internal deadline;
 - enabled tool `gather_context` only;
 - explicit approval for that read-only annotated tool.
 
@@ -28,18 +28,29 @@ The adapter copies only the extracted key to a task-owned mode-`0600` secret; it
 Each MCP result includes its separate in-container session path in compact text and structured output:
 
 ```text
-Status: completed
-Validated spans: 3
-Gaps: 0
-Full session: /logs/agent/freecontext-sessions/<call>.json
+Status: ready
+Summary: Routing evidence is verified.
+Evidence:
+1. [implementation][impl] src/router.ts:10-24 (focus 17) — Defines routing.
+Gaps:
+-
+Next: read src/router.ts:10-24 — Read the decisive implementation span.
+Error: -
+Session: /logs/agent/freecontext-sessions/<call>.json
 ```
 
 After Codex exits, the adapter preserves these artifacts under Pier's task `agent/` directory:
 
-- `master-agent-context.json`: the complete raw Codex session JSONL plus an ordered FreeContext index containing `promptToFreeContext`, nullable `outputToMasterAgent`, status, `fullSessionFile`, and `runtimeSessionFile`. Atomic MCP export fails if a session declares a different path or its runtime path is absent from the raw master context.
-- `freecontext-sessions/*.json`: separate original MCP session documents containing the exact request, raw primary/repair capture, effective post-compaction context, validation result, runtime events, compact result, terminal status, and exact model-visible text. Provider credentials and request headers are never serialized.
+- `master-agent-context.json`: the complete raw Codex session JSONL plus an ordered FreeContext index containing request, nullable actual parent observation, delivery hashes/status, separate session paths, optional consumption audit, and duplicate-task observations. Atomic MCP export fails if a v2 session path or actual call observation is missing or mismatched.
+- `delivery-observations.jsonl`: append-only actual MCP delivery matches keyed by call identity, including typed missing-return causal evidence. A persisted terminal result with no provider cause is `harness`; provider exhaustion/fatal evidence plus a missing host completion is `mixed`. Private session content never substitutes for a missing parent observation.
+- `consumption-observations.jsonl`: append-only targeted-first, evidence-range hit, broad-search, partial-gap-search, and duplicate-task observations. Consumption metrics require explicit host-emitted `freecontext-parent-action-v1` records; when the host cannot emit them, the audit remains unobserved rather than inferring parent behavior or claiming a hard guard.
+- `freecontext-sessions/*.json`: separate original MCP v2 session documents containing invocation identity, exact request, raw Pi capture, effective post-compaction context, typed provider attempt/schedule events with usage and base/actual delay, canonical compiler result, terminal decision, and exact model-visible text hash. Provider credentials and request headers are never serialized.
 - `sessions/**/*.jsonl`: Pier's unchanged raw Codex session source.
 
-The exporter continues to read legacy `freecontext-benchmark-session-v1` files during shadow adoption, but new treatment calls use MCP-v1 only. The policy-matched legacy CLI comparator opts into preserving a detached parseable session when the main agent failed to await the CLI: that call is marked `referenceFoundInMasterContext: false` with `outputToMasterAgent: null` and is measured as an orchestration outcome, not retried as infrastructure. Atomic MCP remains strict. The exporter never inserts a missing response into the raw master context, references full sessions by path, and never embeds their raw JSON in the call index. These artifacts may contain retained source text and are not deleted automatically.
+The exporter continues to read legacy MCP v1 and benchmark-session v1 files during shadow adoption, but new treatment calls use MCP v2 only. Legacy observations are retained only when their exact output appears in the raw master JSONL. V2 export requires matching started/completed call identity, request, model-visible text hash, and structured result; a private session result is retained only as `recoverableResult` and never counted as delivered. The exporter never inserts a missing response into the raw master context or embeds raw session JSON in the call index. These artifacts may contain retained source text and are not deleted automatically.
+
+## Cost report
+
+Create a JSON input with schema `freecontext-cost-input-v1` and one `{ "taskId", "success", "agentDir" }` record per accepted trial, then run `freecontext-benchmark-costs INPUT.json OUTPUT.json`. The command initializes one persistent Python Gigatoken worker with `tiktoken` `o200k_base`, batches all normalized main-agent input/output text through `encode_batch()`, and reports per-call, per-task, and per-success totals. It reports local main-visible counts, FreeContext output delivered to the parent, main provider-native usage, subagent provider-native usage, and additive provider-native system totals as separate domains; it never mixes provider-native usage with local Gigatoken counts.
 
 The adapter never lists, stops, prunes, removes, or rebuilds Docker containers, images, layers, volumes, or shared caches. Container lifecycle remains owned by the existing Pier harness. The historical `.work/deepswe-*` directories are evidence rather than canonical source. Credentialed benchmark execution requires explicit user authorization and a fresh same-manifest use/skip canary before the full gate.

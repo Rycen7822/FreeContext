@@ -2,11 +2,10 @@ version = 1
 default_route = "default"
 
 [runtime]
-max_turns = 8
-max_tool_calls = 32
+max_turns = 5
+max_tool_calls = 18
 request_timeout_ms = 180000
-provider_retry_max_retries = 3
-provider_retry_base_delay_ms = 3000
+provider_retry_delays_ms = [3000, 6000, 12000]
 tool_timeout_ms = 20000
 max_tool_output_bytes = 65536
 max_parallel_tools = 8

@@ -1,13 +1,17 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
+import { randomUUID } from "node:crypto";
+import { realpath } from "node:fs/promises";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 import { ConfigurationError } from "../errors.js";
 import type { ContextTokenCounter } from "../runtime/context-budget.js";
 import { GigatokenCounter } from "../runtime/gigatoken-counter.js";
+import { resolveWorkspaceRevision } from "../runtime/workspace-revision.js";
 import { defaultSessionDirectory } from "../session/store.js";
 import {
-  GatherContextInputSchema,
-  GatherContextOutputSchema,
+  FreeContextRequestSchema,
+  FreeContextResultSchema,
   SERVER_INSTRUCTIONS,
   TOOL_DESCRIPTION,
 } from "./contracts.js";
@@ -23,8 +27,14 @@ export interface FreeContextMcpServerDependencies {
   readonly tokenCounter?: ContextTokenCounter;
   readonly closeTokenCounter?: () => Promise<void> | void;
   readonly runExplorer?: GatherContextHandlerDependencies["runExplorer"];
+  readonly compileResult?: GatherContextHandlerDependencies["compileResult"];
   readonly reserveSession?: GatherContextHandlerDependencies["reserveSession"];
+  readonly cancelSession?: GatherContextHandlerDependencies["cancelSession"];
   readonly commitSession?: GatherContextHandlerDependencies["commitSession"];
+  readonly terminalStore?: GatherContextHandlerDependencies["terminalStore"];
+  readonly deadlineClock?: GatherContextHandlerDependencies["deadlineClock"];
+  readonly deadlineMs?: number;
+  readonly invocationContextProvider?: GatherContextHandlerDependencies["invocationContextProvider"];
   readonly now?: () => Date;
 }
 
@@ -79,34 +89,64 @@ export function createFreeContextMcpServer(
   const tokenCounter = dependencies.tokenCounter ?? ownedCounter as GigatokenCounter;
   const processAbort = new AbortController();
   const executor = createSingleFlightExecutor();
-  const handler = createGatherContextHandler({
-    tokenCounter,
-    sessionDirectory: options.sessionDirectory,
-    executor,
-    ...(options.configFile ? { configFile: options.configFile } : {}),
-    ...(dependencies.runExplorer ? { runExplorer: dependencies.runExplorer } : {}),
-    ...(dependencies.reserveSession ? { reserveSession: dependencies.reserveSession } : {}),
-    ...(dependencies.commitSession ? { commitSession: dependencies.commitSession } : {}),
-    ...(dependencies.now ? { now: dependencies.now } : {}),
-  });
   const server = new McpServer(
     { name: "freecontext", version: "0.1.0" },
     { instructions: SERVER_INSTRUCTIONS },
   );
+  const invocationContextProvider = dependencies.invocationContextProvider ?? (async (metadata: unknown) => {
+    if (!metadata || typeof metadata !== "object" || !("requestId" in metadata)) {
+      throw new ConfigurationError("The MCP host did not supply a request identity.");
+    }
+    const requestId = (metadata as Readonly<{ requestId?: unknown }>).requestId;
+    if (typeof requestId !== "string" && typeof requestId !== "number") {
+      throw new ConfigurationError("The MCP host supplied an invalid request identity.");
+    }
+    const roots = await server.server.listRoots();
+    if (roots.roots.length !== 1) {
+      throw new ConfigurationError("FreeContext requires exactly one MCP workspace root.");
+    }
+    const root = roots.roots[0];
+    if (!root || !root.uri.startsWith("file://")) {
+      throw new ConfigurationError("FreeContext requires one file:// MCP workspace root.");
+    }
+    const workspaceRoot = await realpath(fileURLToPath(root.uri));
+    return Object.freeze({
+      invocationId: randomUUID(),
+      callId: String(requestId),
+      workspaceRoot,
+      workspaceRevision: await resolveWorkspaceRevision(workspaceRoot),
+    });
+  });
+  const handler = createGatherContextHandler({
+    tokenCounter,
+    sessionDirectory: options.sessionDirectory,
+    executor,
+    invocationContextProvider,
+    ...(options.configFile ? { configFile: options.configFile } : {}),
+    ...(dependencies.runExplorer ? { runExplorer: dependencies.runExplorer } : {}),
+    ...(dependencies.compileResult ? { compileResult: dependencies.compileResult } : {}),
+    ...(dependencies.reserveSession ? { reserveSession: dependencies.reserveSession } : {}),
+    ...(dependencies.cancelSession ? { cancelSession: dependencies.cancelSession } : {}),
+    ...(dependencies.commitSession ? { commitSession: dependencies.commitSession } : {}),
+    ...(dependencies.terminalStore ? { terminalStore: dependencies.terminalStore } : {}),
+    ...(dependencies.deadlineClock ? { deadlineClock: dependencies.deadlineClock } : {}),
+    ...(dependencies.deadlineMs !== undefined ? { deadlineMs: dependencies.deadlineMs } : {}),
+    ...(dependencies.now ? { now: dependencies.now } : {}),
+  });
   server.registerTool(
     "gather_context",
     {
       title: "Gather context with FreeContext",
       description: TOOL_DESCRIPTION,
-      inputSchema: GatherContextInputSchema,
-      outputSchema: GatherContextOutputSchema,
+      inputSchema: FreeContextRequestSchema,
+      outputSchema: FreeContextResultSchema,
       annotations: {
         readOnlyHint: true,
         destructiveHint: false,
         openWorldHint: true,
       },
     },
-    (input, extra) => handler(input, AbortSignal.any([extra.signal, processAbort.signal])),
+    async (input, extra) => handler(input, extra, AbortSignal.any([extra.signal, processAbort.signal])),
   );
 
   let counterClose: Promise<void> | null = null;

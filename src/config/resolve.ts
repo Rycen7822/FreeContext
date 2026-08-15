@@ -10,6 +10,7 @@ import {
   normalizeFallbackReason,
   parseBoolean,
   parseInteger,
+  parseIntegerArray,
 } from "./resolve-values.js";
 import { resolveTarget } from "./target.js";
 import type {
@@ -101,14 +102,14 @@ function resolveRuntime(
 ): Readonly<RuntimeConfig> {
   const runtime = document.runtime;
   return Object.freeze({
-    maxTurns: parseInteger(cli.maxTurns ?? env.FREECONTEXT_MAX_TURNS ?? runtime.maxTurns, 8, {
+    maxTurns: parseInteger(cli.maxTurns ?? env.FREECONTEXT_MAX_TURNS ?? runtime.maxTurns, 5, {
       min: 2,
-      max: 32,
+      max: 5,
       name: "max_turns",
     }),
-    maxToolCalls: parseInteger(cli.maxToolCalls ?? env.FREECONTEXT_MAX_TOOL_CALLS ?? runtime.maxToolCalls, 32, {
+    maxToolCalls: parseInteger(cli.maxToolCalls ?? env.FREECONTEXT_MAX_TOOL_CALLS ?? runtime.maxToolCalls, 18, {
       min: 1,
-      max: 256,
+      max: 18,
       name: "max_tool_calls",
     }),
     requestTimeoutMs: parseInteger(
@@ -116,17 +117,10 @@ function resolveRuntime(
       180000,
       { min: 1000, max: 1800000, name: "request_timeout_ms" },
     ),
-    providerRetryMaxRetries: parseInteger(
-      cli.providerRetryMaxRetries ?? env.FREECONTEXT_PROVIDER_RETRY_MAX_RETRIES ?? runtime.providerRetryMaxRetries,
-      3,
-      { min: 0, max: 5, name: "provider_retry_max_retries" },
-    ),
-    providerRetryBaseDelayMs: parseInteger(
-      cli.providerRetryBaseDelayMs ??
-        env.FREECONTEXT_PROVIDER_RETRY_BASE_DELAY_MS ??
-        runtime.providerRetryBaseDelayMs,
-      3000,
-      { min: 100, max: 60000, name: "provider_retry_base_delay_ms" },
+    providerRetryDelaysMs: parseIntegerArray(
+      cli.providerRetryDelaysMs ?? env.FREECONTEXT_PROVIDER_RETRY_DELAYS_MS ?? runtime.providerRetryDelaysMs,
+      [3000, 6000, 12000],
+      { min: 100, max: 60000, maxItems: 5, name: "provider_retry_delays_ms" },
     ),
     toolTimeoutMs: parseInteger(cli.toolTimeoutMs ?? env.FREECONTEXT_TOOL_TIMEOUT_MS ?? runtime.toolTimeoutMs, 20000, {
       min: 100,

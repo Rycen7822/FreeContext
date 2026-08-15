@@ -116,8 +116,7 @@ test("the real Pi transport retries a TokenRhythm SERVICE_BUSY response through 
   const config = {
     ...selected,
     contextCompactionEnabled: false,
-    providerRetryMaxRetries: 3,
-    providerRetryBaseDelayMs: 1,
+    providerRetryDelaysMs: [1, 2, 4],
   };
   const originalFetch = globalThis.fetch;
   let fetchCalls = 0;
