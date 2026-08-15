@@ -9,6 +9,7 @@ interface BatToolDetails {
   readonly path: string;
   readonly startLine: number;
   readonly endLine: number;
+  readonly actualEndLine: number;
   readonly truncated: boolean;
 }
 
@@ -53,7 +54,9 @@ export function createBatTool({ Type, workspace, semaphore, config, executable }
         if (result.code !== 0) {
           throw new Error(`bat failed with exit code ${result.code}: ${result.stderr.trim() || "unknown error"}`);
         }
-        const body = result.stdout.trimEnd() || "<no lines in requested range>";
+        const rendered = result.stdout.trimEnd();
+        const body = rendered || "<no lines in requested range>";
+        const actualEndLine = rendered ? startLine + rendered.split(/\r?\n/u).length - 1 : startLine - 1;
         return {
           content: [
             {
@@ -61,7 +64,7 @@ export function createBatTool({ Type, workspace, semaphore, config, executable }
               text: `[bat ${target.relative}:${startLine}-${endLine}]\n${body}${result.truncated ? "\n<output truncated>" : ""}`,
             },
           ],
-          details: { tool: "bat", path: target.relative, startLine, endLine, truncated: result.truncated },
+          details: { tool: "bat", path: target.relative, startLine, endLine, actualEndLine, truncated: result.truncated },
         };
       }, signal),
   };

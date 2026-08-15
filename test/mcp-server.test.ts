@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { mkdir, mkdtemp, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, symlink, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
@@ -11,6 +11,7 @@ import {
   createFreeContextMcpServer,
   createSingleFlightExecutor,
   parseMcpServerArgs,
+  resolveMcpServerArguments,
 } from "../src/mcp/server.js";
 import {
   FREECONTEXT_ELIGIBILITY_POLICY,
@@ -119,12 +120,21 @@ test("no-network MCP loopback awaits one terminal Promise and never emits an int
     const tool = listed.tools[0];
     assert.equal(tool?.title, "Gather context with FreeContext");
     assert.equal(tool?.description, TOOL_DESCRIPTION);
+    assert.ok(tool?.description?.startsWith(
+      "For a call-eligible task, make gather_context your first read-only exploration action. ",
+    ));
+    let previousGateIndex = -1;
+    for (const gate of FREECONTEXT_ELIGIBILITY_POLICY.gates) {
+      const gateIndex = tool?.description?.indexOf(`Gate ${gate.order}: ${gate.instruction}`) ?? -1;
+      assert.ok(gateIndex > previousGateIndex);
+      previousGateIndex = gateIndex;
+    }
     assert.deepEqual(tool?.annotations, {
       readOnlyHint: true,
       destructiveHint: false,
       openWorldHint: true,
     });
-    assert.deepEqual(tool?.inputSchema.required, ["taskText", "evidenceQuestions", "knownRefs"]);
+    assert.deepEqual(tool?.inputSchema.required, ["taskText", "evidenceQuestions"]);
     assert.ok(tool?.outputSchema?.properties?.status);
 
     let firstSettled = false;
@@ -219,9 +229,17 @@ test("default MCP binding succeeds from public request identity and one file roo
 
 test("default MCP binding rejects missing, multiple, and non-file roots before exploration", async () => {
   const fixtures = [
-    { name: "missing", roots: [] },
-    { name: "multiple", roots: [{ uri: "file:///one" }, { uri: "file:///two" }] },
-    { name: "non-file", roots: [{ uri: "https://example.invalid/workspace" }] },
+    { name: "missing", roots: [], failure: "missing_workspace_root" },
+    {
+      name: "multiple",
+      roots: [{ uri: "file:///one" }, { uri: "file:///two" }],
+      failure: "multiple_workspace_roots",
+    },
+    {
+      name: "non-file",
+      roots: [{ uri: "https://example.invalid/workspace" }],
+      failure: "workspace_roots_unavailable",
+    },
   ] as const;
   for (const fixture of fixtures) {
     const root = await mkdtemp(path.join(os.tmpdir(), `freecontext-mcp-${fixture.name}-`));
@@ -247,6 +265,10 @@ test("default MCP binding rejects missing, multiple, and non-file roots before e
       assert.equal(output.status, "failed");
       assert.equal(output.errorCode, "INVALID_REQUEST");
       assert.equal(output.sessionFile, null);
+      assert.equal(
+        (response._meta?.freecontext as { contextFailure?: unknown } | undefined)?.contextFailure,
+        fixture.failure,
+      );
       assert.equal(explorerCalls, 0);
     } finally {
       await client.close().catch(() => undefined);
@@ -256,12 +278,124 @@ test("default MCP binding rejects missing, multiple, and non-file roots before e
   }
 });
 
+test("default MCP binding reports a typed failure when the host has no roots capability", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "freecontext-mcp-no-roots-"));
+  const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+  const client = new Client({ name: "freecontext-no-roots", version: "1.0.0" });
+  let explorerCalls = 0;
+  const runtime = createFreeContextMcpServer(
+    { sessionDirectory: path.join(root, "sessions") },
+    {
+      tokenCounter,
+      runExplorer: async (options) => {
+        explorerCalls += 1;
+        return result(options);
+      },
+    },
+  );
+  try {
+    await runtime.server.connect(serverTransport);
+    await client.connect(clientTransport);
+    const response = await client.callTool({
+      name: "gather_context",
+      arguments: request("no roots capability"),
+    });
+    const output = FreeContextResultSchema.parse(response.structuredContent);
+    assert.equal(output.status, "failed");
+    assert.equal(output.nextAction.reason, "The MCP host did not provide workspace roots.");
+    assert.equal(
+      (response._meta?.freecontext as { contextFailure?: unknown } | undefined)?.contextFailure,
+      "workspace_roots_unavailable",
+    );
+    assert.equal(explorerCalls, 0);
+  } finally {
+    await client.close().catch(() => undefined);
+    await runtime.close().catch(() => undefined);
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("explicit MCP workspace binding succeeds without roots and uses the canonical root", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "freecontext-mcp-explicit-"));
+  const workspace = path.join(root, "workspace");
+  const alias = path.join(root, "workspace-link");
+  const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+  const client = new Client({ name: "freecontext-explicit-root", version: "1.0.0" });
+  const invocations: RunExplorerOptions["invocation"][] = [];
+  try {
+    await mkdir(workspace);
+    await symlink(workspace, alias, "dir");
+    const options = await resolveMcpServerArguments({
+      sessionDirectory: path.join(root, "sessions"),
+      workspaceRoot: alias,
+    });
+    assert.equal(options.workspaceRoot, workspace);
+    const runtime = createFreeContextMcpServer(options, {
+      tokenCounter,
+      runExplorer: async (explorerOptions) => {
+        invocations.push(explorerOptions.invocation);
+        return result(explorerOptions);
+      },
+    });
+    let listRootsCalls = 0;
+    Object.defineProperty(runtime.server.server, "listRoots", {
+      configurable: true,
+      value: async () => {
+        listRootsCalls += 1;
+        throw new Error("roots/list must not run in explicit workspace mode");
+      },
+    });
+    try {
+      await runtime.server.connect(serverTransport);
+      await client.connect(clientTransport);
+      const output = FreeContextResultSchema.parse((await client.callTool({
+        name: "gather_context",
+        arguments: request("explicit root"),
+      })).structuredContent);
+      assert.equal(output.status, "ready");
+      assert.equal(invocations.length, 1);
+      assert.equal(invocations[0]?.workspaceRoot, workspace);
+      assert.equal(listRootsCalls, 0);
+    } finally {
+      await client.close().catch(() => undefined);
+      await runtime.close().catch(() => undefined);
+    }
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("explicit MCP workspace binding fails startup for missing and non-directory roots", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "freecontext-mcp-explicit-invalid-"));
+  const file = path.join(root, "file.txt");
+  try {
+    await writeFile(file, "not a workspace", "utf8");
+    for (const workspaceRoot of [path.join(root, "missing"), file]) {
+      await assert.rejects(
+        resolveMcpServerArguments({ sessionDirectory: path.join(root, "sessions"), workspaceRoot }),
+        /Invalid MCP workspace root/u,
+      );
+    }
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test("MCP server arguments are strict and keep config/session controls host-owned", () => {
+  const workspaceRoot = path.resolve("workspace");
   assert.deepEqual(
-    parseMcpServerArgs(["--config", "config.toml", "--session-dir", "sessions"], {}),
+    parseMcpServerArgs([
+      "--config",
+      "config.toml",
+      "--session-dir",
+      "sessions",
+      "--workspace-root",
+      workspaceRoot,
+    ], {}),
     {
       configFile: path.resolve("config.toml"),
       sessionDirectory: path.resolve("sessions"),
+      workspaceRoot,
     },
   );
   assert.deepEqual(parseMcpServerArgs([], { XDG_STATE_HOME: "/state" }), {
@@ -270,4 +404,10 @@ test("MCP server arguments are strict and keep config/session controls host-owne
   assert.throws(() => parseMcpServerArgs(["--unknown", "value"], {}), /Unknown/u);
   assert.throws(() => parseMcpServerArgs(["--config"], {}), /requires a value/u);
   assert.throws(() => parseMcpServerArgs(["--config", "a", "--config", "b"], {}), /Duplicate/u);
+  assert.throws(() => parseMcpServerArgs(["--workspace-root", "relative"], {}), /absolute path/u);
+  assert.throws(() => parseMcpServerArgs(["--workspace-root"], {}), /requires a value/u);
+  assert.throws(
+    () => parseMcpServerArgs(["--workspace-root", workspaceRoot, "--workspace-root", workspaceRoot], {}),
+    /Duplicate/u,
+  );
 });

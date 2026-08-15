@@ -173,6 +173,7 @@ async function createFixture(
   includeDuplicate = false,
   startedOnly = false,
   includeTransport = false,
+  includeDirectObservation = true,
 ): Promise<Readonly<{ agentDir: string; masterRaw: string; sessionRaw: string }>> {
   const agentDir = path.join(root, "agent");
   const sessionDir = path.join(agentDir, "sessions", "2026", "08", "09");
@@ -190,7 +191,7 @@ async function createFixture(
           type: "custom_tool_call",
           name: "exec",
           call_id: "outer-001",
-          input: "const result = await tools.mcp__freecontext__gather_context(args); notify(\"slow\");",
+          input: "const result = await tools.mcp__freecontext__gather_context({ taskText: \"x\" }); notify(\"slow\");",
           internal_chat_message_metadata_passthrough: metadata,
         },
       }, {
@@ -232,49 +233,51 @@ async function createFixture(
         },
       });
     }
-    const item = {
-      id: session.invocation.callId,
-      type: "mcp_tool_call",
-      server: "freecontext",
-      tool: "gather_context",
-      arguments: session.request,
-    };
-    events.push({
-      type: "item.started",
-      item: { ...item, result: null, status: "in_progress" },
-    });
-    if (observedText !== null) {
-      events.push({
-        type: "item.completed",
-        item: {
-          ...item,
-          result: {
-            content: [{ type: "text", text: observedText }],
-            structured_content: structuredContent ?? session.result,
-          },
-          status: "completed",
-        },
-      });
-    }
-    if (includeDuplicate) {
-      const duplicate = {
-        id: "call-duplicate",
+    if (includeDirectObservation) {
+      const item = {
+        id: session.invocation.callId,
         type: "mcp_tool_call",
         server: "freecontext",
         tool: "gather_context",
         arguments: session.request,
       };
-      events.push({ type: "item.started", item: { ...duplicate, result: null, status: "in_progress" } }, {
-        type: "item.completed",
-        item: {
-          ...duplicate,
-          status: "completed",
-          result: {
-            content: [{ type: "text", text: "Status: failed" }],
-            structured_content: { status: "failed" },
-          },
-        },
+      events.push({
+        type: "item.started",
+        item: { ...item, result: null, status: "in_progress" },
       });
+      if (observedText !== null) {
+        events.push({
+          type: "item.completed",
+          item: {
+            ...item,
+            result: {
+              content: [{ type: "text", text: observedText }],
+              structured_content: structuredContent ?? session.result,
+            },
+            status: "completed",
+          },
+        });
+      }
+      if (includeDuplicate) {
+        const duplicate = {
+          id: "call-duplicate",
+          type: "mcp_tool_call",
+          server: "freecontext",
+          tool: "gather_context",
+          arguments: session.request,
+        };
+        events.push({ type: "item.started", item: { ...duplicate, result: null, status: "in_progress" } }, {
+          type: "item.completed",
+          item: {
+            ...duplicate,
+            status: "completed",
+            result: {
+              content: [{ type: "text", text: "Status: failed" }],
+              structured_content: { status: "failed" },
+            },
+          },
+        });
+      }
     }
     events.push({
       schemaVersion: "freecontext-parent-action-v1",
@@ -375,6 +378,34 @@ test("master context exporter joins v3 by session address and preserves the actu
   }
 });
 
+test("same-cell code-await output is the actual observation without a direct MCP item", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "freecontext-code-await-master-"));
+  try {
+    const session = v3Session();
+    const actualText = serializeForModel(session.result);
+    const fixture = await createFixture(root, session, actualText, undefined, false, false, true, false);
+    const outputPath = await exportMasterAgentContext({
+      agentDir: fixture.agentDir,
+      taskName: "TaskNameXXX",
+      now: () => new Date("2026-08-09T01:00:00.000Z"),
+    });
+    const document = JSON.parse(await readFile(outputPath, "utf8")) as BenchmarkMasterAgentContext;
+    const call = document.freeContextCalls[0];
+    assert.equal(call?.outputToMasterAgent, actualText);
+    assert.equal(call?.deliveryStatus, "matched");
+    assert.equal(call?.callIdCorrelation, "missing");
+    assert.equal(call?.sessionReferenceMatches, 1);
+    assert.equal(call?.serializedTextSha256, call?.observedTextSha256);
+    assert.equal(call?.requestMatches, null);
+    assert.equal(call?.structuredContentMatches, null);
+    assert.equal(call?.recoverableResult, null);
+    assert.equal(document.freeContextTransport[0]?.terminalOutputSeen, true);
+    assert.deepEqual(document.duplicateSemanticCalls, []);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test("historical v2 sessions are read without rewriting their identity schema", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "freecontext-master-v2-"));
   try {
@@ -409,12 +440,14 @@ test("session address stays primary when the transport call id is reused", () =>
   const firstText = serializeForModel(first.result);
   const secondText = serializeForModel(secondResult);
   const calls = [{
+    source: "direct_mcp" as const,
     callId: first.invocation.callId,
     startedSeen: true,
     arguments: first.request,
     text: firstText,
     structuredContent: first.result,
   }, {
+    source: "direct_mcp" as const,
     callId: first.invocation.callId,
     startedSeen: true,
     arguments: first.request,
@@ -596,12 +629,18 @@ test("canonical Pier adapter registers direct MCP without legacy CLI wrappers", 
     /enabled_tools = \["gather_context"\]/u,
     /tool_timeout_sec = 300/u,
     /bin\/freecontext-mcp\.mjs/u,
+    /_REMOTE_WORKSPACE_ROOT = PurePosixPath\("\/app"\)/u,
+    /args = \["--workspace-root", "\{_REMOTE_WORKSPACE_ROOT\.as_posix\(\)\}"\]/u,
     /--session-dir \{_REMOTE_SESSION_DIR\.as_posix\(\)\}/u,
+    /--session-dir \{_REMOTE_SESSION_DIR\.as_posix\(\)\} \\"\$@\\"/u,
     /freecontext-benchmark-context\.mjs/u,
     /FREECONTEXT_PROVIDER_BOOTSTRAP_PROFILE/u,
   ]) assert.match(source, pattern);
   for (const legacy of ["_GUIDANCE", "freecontext explore", "_REMOTE_WRAPPER", "write_stdin"]) {
     assert.equal(source.includes(legacy), false, `legacy adapter surface remains: ${legacy}`);
+  }
+  for (const implicitRoot of ["$PWD", "FREECONTEXT_WORKSPACE_ROOT"]) {
+    assert.equal(source.includes(implicitRoot), false, `implicit workspace root remains: ${implicitRoot}`);
   }
   assert.match(freeContextConfig, /^api = "openai"$/mu);
   assert.match(freeContextConfig, /^model_id = "deepseek-v4-flash-0731"$/mu);

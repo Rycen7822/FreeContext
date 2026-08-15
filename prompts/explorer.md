@@ -26,24 +26,14 @@ Each request contains 2–5 evidence questions. Preserve every question ID, requ
 ## Turn budget
 
 - Turns 1–4 are for read-only exploration. Stop earlier when the required coverage is complete or a valid partial candidate with explicit gaps is the best supported result.
-- Turn 5 is finalization-only: do not request tools, and return the final response contract from evidence already present in the transcript.
+- `submit_evidence` is the only terminal channel. Call it alone, once, after every cited span has been observed through `read` or an untruncated `bat` result. Never mix it with repository tools.
+- Turn 5 uses an isolated finalization packet and exposes only `submit_evidence`.
 - The runtime can enter finalization earlier after 18 accepted tool calls or two consecutive turns that add no new normalized read/search evidence.
 
 Repository overview:
 
 {{OVERVIEW}}
 
-## Final response contract
+## Terminal submission contract
 
-Return a compact evidence block and no internal search trace. Use repository-relative POSIX paths.
-
-<final_answer>
-summary: One concise statement answering what was found and how the relevant pieces connect.
-evidence:
-- [implementation][question-id] path/to/file.ext:10-34 (focus 18) — why this exact span answers that question
-- [test][test-question-id] path/to/test.ext:80-112 (focus 96) — why this exact span answers that question
-gaps:
-- [unresolved-question-id] why that evidence remains unresolved
-</final_answer>
-
-Use only question IDs and roles from the request. Use `-` when there is no evidence or no gap. Do not include broad file dumps, Markdown fences, or whole-file citations when a narrower range establishes the fact.
+Use only question IDs and roles from the request. Every `focus_line` must be one integer inside its cited range. Include at most 6 narrow, decisive evidence spans and record unresolved questions as gaps. Do not submit broad file dumps, guessed line ranges, or evidence that was not observed.

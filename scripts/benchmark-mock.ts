@@ -252,6 +252,14 @@ async function main(): Promise<void> {
         { role: "user", content: `recent ${"recent ".repeat(500)}`, timestamp: 1 },
       ]
     : [];
+  const finalizationRequest: FreeContextRequest = {
+    taskText: "collect benchmark context",
+    knownRefs: [],
+    evidenceQuestions: [
+      { id: "impl", role: "implementation", question: "Where is it implemented?", required: true },
+      { id: "tests", role: "test", question: "How is it tested?", required: false },
+    ],
+  };
   const runOnce = async () => await runPiSession({
     bindings,
     model: createModel(config),
@@ -259,6 +267,7 @@ async function main(): Promise<void> {
     config,
     systemPrompt: "Return a concise benchmark answer.",
     promptText: "benchmark",
+    finalizationRequest,
     tools: [],
     initialMessages,
   });

@@ -6,7 +6,8 @@ import type {
   FreeContextInvocationContext,
   FreeContextRequest,
 } from "../mcp/contracts.js";
-import type { ParsedExplorerCandidate } from "../output/evidence.js";
+import type { ExplorerCandidate } from "../output/evidence.js";
+import type { ObservedRead, TerminalFailureKind } from "./finalization.js";
 import type {
   FreeContextRuntimeEvent,
   PiSessionMetrics,
@@ -49,6 +50,7 @@ export interface ExplorerCompilerCapture {
   readonly evidenceCount: number;
   readonly gapCount: number;
   readonly problems: readonly string[];
+  readonly terminalFailure: TerminalFailureKind | null;
 }
 
 export interface ExplorerPiSessionCapture {
@@ -60,8 +62,18 @@ export interface ExplorerPiSessionCapture {
     readonly description: string;
     readonly parameters: unknown;
   }>[];
+  readonly effectiveTools: readonly Readonly<{
+    readonly name: string;
+    readonly label: string;
+    readonly description: string;
+    readonly parameters: unknown;
+  }>[];
   readonly output: string;
+  readonly candidate: Readonly<ExplorerCandidate> | null;
+  readonly observedReads: readonly Readonly<Omit<ObservedRead, "content">>[];
+  readonly terminalFailure: TerminalFailureKind | null;
   readonly messages: readonly AgentMessage[];
+  readonly effectiveSystemPrompt: string;
   readonly effectiveContextMessages: readonly AgentMessage[];
   readonly metrics: Readonly<PiSessionMetrics>;
 }
@@ -84,7 +96,7 @@ export interface ExplorerCaptureMetrics {
 }
 
 export interface ExplorerSessionCapture {
-  readonly schemaVersion: "freecontext-explorer-capture-v2";
+  readonly schemaVersion: "freecontext-explorer-capture-v3";
   readonly request: Readonly<FreeContextRequest>;
   readonly invocation: Readonly<FreeContextInvocationContext>;
   readonly runtime: Readonly<ExplorerRuntime>;
@@ -125,13 +137,15 @@ export function captureRuntimeEvent(
 }
 
 export function captureCompiler(
-  candidate: Readonly<ParsedExplorerCandidate>,
+  candidate: Readonly<ExplorerCandidate> | null,
+  terminalFailure: TerminalFailureKind | null,
 ): Readonly<ExplorerCompilerCapture> {
   return Object.freeze({
-    summary: candidate.summary,
-    evidenceCount: candidate.evidence.length,
-    gapCount: candidate.gaps.length,
-    problems: Object.freeze([...candidate.problems]),
+    summary: candidate?.summary ?? "",
+    evidenceCount: candidate?.evidence.length ?? 0,
+    gapCount: candidate?.gaps.length ?? 0,
+    problems: Object.freeze(terminalFailure ? [`Terminal protocol failure: ${terminalFailure}`] : []),
+    terminalFailure,
   });
 }
 
@@ -139,19 +153,24 @@ export function capturePiSession(
   session: Readonly<PiSessionResult>,
   systemPrompt: string,
   prompt: string,
-  tools: readonly AgentTool[],
 ): Readonly<ExplorerPiSessionCapture> {
+  const captureTools = (tools: readonly AgentTool[]) => Object.freeze(tools.map((tool) => Object.freeze({
+    name: tool.name,
+    label: tool.label,
+    description: tool.description,
+    parameters: tool.parameters,
+  })));
   return Object.freeze({
     systemPrompt,
     prompt,
-    tools: Object.freeze(tools.map((tool) => Object.freeze({
-      name: tool.name,
-      label: tool.label,
-      description: tool.description,
-      parameters: tool.parameters,
-    }))),
+    tools: captureTools(session.explorationTools),
+    effectiveTools: captureTools(session.contextTools),
     output: session.text,
+    candidate: session.candidate,
+    observedReads: Object.freeze(session.observedReads.map(({ content: _content, ...read }) => Object.freeze(read))),
+    terminalFailure: session.terminalFailure,
     messages: Object.freeze([...session.messages]),
+    effectiveSystemPrompt: session.contextSystemPrompt,
     effectiveContextMessages: Object.freeze([...session.contextMessages]),
     metrics: session.metrics,
   });

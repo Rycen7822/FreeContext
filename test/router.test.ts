@@ -8,7 +8,7 @@ import { ProviderError } from "../src/errors.js";
 import type { PiBindings } from "../src/runtime/pi-bindings.js";
 import { runPrimaryRoute } from "../src/runtime/router.js";
 import { createWorkspace } from "../src/tools/workspace.js";
-import { assistantText, baseConfig, baseRouteConfig, fakeBindings } from "./helpers.js";
+import { assistantText, baseConfig, baseRequest, baseRouteConfig, fakeBindings } from "./helpers.js";
 
 function routeConfig(fallbackOn: ResolvedRouteConfig["fallbackOn"] = [
   "timeout",
@@ -33,6 +33,7 @@ async function runRoute(
     cli: {},
     workspace,
     promptText: "inspect",
+    finalizationRequest: baseRequest(),
     startedAt: performance.now(),
     ...(signal ? { signal } : {}),
     dependencies: {

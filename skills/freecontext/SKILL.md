@@ -1,23 +1,29 @@
 ---
 name: freecontext
-description: Manual FreeContext compatibility bridge. Use only when the user explicitly requests FreeContext or when diagnosing an unavailable gather_context MCP tool; never auto-trigger for ordinary exploration or document search.
+description: Route complex reads through FreeContext. For multi-file, multi-document, cross-module, long-document, or source-bound work, open this skill alone before repository read/search, then call gather_context first.
 ---
 
 # FreeContext routing
 
-This skill is only a manual compatibility bridge to `gather_context`; it is not the ordinary exploration route, eligibility policy, or CLI fallback.
+Prompt-visible discovery shim for the atomic `gather_context` tool.
 
-- Use this skill only after an explicit user request for FreeContext or while diagnosing why the MCP tool is unavailable. Never select it automatically for repository exploration, multi-document search, long-document extraction, planning, review, or diagnosis.
-- Locate exactly `mcp__freecontext__gather_context` in `ALL_TOOLS` and invoke it once in that same `functions.exec`; do not list or output the full catalog.
+- Select it before native repository or document read/search when the task requires multi-file evidence, multi-document synthesis, a cross-module call chain, jointly constraining configuration, long-document multi-fact extraction, or source-bound planning, review, or diagnosis.
+- Keep direct reads for an exact known implementation that needs one bounded read, or for one or two exact candidates after the tool description's permitted probe.
+- Use the exact caller below as the first and only `functions.exec` for this semantic call. Check the direct tool property only; never run a separate tool-catalog lookup or print tool metadata.
 - Use the current MCP tool description as the sole eligibility policy; this file deliberately does not restate its four ordered gates.
-- Pass only `taskText`, `knownRefs`, and 2–5 typed `evidenceQuestions`. FreeContext binds invocation, call, workspace, revision, and session facts from public MCP context. Do not send identity fields, secrets, or source dumps.
+- Include `knownRefs` (`[]` when none): 0–12 `{kind:"path",path}`, `{kind:"symbol",symbol,path?}`, or `{kind:"stack",path,line}` objects; no `query`/keyword refs. Use 2–5 unique question ids; roles: `implementation`, `caller`, `test`, or `contract`. Never send identity, secrets, or dumps.
+
+```json
+{"taskText":"Trace the change.","knownRefs":[{"kind":"path","path":"src/router.ts"}],"evidenceQuestions":[{"id":"implementation","role":"implementation","question":"Where is it implemented?","required":true},{"id":"tests","role":"test","question":"How is it tested?","required":true}]}
+```
+
 - After a ready or partial result, read the returned `nextAction` span before broader exploration. Address a material gap with the named targeted action; never replay the same request.
-- If the MCP tool is unavailable, continue with native read-only tools and state that FreeContext was unavailable; do not use any CLI fallback.
+- If unavailable, continue with native read-only tools and say so.
 
 Use this exact caller after constructing `args`:
 
 ```js
-if (!ALL_TOOLS.some(({ name }) => name === "mcp__freecontext__gather_context")) {
+if (typeof tools.mcp__freecontext__gather_context !== "function") {
   throw new Error("FreeContext MCP tool is unavailable.");
 }
 const reminder = setTimeout(() => {

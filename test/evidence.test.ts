@@ -5,7 +5,9 @@ import path from "node:path";
 import test from "node:test";
 import type { FreeContextInvocationContext, FreeContextRequest } from "../src/mcp/contracts.js";
 import { serializeForModel } from "../src/mcp/contracts.js";
-import { compileFreeContextResult, parseExplorerCandidate } from "../src/output/evidence.js";
+import { compileFreeContextResult } from "../src/output/evidence.js";
+import type { ExplorerCandidate, ExplorerEvidenceCandidate, ExplorerGapCandidate } from "../src/output/evidence.js";
+import type { ObservedRead } from "../src/runtime/finalization.js";
 
 const request = (): FreeContextRequest => ({
   taskText: "Trace the routing implementation and its tests.",
@@ -38,36 +40,47 @@ async function withWorkspace(run: (root: string) => Promise<void>): Promise<void
   }
 }
 
-test("parser reads the role/question/focus final block contract", () => {
-  const parsed = parseExplorerCandidate(`<final_answer>
-summary: Routing evidence is verified.
-evidence:
-- [implementation][implementation] src/router.ts:1-120 (focus 60) — Defines the routing branch.
-gaps:
-- [tests] Tests were not inspected.
-</final_answer>`);
-  assert.equal(parsed.problems.length, 0);
-  assert.deepEqual(parsed.evidence[0], {
-    role: "implementation",
-    questionId: "implementation",
-    path: "src/router.ts",
-    startLine: 1,
-    endLine: 120,
-    focusLine: 60,
-    why: "Defines the routing branch.",
-  });
-  assert.deepEqual(parsed.gaps, [{ questionId: "tests", reason: "Tests were not inspected." }]);
-});
+const candidate = (
+  summary: string,
+  evidence: readonly ExplorerEvidenceCandidate[],
+  gaps: readonly ExplorerGapCandidate[] = [],
+): Readonly<ExplorerCandidate> => ({ summary, evidence, gaps });
 
-test("compiler validates, crops, orders, and emits a ready result", async () => withWorkspace(async (root) => {
-  const result = await compileFreeContextResult(request(), invocation(root), `<final_answer>
-summary: Routing and tests are verified.
-evidence:
-- [test][tests] test/router.test.ts:1-1 (focus 1) — Covers routing behavior.
-- [implementation][implementation] src/router.ts:1-120 (focus 60) — Defines the routing branch.
-gaps:
--
-</final_answer>`);
+const observed = (
+  pathValue: string,
+  startLine: number,
+  endLine: number,
+): Readonly<ObservedRead> => ({ tool: "read", path: pathValue, startLine, endLine, content: "observed fixture" });
+
+test("compiler rejects a typed citation outside successful read provenance", async () => withWorkspace(async (root) => {
+  const result = await compileFreeContextResult(request(), invocation(root), candidate(
+    "Routing evidence was claimed without a read.",
+    [{
+      role: "implementation",
+      questionId: "implementation",
+      path: "src/router.ts",
+      startLine: 1,
+      endLine: 20,
+      focusLine: 10,
+      why: "Defines routing.",
+    }],
+  ));
+  assert.equal(result.status, "not_found");
+  assert.equal(result.gaps[0]?.reason, "Evidence range was not present in a successful read observation.");
+}));
+
+test("compiler validates observed spans, crops, orders, and emits a ready result", async () => withWorkspace(async (root) => {
+  const evidence: ExplorerEvidenceCandidate[] = [
+    { role: "test", questionId: "tests", path: "test/router.test.ts", startLine: 1, endLine: 1, focusLine: 1, why: "Covers routing behavior." },
+    { role: "implementation", questionId: "implementation", path: "src/router.ts", startLine: 1, endLine: 120, focusLine: 60, why: "Defines the routing branch." },
+  ];
+  const result = await compileFreeContextResult(
+    request(),
+    invocation(root),
+    candidate("Routing and tests are verified.", evidence),
+    { errorCode: null },
+    [observed("test/router.test.ts", 1, 1), observed("src/router.ts", 1, 120)],
+  );
   assert.equal(result.status, "ready");
   assert.equal(result.errorCode, null);
   assert.deepEqual(result.evidence.map((item) => item.questionId), ["implementation", "tests"]);
@@ -80,15 +93,18 @@ gaps:
 }));
 
 test("compiler turns role mismatch and rejected generated paths into explicit gaps", async () => withWorkspace(async (root) => {
-  const result = await compileFreeContextResult(request(), invocation(root), `<final_answer>
-summary: Only one valid item remains.
-evidence:
-- [implementation][implementation] src/router.ts:10-20 (focus 15) — Defines routing.
-- [caller][tests] test/router.test.ts:1-1 (focus 1) — Wrong requested role.
-- [test][tests] dist/router.test.ts:1-1 (focus 1) — Generated output.
-gaps:
-- [tests] Test evidence remains unresolved.
-</final_answer>`);
+  const evidence: ExplorerEvidenceCandidate[] = [
+    { role: "implementation", questionId: "implementation", path: "src/router.ts", startLine: 10, endLine: 20, focusLine: 15, why: "Defines routing." },
+    { role: "caller", questionId: "tests", path: "test/router.test.ts", startLine: 1, endLine: 1, focusLine: 1, why: "Wrong requested role." },
+    { role: "test", questionId: "tests", path: "dist/router.test.ts", startLine: 1, endLine: 1, focusLine: 1, why: "Generated output." },
+  ];
+  const result = await compileFreeContextResult(
+    request(),
+    invocation(root),
+    candidate("Only one valid item remains.", evidence, [{ questionId: "tests", reason: "Test evidence remains unresolved." }]),
+    { errorCode: null },
+    [observed("src/router.ts", 10, 20), observed("dist/router.test.ts", 1, 1)],
+  );
   assert.equal(result.status, "partial");
   assert.equal(result.errorCode, null);
   assert.deepEqual(result.evidence.map((item) => item.questionId), ["implementation"]);
@@ -96,13 +112,15 @@ gaps:
 }));
 
 test("compiler does not treat a trailing newline as an extra citable line", async () => withWorkspace(async (root) => {
-  const result = await compileFreeContextResult(request(), invocation(root), `<final_answer>
-summary: The requested range is outside the test file.
-evidence:
-- [test][tests] test/router.test.ts:2-2 (focus 2) — This line does not exist.
-gaps:
-- [implementation] Implementation was not inspected.
-</final_answer>`);
+  const result = await compileFreeContextResult(
+    request(),
+    invocation(root),
+    candidate("The requested range is outside the test file.", [
+      { role: "test", questionId: "tests", path: "test/router.test.ts", startLine: 2, endLine: 2, focusLine: 2, why: "This line does not exist." },
+    ], [{ questionId: "implementation", reason: "Implementation was not inspected." }]),
+    { errorCode: null },
+    [observed("test/router.test.ts", 2, 2)],
+  );
   assert.equal(result.status, "not_found");
   assert.deepEqual(result.gaps.find((gap) => gap.questionId === "tests"), {
     questionId: "tests",
@@ -111,19 +129,24 @@ gaps:
 }));
 
 test("normal empty evidence is not_found while malformed output is failed", async () => withWorkspace(async (root) => {
-  const notFound = await compileFreeContextResult(request(), invocation(root), `<final_answer>
-summary: No matching implementation was found.
-evidence:
--
-gaps:
-- [implementation] No matching implementation.
-- [tests] No matching tests.
-</final_answer>`);
+  const notFound = await compileFreeContextResult(request(), invocation(root), candidate(
+    "No matching implementation was found.",
+    [],
+    [
+      { questionId: "implementation", reason: "No matching implementation." },
+      { questionId: "tests", reason: "No matching tests." },
+    ],
+  ));
   assert.equal(notFound.status, "not_found");
   assert.equal(notFound.errorCode, null);
   assert.equal(notFound.nextAction.kind, "direct_search");
 
-  const failed = await compileFreeContextResult(request(), invocation(root), "not a final block");
+  const failed = await compileFreeContextResult(
+    request(),
+    invocation(root),
+    null,
+    { errorCode: "INTERNAL_ERROR", reason: "Terminal submission was missing." },
+  );
   assert.equal(failed.status, "failed");
   assert.equal(failed.errorCode, "INTERNAL_ERROR");
   assert.equal(failed.evidence.length, 0);
@@ -134,19 +157,30 @@ test("compiler drops lower-ranked spans until the canonical text fits 8 KiB", as
   const directory = path.join(root, ...segments);
   await mkdir(directory, { recursive: true });
   const relativeDirectory = path.relative(root, directory).split(path.sep).join("/");
-  const evidence: string[] = [];
+  const evidence: ExplorerEvidenceCandidate[] = [];
+  const reads: ObservedRead[] = [];
   for (let index = 0; index < 6; index += 1) {
     const filename = `router-${index}.ts`;
     await writeFile(path.join(directory, filename), `unique ${index}\n`);
-    evidence.push(`- [implementation][implementation] ${relativeDirectory}/${filename}:1-1 (focus 1) — ${"detail ".repeat(20)}${index}`);
+    const relativePath = `${relativeDirectory}/${filename}`;
+    evidence.push({
+      role: "implementation",
+      questionId: "implementation",
+      path: relativePath,
+      startLine: 1,
+      endLine: 1,
+      focusLine: 1,
+      why: `${"detail ".repeat(20)}${index}`,
+    });
+    reads.push(observed(relativePath, 1, 1));
   }
-  const result = await compileFreeContextResult(request(), invocation(root), `<final_answer>
-summary: ${"summary ".repeat(60)}
-evidence:
-${evidence.join("\n")}
-gaps:
-- [tests] No test evidence.
-</final_answer>`);
+  const result = await compileFreeContextResult(
+    request(),
+    invocation(root),
+    candidate(`${"summary ".repeat(60)}`, evidence, [{ questionId: "tests", reason: "No test evidence." }]),
+    { errorCode: null },
+    reads,
+  );
   assert.equal(result.status, "partial");
   assert.ok(result.evidence.length >= 1 && result.evidence.length < 6);
   assert.ok(Buffer.byteLength(serializeForModel(result), "utf8") <= 8_192);

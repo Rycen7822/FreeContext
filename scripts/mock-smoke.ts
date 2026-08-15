@@ -21,11 +21,22 @@ try {
   const response = {
     role: "assistant" as const,
     content: [{
-      type: "text" as const,
-      text: "<final_answer>\nsummary: The sample exports answer.\nevidence:\n" +
-        "- [implementation][impl] sample.js:1-3 (focus 1) — Defines the exported function.\n" +
-        "- fabricated-secret.txt has no valid citation range\n" +
-        "gaps:\n- [tests] No test was found.\n</final_answer>",
+      type: "toolCall" as const,
+      id: "submit-smoke",
+      name: "submit_evidence",
+      arguments: {
+        summary: "The sample exports answer.",
+        evidence: [{
+          role: "implementation",
+          question_id: "impl",
+          path: "sample.js",
+          start_line: 1,
+          end_line: 3,
+          focus_line: 1,
+          why: "Defines the exported function.",
+        }],
+        gaps: [{ question_id: "tests", reason: "No test was found." }],
+      },
     }],
     api: "anthropic-messages" as const,
     provider: "freecontext-custom",
@@ -43,9 +54,26 @@ try {
     timestamp: 0,
   };
   const loaded = await loadPiBindings("anthropic");
-  const runAgentLoop: PiBindings["runAgentLoop"] = async (prompts, _context, _config, emit) => {
+  const runAgentLoop: PiBindings["runAgentLoop"] = async (prompts, context, loopConfig, emit) => {
     await emit({ type: "agent_start" });
     await emit({ type: "turn_start" });
+    await emit({
+      type: "tool_execution_end",
+      toolCallId: "read-smoke",
+      toolName: "read",
+      result: {
+        content: [{ type: "text", text: "[read sample.js:1-3]\n1 export function answer() {\n2   return 42;\n3 }" }],
+        details: { tool: "read", path: "sample.js", startLine: 1, actualEndLine: 3, truncated: false },
+      },
+      isError: false,
+    });
+    const submit = context.tools?.find((tool) => tool.name === "submit_evidence");
+    const call = response.content[0];
+    if (!submit || !call || call.type !== "toolCall") throw new Error("mock submit tool was unavailable");
+    const before = await loopConfig.beforeToolCall?.({ assistantMessage: response, toolCall: call, args: call.arguments, context });
+    if (before?.block) throw new Error("mock submit was unexpectedly blocked");
+    const submitted = await submit.execute(call.id, call.arguments);
+    await emit({ type: "tool_execution_end", toolCallId: call.id, toolName: call.name, result: submitted, isError: false });
     await emit({ type: "turn_end", message: response, toolResults: [] });
     await emit({ type: "agent_end", messages: [...prompts, response] });
     return [...prompts, response];
@@ -122,11 +150,10 @@ try {
       systemPrompt: "test",
     },
   });
-  if (result.status !== "partial" || result.errorCode !== "INTERNAL_ERROR") {
-    throw new Error("mock smoke did not preserve validated partial evidence");
+  if (result.status !== "ready" || result.errorCode !== null) {
+    throw new Error("mock smoke did not preserve validated typed evidence");
   }
   if (result.evidence[0]?.path !== "sample.js") throw new Error("mock smoke lost validated evidence");
-  if (serializeForModel(result).includes("fabricated-secret")) throw new Error("mock smoke leaked rejected evidence");
   if (summaryCalls !== 0) throw new Error("mock smoke unexpectedly made a second provider call");
 
   const ioFixture = (): { io: CliIo; stdout: string[]; stderr: string[] } => {
@@ -154,12 +181,12 @@ try {
         sessionFile: options.invocation.sessionFile,
       }) },
     );
-    if (exitCode !== 0) throw new Error(`${format} CLI did not accept a partial result`);
+    if (exitCode !== 0) throw new Error(`${format} CLI did not accept a ready result`);
     if (format === "json") {
-      if (FreeContextResultSchema.parse(JSON.parse(fixture.stdout.join(""))).status !== "partial") {
+      if (FreeContextResultSchema.parse(JSON.parse(fixture.stdout.join(""))).status !== "ready") {
         throw new Error("CLI JSON was not the canonical result");
       }
-    } else if (!fixture.stdout.join("").startsWith("Status: partial\n")) {
+    } else if (!fixture.stdout.join("").startsWith("Status: ready\n")) {
       throw new Error("CLI text did not use the canonical serializer");
     }
   }

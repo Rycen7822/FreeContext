@@ -9,7 +9,7 @@ import type {
   FreeContextRequest,
   FreeContextResult,
 } from "../mcp/contracts.js";
-import { compileFreeContextResult, parseExplorerCandidate } from "../output/evidence.js";
+import { compileFreeContextResult } from "../output/evidence.js";
 import { buildUserPrompt } from "../prompt.js";
 import type { Workspace } from "../tools/contracts.js";
 import { createWorkspace } from "../tools/workspace.js";
@@ -69,6 +69,7 @@ async function runExplorerWithCounter(
     cli,
     workspace,
     promptText: primaryPrompt,
+    finalizationRequest: request,
     ...(signal ? { signal } : {}),
     ...(onEvent ? { onEvent } : {}),
     startedAt,
@@ -88,12 +89,20 @@ async function runExplorerWithCounter(
   });
 
   const compilerStartedAt = clock();
-  const result = await compileFreeContextResult(request, invocation, routed.primary.text);
+  const terminal = routed.primary.terminalFailure
+    ? { errorCode: "INTERNAL_ERROR" as const, reason: `Terminal protocol failure: ${routed.primary.terminalFailure}` }
+    : { errorCode: null };
+  const result = await compileFreeContextResult(
+    request,
+    invocation,
+    routed.primary.candidate,
+    terminal,
+    routed.primary.observedReads,
+  );
   const compilerMs = Math.max(0, clock() - compilerStartedAt);
   if (onSessionCapture) {
-    const candidate = parseExplorerCandidate(routed.primary.text);
     await onSessionCapture(Object.freeze({
-      schemaVersion: "freecontext-explorer-capture-v2",
+      schemaVersion: "freecontext-explorer-capture-v3",
       request,
       invocation,
       runtime,
@@ -101,9 +110,8 @@ async function runExplorerWithCounter(
         routed.primary,
         routed.systemPrompt,
         primaryPrompt,
-        routed.repositoryTools.tools,
       ),
-      compiler: captureCompiler(candidate),
+      compiler: captureCompiler(routed.primary.candidate, routed.primary.terminalFailure),
       metrics: Object.freeze({
         routeAttempts: routed.routeAttempts,
         fallbacks: routed.fallbacks,

@@ -6,7 +6,7 @@ export type {
 } from "./runtime/session-capture.js";
 export { resolveConfig, redactSecret, redactUrl } from "./config.js";
 export { createWorkspace } from "./tools/workspace.js";
-export { compileFreeContextResult, parseExplorerCandidate } from "./output/evidence.js";
+export { compileFreeContextResult } from "./output/evidence.js";
 export {
   FREECONTEXT_ELIGIBILITY_POLICY,
   FREECONTEXT_HOST_ROUTE_METADATA,

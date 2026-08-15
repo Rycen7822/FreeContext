@@ -1,9 +1,9 @@
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
-import { FREECONTEXT_ELIGIBILITY_POLICY } from "../src/mcp/contracts.js";
+import { FREECONTEXT_ELIGIBILITY_POLICY, FreeContextRequestSchema } from "../src/mcp/contracts.js";
 
-test("manual fallback does not auto-trigger and invokes one MCP tool without copying eligibility policy", async () => {
+test("implicit discovery routes complex reads to one MCP tool without copying eligibility policy", async () => {
   const [skill, metadata] = await Promise.all([
     readFile(new URL("../skills/freecontext/SKILL.md", import.meta.url), "utf8"),
     readFile(new URL("../skills/freecontext/agents/openai.yaml", import.meta.url), "utf8"),
@@ -17,18 +17,18 @@ test("manual fallback does not auto-trigger and invokes one MCP tool without cop
   assert.ok([...description].length <= 420);
   assert.equal(
     description,
-    "Manual FreeContext compatibility bridge. Use only when the user explicitly requests FreeContext or when diagnosing an unavailable gather_context MCP tool; never auto-trigger for ordinary exploration or document search.",
+    "Route complex reads through FreeContext. For multi-file, multi-document, cross-module, long-document, or source-bound work, open this skill alone before repository read/search, then call gather_context first.",
   );
   for (const gate of FREECONTEXT_ELIGIBILITY_POLICY.gates) assert.equal(skill.includes(gate.instruction), false);
-  assert.match(skill, /Locate exactly `mcp__freecontext__gather_context`/u);
-  assert.match(
-    skill,
-    /Never select it automatically for repository exploration, multi-document search, long-document extraction, planning, review, or diagnosis\./u,
-  );
-  assert.match(
-    skill,
-    /Locate exactly `mcp__freecontext__gather_context` in `ALL_TOOLS` and invoke it once in that same `functions\.exec`/u,
-  );
+  assert.match(skill, /first and only `functions\.exec`/u);
+  for (const trigger of ["multi-file", "multi-document", "cross-module", "long-document", "source-bound"]) {
+    assert.ok(description.includes(trigger));
+  }
+  assert.match(description, /open this skill alone before repository read\/search, then call gather_context first/u);
+  assert.doesNotMatch(skill, /never auto-trigger|only (?:after )?an explicit user request/iu);
+  assert.match(skill, /typeof tools\.mcp__freecontext__gather_context !== "function"/u);
+  assert.doesNotMatch(skill, /ALL_TOOLS/u);
+  assert.match(skill, /never run a separate tool-catalog lookup/u);
   assert.equal(skill.match(/await tools\.mcp__freecontext__gather_context\(args\)/gu)?.length, 1);
   assert.equal(skill.match(/\bnotify\(/gu)?.length, 1);
   assert.equal(skill.match(/functions\.wait/gu)?.length, 1);
@@ -36,17 +36,30 @@ test("manual fallback does not auto-trigger and invokes one MCP tool without cop
   assert.match(skill, /terminalTexts\.length !== 1/u);
   assert.doesNotMatch(skill, /JSON\.stringify/u);
   assert.match(skill, /FreeContext installs no waiting Hook/u);
-  assert.match(skill, /Pass only `taskText`, `knownRefs`, and 2–5 typed `evidenceQuestions`/u);
-  assert.doesNotMatch(skill, /exact argument keys `query`|\bworkspace_root\b/u);
+  const requestExample = skill.match(/```json\n(?<json>\{[^\n]+\})\n```/u)?.groups?.json;
+  assert.ok(requestExample);
+  assert.doesNotThrow(() => FreeContextRequestSchema.parse(JSON.parse(requestExample)));
+  assert.match(skill, /Include `knownRefs` \(`\[\]` when none\): 0–12/u);
+  for (const shape of ['{kind:"path",path}', '{kind:"symbol",symbol,path?}', '{kind:"stack",path,line}']) {
+    assert.ok(skill.includes(shape));
+  }
+  assert.match(skill, /no `query`\/keyword refs/u);
+  assert.match(skill, /use 2–5 unique question ids/iu);
+  assert.match(skill, /`implementation`, `caller`, `test`, or `contract`/u);
+  assert.doesNotMatch(skill, /\bworkspace_root\b/u);
+  assert.throws(() => FreeContextRequestSchema.parse({
+    ...JSON.parse(requestExample),
+    knownRefs: [{ kind: "query", query: "nosec" }],
+  }));
   assert.match(skill, /read the returned `nextAction` span before broader exploration/u);
   assert.match(skill, /never replay the same request/u);
 
-  assert.match(metadata, /^  allow_implicit_invocation: false$/mu);
+  assert.match(metadata, /^  allow_implicit_invocation: true$/mu);
   assert.equal(metadata.match(/^    - type:/gmu)?.length, 1);
   assert.match(metadata, /^    - type: "mcp"$/mu);
   assert.equal(metadata.match(/^      value: "freecontext"$/gmu)?.length, 1);
   const shortDescription = metadata.match(/^  short_description: "([^"]+)"$/mu)?.[1];
-  assert.equal(shortDescription, "Manual bridge to FreeContext MCP");
+  assert.equal(shortDescription, "Open FreeContext before complex reads");
   assert.doesNotMatch(skill, /After loading, call FreeContext next/u);
 
   const routingSurface = `${skill}\n${metadata}`;
@@ -56,10 +69,11 @@ test("manual fallback does not auto-trigger and invokes one MCP tool without cop
     /\b(?:shell|poll(?:ing)?)\b/iu,
     /\bexplore_repository\b/u,
     /default_prompt:/u,
+    /CLI fallback|Hook registration/u,
     /https?:\/\//u,
     /Manual compatibility command/u,
     /\b(?:TOKENRHYTHM|API_KEY|base_url|bearer)\b/u,
-    /\b(?:provider|model|credentials?)\s*[:=]/iu,
+    /\b(?:provider|credentials?)\b/iu,
     /\b(?:DeepSWE|TaskNameXXX|returns-validated|mashumaro)\b/u,
   ]) {
     assert.doesNotMatch(routingSurface, forbidden);
@@ -77,7 +91,6 @@ test("caller template emits only one canonical text and one slow reminder", asyn
     _meta?: unknown;
   }>;
   type Caller = (
-    allTools: readonly Readonly<{ name: string }>[],
     tools: Readonly<{ mcp__freecontext__gather_context: (args: unknown) => Promise<ToolResult> }>,
     schedule: (callback: () => void, delayMs: number) => number,
     notify: (message: string) => void,
@@ -86,7 +99,6 @@ test("caller template emits only one canonical text and one slow reminder", asyn
     args: unknown,
   ) => Promise<void>;
   const execute = new Function(
-    "ALL_TOOLS",
     "tools",
     "setTimeout",
     "notify",
@@ -105,7 +117,6 @@ test("caller template emits only one canonical text and one slow reminder", asyn
       cancelled: [] as number[],
     };
     const promise = execute(
-      [{ name: "mcp__freecontext__gather_context" }],
       { mcp__freecontext__gather_context: async () => { state.calls += 1; return call(); } },
       (callback, delayMs) => { state.timers.push({ callback, delayMs }); return state.timers.length; },
       (message) => state.notifications.push(message),

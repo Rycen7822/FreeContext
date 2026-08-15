@@ -11,6 +11,7 @@ import {
 import type { AssistantMessage } from "@earendil-works/pi-ai";
 import { createAssistantMessageEventStream, isContextOverflow, Type } from "@earendil-works/pi-ai";
 import type { FreeContextConfig, ResolvedRouteConfig } from "../src/config.js";
+import type { FreeContextRequest } from "../src/mcp/contracts.js";
 import type { PiBindings } from "../src/runtime/pi-bindings.js";
 
 export const FakeType = new Proxy(
@@ -19,6 +20,17 @@ export const FakeType = new Proxy(
     get: (_target, name) => (...args: unknown[]) => ({ kind: String(name), args }),
   },
 ) as unknown as typeof Type;
+
+export function baseRequest(): Readonly<FreeContextRequest> {
+  return {
+    taskText: "Inspect the fixture.",
+    knownRefs: [],
+    evidenceQuestions: [
+      { id: "impl", role: "implementation", question: "Where is the implementation?", required: true },
+      { id: "tests", role: "test", question: "Where is it tested?", required: false },
+    ],
+  };
+}
 
 export function baseConfig(overrides: Partial<FreeContextConfig> = {}): FreeContextConfig {
   return {

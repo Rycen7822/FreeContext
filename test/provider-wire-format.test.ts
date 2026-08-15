@@ -3,9 +3,11 @@ import assert from "node:assert/strict";
 import { Type } from "@earendil-works/pi-ai";
 import { streamSimple } from "@earendil-works/pi-ai/api/openai-completions";
 import { resolveConfig } from "../src/config.js";
+import { ProviderError } from "../src/errors.js";
 import { createModel, createRequestOptions } from "../src/runtime/model.js";
 import { loadPiBindings } from "../src/runtime/pi-bindings.js";
-import { runPiSession } from "../src/runtime/pi-session.js";
+import { runIsolatedFinalizer, runPiSession } from "../src/runtime/pi-session.js";
+import { baseRequest } from "./helpers.js";
 
 const DUMMY_KEY = "offline-wire-contract-key";
 
@@ -79,7 +81,7 @@ test("bundled TokenRhythm config produces the accepted Pi Chat Completions wire 
   ]);
   assert.equal(payload.model, "deepseek-v4-flash-0731");
   assert.equal(payload.stream, true);
-  assert.equal(payload.max_tokens, 4096);
+  assert.equal(payload.max_tokens, 8192);
   assert.equal(payload.temperature, 0);
 
   const messages = payload.messages as Array<Record<string, unknown>>;
@@ -133,7 +135,29 @@ test("the real Pi transport retries a TokenRhythm SERVICE_BUSY response through 
       object: "chat.completion.chunk",
       created: 1,
       model: "deepseek-v4-flash-0731",
-      choices: [{ index: 0, delta: { role: "assistant", content: "ok" }, finish_reason: "stop" }],
+      choices: [{
+        index: 0,
+        delta: {
+          role: "assistant",
+          tool_calls: [{
+            index: 0,
+            id: "submit-retry",
+            type: "function",
+            function: {
+              name: "submit_evidence",
+              arguments: JSON.stringify({
+                summary: "No repository evidence was needed for the retry probe.",
+                evidence: [],
+                gaps: [
+                  { question_id: "impl", reason: "No repository evidence was requested." },
+                  { question_id: "tests", reason: "No repository evidence was requested." },
+                ],
+              }),
+            },
+          }],
+        },
+        finish_reason: "tool_calls",
+      }],
       usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 },
     });
     return new Response(`data: ${event}\n\ndata: [DONE]\n\n`, {
@@ -150,13 +174,207 @@ test("the real Pi transport retries a TokenRhythm SERVICE_BUSY response through 
       config,
       systemPrompt: "Reply briefly.",
       promptText: "Reply with ok.",
+      finalizationRequest: baseRequest(),
       tools: [],
     });
-    assert.equal(result.text, "ok");
+    assert.equal(result.candidate?.summary, "No repository evidence was needed for the retry probe.");
     assert.equal(result.metrics.providerAttempts, 2);
     assert.equal(result.metrics.providerRetries, 1);
     assert.equal(fetchCalls, 2);
   } finally {
     globalThis.fetch = originalFetch;
   }
+});
+
+test("isolated finalization sends required submit_evidence without provider strict mode", async () => {
+  const configFile = new URL("../benchmarks/deepswe/freecontext.toml", import.meta.url).pathname;
+  const route = await resolveConfig({
+    cli: { configFile },
+    processEnv: { TOKENRHYTHM_API_KEY: DUMMY_KEY },
+  });
+  const selected = route.targets[0];
+  assert.ok(selected);
+  const config = {
+    ...selected,
+    maxTurns: 2,
+    contextCompactionEnabled: false,
+    providerRetryDelaysMs: [1, 2, 4],
+  };
+  const payloads: Record<string, unknown>[] = [];
+  let fetchCalls = 0;
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = (async () => {
+    fetchCalls += 1;
+    if (fetchCalls === 2) {
+      return new Response(JSON.stringify({ code: "SERVICE_BUSY", message: "busy", traceId: "offline" }), {
+        status: 503,
+        headers: { "content-type": "application/json" },
+      });
+    }
+    if (fetchCalls > 2) {
+      return new Response(JSON.stringify({ error: { message: "offline finalizer stop" } }), {
+        status: 400,
+        headers: { "content-type": "application/json" },
+      });
+    }
+    const event = JSON.stringify({
+      id: "chatcmpl-exploration",
+      object: "chat.completion.chunk",
+      created: 1,
+      model: "deepseek-v4-flash-0731",
+      choices: [{ index: 0, delta: { role: "assistant", content: "explored" }, finish_reason: "stop" }],
+      usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 },
+    });
+    return new Response(`data: ${event}\n\ndata: [DONE]\n\n`, {
+      status: 200,
+      headers: { "content-type": "text/event-stream" },
+    });
+  }) as typeof fetch;
+
+  try {
+    await assert.rejects(runPiSession({
+      bindings: await loadPiBindings("openai"),
+      model: createModel(config),
+      requestOptions: {
+        ...createRequestOptions(config),
+        onPayload: (value) => {
+          payloads.push(JSON.parse(JSON.stringify(value)) as Record<string, unknown>);
+        },
+      },
+      config,
+      systemPrompt: "Explore.",
+      promptText: "Inspect the repository.",
+      finalizationRequest: baseRequest(),
+      tools: [],
+      tokenCounter: { countBatch: async (texts) => texts.map((text) => Math.ceil(text.length / 4)) },
+    }), ProviderError);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+
+  assert.equal(fetchCalls, 3);
+  assert.equal(payloads.length, 3);
+  assert.equal(Object.hasOwn(payloads[0] ?? {}, "tool_choice"), false);
+  assert.equal(payloads[1]?.tool_choice, "required");
+  assert.equal(payloads[2]?.tool_choice, "required");
+  assert.deepEqual(payloads[2]?.messages, payloads[1]?.messages);
+  assert.deepEqual(payloads[2]?.tools, payloads[1]?.tools);
+  const finalTools = payloads[1]?.tools as Array<{ readonly function?: Record<string, unknown> }>;
+  assert.equal(finalTools.length, 1);
+  assert.equal(finalTools[0]?.function?.name, "submit_evidence");
+  assert.equal(Object.hasOwn(finalTools[0]?.function ?? {}, "strict"), false);
+  const finalMessages = payloads[1]?.messages as Array<Record<string, unknown>>;
+  assert.deepEqual(finalMessages.map((message) => message.role), ["system", "user"]);
+  assert.equal(String(finalMessages[0]?.content).includes("untrusted data"), true);
+  assert.equal(JSON.stringify(finalMessages).includes("explored"), false);
+});
+
+test("provider probe uses one isolated finalizer context across transient retry", async () => {
+  const configFile = new URL("../benchmarks/deepswe/freecontext.toml", import.meta.url).pathname;
+  const route = await resolveConfig({
+    cli: { configFile },
+    processEnv: { TOKENRHYTHM_API_KEY: DUMMY_KEY },
+  });
+  const selected = route.targets[0];
+  assert.ok(selected);
+  const config = { ...selected, contextCompactionEnabled: false, providerRetryDelaysMs: [1, 2, 4] };
+  const payloads: Record<string, unknown>[] = [];
+  let fetchCalls = 0;
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = (async () => {
+    fetchCalls += 1;
+    if (fetchCalls === 1) {
+      return new Response(JSON.stringify({ code: "SERVICE_BUSY", message: "busy", traceId: "offline" }), {
+        status: 503,
+        headers: { "content-type": "application/json" },
+      });
+    }
+    const event = JSON.stringify({
+      id: "chatcmpl-probe",
+      object: "chat.completion.chunk",
+      created: 1,
+      model: "deepseek-v4-flash-0731",
+      choices: [{
+        index: 0,
+        delta: {
+          role: "assistant",
+          tool_calls: [{
+            index: 0,
+            id: "submit-probe",
+            type: "function",
+            function: {
+              name: "submit_evidence",
+              arguments: JSON.stringify({
+                summary: "The fixture export is defined.",
+                evidence: [{
+                  role: "implementation",
+                  question_id: "impl",
+                  path: "fixture.ts",
+                  start_line: 1,
+                  end_line: 1,
+                  focus_line: 1,
+                  why: "Defines the fixture export.",
+                }],
+                gaps: [{ question_id: "tests", reason: "No test observation was supplied." }],
+              }),
+            },
+          }],
+        },
+        finish_reason: "tool_calls",
+      }],
+      usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 },
+    });
+    return new Response(`data: ${event}\n\ndata: [DONE]\n\n`, {
+      status: 200,
+      headers: { "content-type": "text/event-stream" },
+    });
+  }) as typeof fetch;
+
+  try {
+    const result = await runIsolatedFinalizer({
+      bindings: await loadPiBindings("openai"),
+      model: createModel(config),
+      requestOptions: {
+        ...createRequestOptions(config),
+        onPayload: (value) => {
+          payloads.push(JSON.parse(JSON.stringify(value)) as Record<string, unknown>);
+        },
+      },
+      config,
+      request: baseRequest(),
+      observedReads: [{
+        tool: "read",
+        path: "fixture.ts",
+        startLine: 1,
+        endLine: 1,
+        content: "1 export const fixture = true;",
+      }],
+      tokenCounter: { countBatch: async (texts) => texts.map((text) => Math.ceil(text.length / 4)) },
+    });
+    assert.equal(result.candidate?.summary, "The fixture export is defined.");
+    assert.equal(result.metrics.providerAttempts, 2);
+    assert.equal(result.metrics.providerRetries, 1);
+    assert.equal(result.metrics.finalizationReason, "provider_probe");
+    assert.deepEqual(result.explorationTools, []);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+
+  assert.equal(fetchCalls, 2);
+  assert.equal(payloads.length, 2);
+  assert.equal(payloads[0]?.tool_choice, "required");
+  assert.equal(payloads[1]?.tool_choice, "required");
+  assert.deepEqual(payloads[1]?.messages, payloads[0]?.messages);
+  assert.deepEqual(payloads[1]?.tools, payloads[0]?.tools);
+  const tools = payloads[0]?.tools as Array<{ readonly function?: Record<string, unknown> }>;
+  assert.equal(tools.length, 1);
+  assert.equal(tools[0]?.function?.name, "submit_evidence");
+  assert.equal(Object.hasOwn(tools[0]?.function ?? {}, "strict"), false);
+  const toolSchema = JSON.stringify(tools[0]?.function?.parameters);
+  for (const unsupported of ["anyOf", "oneOf", "allOf", "const", "pattern", "minLength", "maxLength", "minimum", "maximum", "maxItems"]) {
+    assert.equal(toolSchema.includes(`\"${unsupported}\"`), false, unsupported);
+  }
+  const messages = payloads[0]?.messages as Array<Record<string, unknown>>;
+  assert.deepEqual(messages.map((message) => message.role), ["system", "user"]);
+  assert.equal(JSON.stringify(messages).includes("fixture.ts"), true);
 });

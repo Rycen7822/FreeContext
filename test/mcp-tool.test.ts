@@ -20,7 +20,7 @@ import type {
 } from "../src/mcp/contracts.js";
 import { createTerminalStore, SINGLE_CALL_DEADLINE_MS } from "../src/mcp/lifecycle.js";
 import type { DeadlineClock } from "../src/mcp/lifecycle.js";
-import { createGatherContextHandler } from "../src/mcp/tool.js";
+import { createGatherContextHandler, InvocationContextError } from "../src/mcp/tool.js";
 import type { ContextTokenCounter } from "../src/runtime/context-budget.js";
 import type { RunExplorerOptions } from "../src/runtime/run.js";
 
@@ -102,7 +102,10 @@ test("gather_context describes broad read delegation without claiming parent act
   for (const invariant of FREECONTEXT_ELIGIBILITY_POLICY.invariants) {
     assert.ok(TOOL_DESCRIPTION.includes(invariant));
   }
-  assert.match(SERVER_INSTRUCTIONS, /public MCP request id and one file workspace root/u);
+  assert.match(
+    SERVER_INSTRUCTIONS,
+    /public MCP request id and either an operator-configured absolute workspace root or exactly one public MCP file root/u,
+  );
   assert.match(SERVER_INSTRUCTIONS, /Invoke once per task, await the same outer cell while pending, and never replay before the terminal result/u);
   assert.doesNotMatch(`${SERVER_INSTRUCTIONS}\n${TOOL_DESCRIPTION}`, /\b(?:commit|push|edit files)\b/u);
 });
@@ -162,6 +165,28 @@ test("gather_context runs one explorer and commits the exact canonical result", 
   }
 });
 
+test("gather_context normalizes an omitted knownRefs field to an empty array", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "freecontext-mcp-tool-"));
+  const workspace = path.join(root, "workspace");
+  const sessions = path.join(root, "sessions");
+  try {
+    await mkdir(workspace);
+    let observed: Readonly<FreeContextRequest> | undefined;
+    const call = await createGatherContextHandler({
+      tokenCounter,
+      sessionDirectory: sessions,
+      runExplorer: async (options) => {
+        observed = options.request;
+        return readyResult(options);
+      },
+    })({ taskText: request.taskText, evidenceQuestions: request.evidenceQuestions }, callContext(workspace));
+    assert.equal(outputOf(call).status, "ready");
+    assert.deepEqual(observed?.knownRefs, []);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test("invalid input fails before reservation or provider execution", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "freecontext-mcp-tool-"));
   const workspace = path.join(root, "workspace");
@@ -182,6 +207,63 @@ test("invalid input fails before reservation or provider execution", async () =>
     assert.equal(output.status, "failed");
     assert.equal(output.errorCode, "INVALID_REQUEST");
     assert.equal(output.sessionFile, null);
+    await assert.rejects(readdir(sessions), { code: "ENOENT" });
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("invocation context failures preserve a safe typed reason before reservation", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "freecontext-mcp-tool-"));
+  const sessions = path.join(root, "sessions");
+  try {
+    const call = await createGatherContextHandler({
+      tokenCounter,
+      sessionDirectory: sessions,
+      invocationContextProvider: () => {
+        throw new InvocationContextError(
+          "workspace_roots_unavailable",
+          "The MCP host did not provide workspace roots.",
+        );
+      },
+    })(request, {});
+    const output = outputOf(call);
+    assert.equal(output.status, "failed");
+    assert.equal(output.errorCode, "INVALID_REQUEST");
+    assert.equal(output.nextAction.reason, "The MCP host did not provide workspace roots.");
+    assert.equal(output.sessionId, "unbound-invocation");
+    assert.equal(output.sessionFile, null);
+    assert.deepEqual(call._meta?.freecontext, {
+      callContextBound: false,
+      contextFailure: "workspace_roots_unavailable",
+    });
+    await assert.rejects(readdir(sessions), { code: "ENOENT" });
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("unknown invocation context failures do not expose private details", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "freecontext-mcp-tool-"));
+  const sessions = path.join(root, "sessions");
+  try {
+    const call = await createGatherContextHandler({
+      tokenCounter,
+      sessionDirectory: sessions,
+      invocationContextProvider: () => {
+        throw new Error("private host path and transport detail");
+      },
+    })(request, {});
+    const output = outputOf(call);
+    assert.equal(
+      output.nextAction.reason,
+      "The MCP host did not supply a valid FreeContext call context.",
+    );
+    assert.equal(JSON.stringify(call).includes("private host path"), false);
+    assert.deepEqual(call._meta?.freecontext, {
+      callContextBound: false,
+      contextFailure: "invalid_call_context",
+    });
     await assert.rejects(readdir(sessions), { code: "ENOENT" });
   } finally {
     await rm(root, { recursive: true, force: true });
@@ -244,7 +326,7 @@ test("provider, abort, and internal failures are classified and committed", asyn
         document.terminalError.message,
         fixture.error instanceof ProviderError ? fixture.error.message : "Unexpected internal failure.",
       );
-      assert.doesNotMatch(JSON.stringify(call.structuredContent), /private internal detail|503|server_error/u);
+      assert.doesNotMatch(JSON.stringify(call.structuredContent), /private internal detail|\b503\b|server_error/u);
     } finally {
       await rm(root, { recursive: true, force: true });
     }
@@ -260,13 +342,16 @@ test("a pre-aborted call does not reserve a session or start a worker", async ()
     const controller = new AbortController();
     controller.abort();
     let calls = 0;
+    let reservations = 0;
     const call = await createGatherContextHandler({
       tokenCounter,
       sessionDirectory: sessions,
       runExplorer: async (options) => { calls += 1; return readyResult(options); },
+      reserveSession: async () => { reservations += 1; throw new Error("unexpected reservation"); },
     })(request, callContext(workspace), controller.signal);
     const output = outputOf(call);
     assert.equal(calls, 0);
+    assert.equal(reservations, 0);
     assert.equal(output.errorCode, "DEADLINE_EXCEEDED");
     assert.equal(output.sessionFile, null);
   } finally {
@@ -301,28 +386,43 @@ test("deadline compiles the latest candidate once and records a late worker resu
       deadlineClock: deadline.clock,
       terminalStore,
       runExplorer: async (options) => {
-        const candidate =
-          "<final_answer>\nsummary: candidate before deadline.\nevidence:\n" +
-          "- [implementation][impl] document.md:1-2 (focus 1) — Defines the behavior.\n" +
-          "gaps:\n- [tests] No test was found.\n</final_answer>";
-        const partial = {
-          role: "assistant" as const,
-          content: [{ type: "text" as const, text: candidate }],
-          api: "openai-completions" as const,
-          provider: "fixture",
-          model: "fixture",
-          usage: {
-            input: 0, output: 0, cacheRead: 0, cacheWrite: 0, reasoning: 0, totalTokens: 0,
-            cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
-          },
-          stopReason: "stop" as const,
-          timestamp: 0,
+        const candidate = {
+          summary: "candidate before deadline.",
+          evidence: [{
+            role: "implementation" as const,
+            questionId: "impl",
+            path: "document.md",
+            startLine: 1,
+            endLine: 2,
+            focusLine: 1,
+            why: "Defines the behavior.",
+          }],
+          gaps: [{ questionId: "tests", reason: "No test was found." }],
         };
         await options.onEvent?.(
           {
-            type: "message_update",
-            message: partial,
-            assistantMessageEvent: { type: "text_delta", contentIndex: 0, delta: candidate, partial },
+            type: "tool_execution_end",
+            toolCallId: "read-1",
+            toolName: "read",
+            result: {
+              content: [{ type: "text", text: "[read document.md:1-2]\n1 first\n2 second" }],
+              details: { tool: "read", path: "document.md", startLine: 1, actualEndLine: 2, truncated: false },
+            },
+            isError: false,
+          },
+          { turnCount: 1, toolCallCount: 1, providerAttempts: 1 },
+        );
+        await options.onEvent?.(
+          {
+            type: "tool_execution_end",
+            toolCallId: "submit-1",
+            toolName: "submit_evidence",
+            result: {
+              content: [{ type: "text", text: "Evidence submission accepted." }],
+              details: { tool: "submit_evidence", candidate },
+              terminate: true,
+            },
+            isError: false,
           },
           { turnCount: 1, toolCallCount: 1, providerAttempts: 1 },
         );

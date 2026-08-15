@@ -8,7 +8,8 @@ import type {
 import type { AssistantMessage, SimpleStreamOptions, Usage } from "@earendil-works/pi-ai";
 import type { FreeContextConfig } from "../config.js";
 import { ContextBudgetError, FreeContextError, ProviderError } from "../errors.js";
-import { parseExplorerCandidate } from "../output/evidence.js";
+import type { FreeContextRequest } from "../mcp/contracts.js";
+import type { ExplorerCandidate } from "../output/candidate.js";
 import {
   assertInitialRequestFits,
   estimateEffectiveContextTokens,
@@ -18,6 +19,19 @@ import {
 import type { CompactionCut, ContextTokenCounter } from "./context-budget.js";
 import { compactContext } from "./context-compaction.js";
 import { GigatokenCounter } from "./gigatoken-counter.js";
+import {
+  buildFinalizationPacket,
+  createSubmitEvidenceTool,
+  createTerminalSubmissionState,
+  FINALIZATION_SYSTEM_PROMPT,
+  finalizationFits,
+  latestCompactionSummary,
+  observedReadFromToolResult,
+  retainedObservedReads,
+  SUBMIT_EVIDENCE_TOOL_NAME,
+  submitSchemaTokenDelta,
+} from "./finalization.js";
+import type { ObservedRead, TerminalFailureKind } from "./finalization.js";
 import type { FreeContextModel } from "./model.js";
 import { redactProviderError } from "./model.js";
 import { normalizeAssistantFailure, normalizeProviderFailure } from "./provider-failure.js";
@@ -27,17 +41,18 @@ import type { ProviderAttempt, ProviderRetryCallbacks } from "./provider-retry.j
 import type { PiBindings } from "./pi-bindings.js";
 import { addUsage, EMPTY_USAGE } from "./usage.js";
 
-const FINALIZE_MESSAGE = Object.freeze({
-  role: "user" as const,
-  content:
-    "The repository exploration budget is exhausted. Do not request more tools. Using only evidence already present in the transcript, return the required <final_answer> block now with at most 6 role/question/focus evidence spans. Keep the summary concise, name every unresolved question under gaps, and reserve output for the closing </final_answer> tag.",
-  timestamp: 0,
-});
 export const EXPLORER_MAX_TURNS = 5;
 export const EXPLORER_MAX_TOOL_CALLS = 18;
 
 export type CompactionReason = "threshold" | "overflow";
-export type FinalizationReason = "coverage" | "partial_candidate" | "stagnation" | "turn_limit" | "tool_limit";
+export type FinalizationReason =
+  | "coverage"
+  | "partial_candidate"
+  | "protocol_retry"
+  | "stagnation"
+  | "turn_limit"
+  | "tool_limit"
+  | "provider_probe";
 
 export interface TurnEvidenceProgress {
   readonly turn: number;
@@ -135,6 +150,7 @@ export interface PiSessionMetrics {
   readonly toolCalls: number;
   readonly providerAttempts: number;
   readonly providerRetries: number;
+  readonly submitSchemaTokens: number;
   readonly finalizationInjected: boolean;
   readonly finalizationReason: FinalizationReason | null;
   readonly blockedToolCalls: number;
@@ -155,8 +171,14 @@ export interface PiSessionMetrics {
 
 export interface PiSessionResult {
   readonly text: string;
+  readonly candidate: Readonly<ExplorerCandidate> | null;
+  readonly observedReads: readonly Readonly<ObservedRead>[];
+  readonly terminalFailure: TerminalFailureKind | null;
   readonly messages: readonly AgentMessage[];
+  readonly explorationTools: readonly AgentTool[];
+  readonly contextSystemPrompt: string;
   readonly contextMessages: readonly AgentMessage[];
+  readonly contextTools: readonly AgentTool[];
   readonly metrics: Readonly<PiSessionMetrics>;
 }
 
@@ -167,6 +189,7 @@ export interface PiSessionOptions {
   readonly config: FreeContextConfig;
   readonly systemPrompt: string;
   readonly promptText: string;
+  readonly finalizationRequest: Readonly<FreeContextRequest>;
   readonly tools: readonly AgentTool[];
   readonly initialMessages?: readonly AgentMessage[];
   readonly maxTurns?: number;
@@ -178,7 +201,29 @@ export interface PiSessionOptions {
   readonly tokenCounter?: ContextTokenCounter;
 }
 
-export function extractAssistantText(message: AgentMessage | undefined): string {
+export interface PiFinalizationOptions {
+  readonly bindings: PiBindings;
+  readonly model: FreeContextModel;
+  readonly requestOptions: Readonly<SimpleStreamOptions>;
+  readonly config: FreeContextConfig;
+  readonly request: Readonly<FreeContextRequest>;
+  readonly observedReads: readonly Readonly<ObservedRead>[];
+  readonly compactionSummary?: string | null;
+  readonly signal?: AbortSignal;
+  readonly onEvent?: PiSessionEventHandler;
+  readonly clock?: () => number;
+  readonly timestamp?: () => number;
+  readonly tokenCounter?: ContextTokenCounter;
+}
+
+interface PiSessionExecutionOptions extends PiSessionOptions {
+  readonly isolatedFinalization?: Readonly<{
+    readonly observedReads: readonly Readonly<ObservedRead>[];
+    readonly compactionSummary: string | null;
+  }>;
+}
+
+export function visibleAssistantText(message: AgentMessage | undefined): string {
   if (!message || message.role !== "assistant") return "";
   return message.content
     .filter((block): block is Extract<AssistantMessage["content"][number], { type: "text" }> => block.type === "text")
@@ -208,22 +253,10 @@ function normalizedEvidenceKey(
   return header ? `${toolName}:${header}` : null;
 }
 
-function requiredEvidence(promptText: string): ReadonlyMap<string, string> {
-  const required = new Map<string, string>();
-  for (const match of promptText.matchAll(/- \[([^\]]+)\]\[([^\]]+)\]\[required\]/gu)) {
-    const role = match[1];
-    const questionId = match[2];
-    if (role && questionId) required.set(questionId, role);
-  }
-  return required;
-}
-
 function candidateCompletion(
-  text: string,
+  candidate: Readonly<ExplorerCandidate>,
   required: ReadonlyMap<string, string>,
-): "coverage" | "partial_candidate" | null {
-  const candidate = parseExplorerCandidate(text);
-  if (candidate.block === null || candidate.problems.length > 0) return null;
+): "coverage" | "partial_candidate" {
   const coverage = new Map(candidate.evidence.map((item) => [item.questionId, item.role]));
   return [...required].every(([questionId, role]) => coverage.get(questionId) === role)
     ? "coverage"
@@ -264,6 +297,27 @@ function withoutAssistant(
   return index >= 0 ? [...messages.slice(0, index), ...messages.slice(index + 1)] : [...messages];
 }
 
+function isCerebrasEndpoint(provider: string, baseUrl: string): boolean {
+  if (provider.toLowerCase().includes("cerebras")) return true;
+  try {
+    return new URL(baseUrl).hostname.toLowerCase().includes("cerebras");
+  } catch {
+    return false;
+  }
+}
+
+function isProviderContextOverflow(
+  message: AssistantMessage,
+  bindings: Readonly<PiBindings>,
+  config: Readonly<FreeContextConfig>,
+  contextWindow: number,
+): boolean {
+  const bareBadRequest = message.stopReason === "error"
+    && /^400\s*(?:status code)?\s*\(no body\)\s*$/iu.test(message.errorMessage ?? "");
+  if (bareBadRequest && !isCerebrasEndpoint(config.provider, config.baseUrl)) return false;
+  return bindings.isContextOverflow(message, contextWindow);
+}
+
 async function runPiSessionWithCounter({
   bindings,
   model,
@@ -271,6 +325,7 @@ async function runPiSessionWithCounter({
   config,
   systemPrompt,
   promptText,
+  finalizationRequest,
   tools,
   initialMessages = [],
   maxTurns = config.maxTurns,
@@ -279,7 +334,8 @@ async function runPiSessionWithCounter({
   onEvent,
   clock = performance.now.bind(performance),
   timestamp = Date.now,
-}: PiSessionOptions, tokenCounter: ContextTokenCounter | null): Promise<Readonly<PiSessionResult>> {
+  isolatedFinalization,
+}: PiSessionExecutionOptions, tokenCounter: ContextTokenCounter | null): Promise<Readonly<PiSessionResult>> {
   const turnLimit = Math.min(maxTurns, EXPLORER_MAX_TURNS);
   const toolCallLimit = Math.min(maxToolCalls, EXPLORER_MAX_TOOL_CALLS);
   const sessionStartedAt = clock();
@@ -297,12 +353,36 @@ async function runPiSessionWithCounter({
   let toolCallCount = 0;
   let providerAttempts = 0;
   let providerRetries = 0;
-  let finalizationInjected = false;
-  let finalizationReason: FinalizationReason | null = null;
+  const initialFinalizationReads = isolatedFinalization
+    ? Object.freeze(isolatedFinalization.observedReads.map((read) => Object.freeze({ ...read })))
+    : null;
+  const isolatedPacket = initialFinalizationReads
+    ? buildFinalizationPacket(finalizationRequest, initialFinalizationReads, isolatedFinalization?.compactionSummary ?? null)
+    : null;
+  const activeSystemPrompt = isolatedPacket === null ? systemPrompt : FINALIZATION_SYSTEM_PROMPT;
+  const activePromptText = isolatedPacket ?? promptText;
+  let finalizationInjected = isolatedPacket !== null;
+  let finalizationReason: FinalizationReason | null = isolatedPacket === null ? null : "provider_probe";
   let blockedToolCalls = 0;
   let overflowRecovered = false;
+  let finalizerStarted = false;
+  let effectiveSystemPrompt = activeSystemPrompt;
   let effectiveMessages = [...initialMessages];
-  let effectiveTools = [...tools];
+  const observedReads: ObservedRead[] = [...(initialFinalizationReads ?? [])];
+  let finalizationReads: readonly ObservedRead[] | null = initialFinalizationReads;
+  const observedReadKeys = new Set(observedReads.map((read) => (
+    `${read.tool}\0${read.path}\0${read.startLine}\0${read.endLine}\0${read.content}`
+  )));
+  const submission = createTerminalSubmissionState();
+  const submitTool = createSubmitEvidenceTool({
+    Type: bindings.Type,
+    request: finalizationRequest,
+    observedReads: () => finalizationReads ?? observedReads,
+    state: submission,
+    isFinalizing: () => finalizerStarted,
+  });
+  const explorationTools = isolatedPacket === null ? [...tools, submitTool] : [];
+  let effectiveTools = isolatedPacket === null ? [...explorationTools] : [submitTool];
   let loopReportedContext = false;
   let compactions = 0;
   let thresholdCompactions = 0;
@@ -318,7 +398,18 @@ async function runPiSessionWithCounter({
   const allEvidenceKeys = new Set<string>();
   const currentTurnKeys = new Set<string>();
   const evidenceProgress: TurnEvidenceProgress[] = [];
-  const requiredQuestions = requiredEvidence(promptText);
+  const requiredQuestions = new Map(
+    finalizationRequest.evidenceQuestions
+      .filter((question) => question.required)
+      .map((question) => [question.id, question.role]),
+  );
+  const submitSchemaTokens = tokenCounter ? await submitSchemaTokenDelta({
+    systemPrompt: activeSystemPrompt,
+    promptText: activePromptText,
+    repositoryTools: isolatedPacket === null ? tools : [],
+    submitTool,
+    counter: tokenCounter,
+  }) : 0;
   let currentProgressRecorded = false;
   let stagnantTurns = 0;
 
@@ -357,7 +448,7 @@ async function runPiSessionWithCounter({
   const assistantFailures = new WeakMap<AssistantMessage, Readonly<ProviderFailureSignal> | null>();
   const assistantFailure = (message: AssistantMessage): Readonly<ProviderFailureSignal> | null => {
     if (assistantFailures.has(message)) return assistantFailures.get(message) ?? null;
-    const failure = message.stopReason === "error" && !bindings.isContextOverflow(message, model.contextWindow)
+    const failure = message.stopReason === "error" && !isProviderContextOverflow(message, bindings, config, model.contextWindow)
       ? normalizeAssistantFailure(message, { provider: config.provider, baseUrl: config.baseUrl })
       : null;
     assistantFailures.set(message, failure);
@@ -372,14 +463,20 @@ async function runPiSessionWithCounter({
   const emit = async (event: AgentEvent): Promise<void> => {
     if (event.type === "turn_start") {
       providerAttempts += 1;
+      if (finalizationInjected) finalizerStarted = true;
       currentTurnKeys.clear();
       currentProgressRecorded = false;
     }
     if (event.type === "turn_end") {
-      const overflow = event.message.role === "assistant" && bindings.isContextOverflow(event.message, model.contextWindow);
+      const overflow = event.message.role === "assistant"
+        && isProviderContextOverflow(event.message, bindings, config, model.contextWindow);
       const transientFailure = event.message.role === "assistant" && Boolean(assistantFailure(event.message)?.retryable);
       if (!overflow && !transientFailure) {
-        recordEvidenceProgress();
+        for (const result of event.toolResults) {
+          const text = result.content.flatMap((block) => block.type === "text" ? [block.text] : []).join("\n");
+          addEvidenceKey(normalizedEvidenceKey(result.toolName, null, text));
+        }
+        if (!finalizerStarted) recordEvidenceProgress();
         turnCount += 1;
       }
     } else if (event.type === "tool_execution_start") {
@@ -394,6 +491,14 @@ async function runPiSessionWithCounter({
       }
       if (!event.isError) {
         addEvidenceKey(normalizedEvidenceKey(event.toolName, event.result.details));
+        const observed = observedReadFromToolResult(event.toolName, event.result, event.isError);
+        if (observed) {
+          const key = `${observed.tool}\0${observed.path}\0${observed.startLine}\0${observed.endLine}\0${observed.content}`;
+          if (!observedReadKeys.has(key)) {
+            observedReadKeys.add(key);
+            observedReads.push(observed);
+          }
+        }
       }
     }
     await onEvent?.(event, eventState());
@@ -446,8 +551,8 @@ async function runPiSessionWithCounter({
 
   const admission = (): ReturnType<typeof estimateInitialRequestTokens> =>
     estimateInitialRequestTokens({
-      systemPrompt,
-      promptText,
+      systemPrompt: activeSystemPrompt,
+      promptText: activePromptText,
       messages: effectiveMessages,
       tools: effectiveTools,
       counter: counter(),
@@ -473,13 +578,39 @@ async function runPiSessionWithCounter({
     }
   }
 
-  const prompt: AgentMessage = { role: "user", content: promptText, timestamp: timestamp() };
+  const prompt: AgentMessage = { role: "user", content: activePromptText, timestamp: timestamp() };
+  const streamWithTerminalChoice: PiBindings["streamSimple"] = (target, context, options) => {
+    const terminalOnly = finalizerStarted && context.tools?.length === 1 && context.tools[0]?.name === SUBMIT_EVIDENCE_TOOL_NAME;
+    const effectiveOptions = terminalOnly
+      ? ({ ...options, toolChoice: "required" } as SimpleStreamOptions)
+      : options;
+    return bindings.streamSimple(target, context, effectiveOptions);
+  };
   const loopConfig: AgentLoopConfig = {
     ...requestOptions,
     model,
     convertToLlm: bindings.convertToLlm,
     toolExecution: "parallel",
-    beforeToolCall: async () => {
+    beforeToolCall: async ({ assistantMessage, toolCall }) => {
+      const calls = assistantMessage.content.filter((block) => block.type === "toolCall");
+      const submitCount = calls.filter((call) => call.name === SUBMIT_EVIDENCE_TOOL_NAME).length;
+      const protocolFailure = submitCount > 0 && calls.some((call) => call.name !== SUBMIT_EVIDENCE_TOOL_NAME)
+        ? "mixed_batch"
+        : submitCount > 1
+          ? "duplicate_submit"
+          : null;
+      if (protocolFailure) {
+        if (finalizerStarted) submission.reject(protocolFailure);
+        else {
+          requestFinalization("protocol_retry");
+        }
+        return { block: true, reason: "Terminal evidence submission must be the only tool call in its batch." };
+      }
+      if (toolCall.name === SUBMIT_EVIDENCE_TOOL_NAME) return undefined;
+      if (finalizerStarted) {
+        submission.reject("unexpected_tool");
+        return { block: true, reason: "Only submit_evidence is allowed during finalization." };
+      }
       if (toolCallCount >= toolCallLimit) {
         blockedToolCalls += 1;
         requestFinalization("tool_limit");
@@ -491,9 +622,16 @@ async function runPiSessionWithCounter({
       toolCallCount += 1;
       return undefined;
     },
-    prepareNextTurn: async ({ context, toolResults }) => {
+    prepareNextTurn: async ({ context, message, toolResults }) => {
       loopReportedContext = true;
       let nextContext: AgentContext = context;
+      if (finalizerStarted) {
+        effectiveSystemPrompt = context.systemPrompt;
+        effectiveMessages = [...context.messages];
+        effectiveTools = [...(context.tools ?? [])];
+        return undefined;
+      }
+      const calls = message.content.filter((block) => block.type === "toolCall");
       for (const result of toolResults) {
         const text = result.content
           .flatMap((block) => block.type === "text" ? [block.text] : [])
@@ -501,19 +639,22 @@ async function runPiSessionWithCounter({
         addEvidenceKey(normalizedEvidenceKey(result.toolName, null, text));
       }
       recordEvidenceProgress();
+      if (!finalizerStarted && calls.some((call) => call.name === SUBMIT_EVIDENCE_TOOL_NAME) && !submission.candidate) {
+        requestFinalization("protocol_retry");
+      }
+      if (calls.length === 0) requestFinalization("protocol_retry");
       const completedTurns = Math.max(turnCount, evidenceProgress.length);
+      if (submission.candidate) {
+        requestFinalization(candidateCompletion(submission.candidate, requiredQuestions));
+        effectiveSystemPrompt = context.systemPrompt;
+        effectiveMessages = [...context.messages];
+        effectiveTools = [...(context.tools ?? [])];
+        return undefined;
+      }
       if (toolCallCount >= toolCallLimit) requestFinalization("tool_limit");
       else if (completedTurns >= turnLimit - 1) requestFinalization("turn_limit");
       else if (stagnantTurns >= 2) requestFinalization("stagnation");
-      if (!finalizationInjected && finalizationReason !== null) {
-        finalizationInjected = true;
-        nextContext = {
-          ...context,
-          tools: [],
-          messages: [...context.messages, { ...FINALIZE_MESSAGE, timestamp: timestamp() }],
-        };
-      }
-      if (config.contextCompactionEnabled) {
+      if (config.contextCompactionEnabled && !finalizerStarted) {
         const tokens = await estimateEffectiveContextTokens(nextContext.messages, counter());
         if (bindings.shouldCompact(tokens, model.contextWindow, compactionSettings)) {
           nextContext = {
@@ -522,17 +663,52 @@ async function runPiSessionWithCounter({
           };
         }
       }
+      if (!submission.candidate && !finalizationInjected && finalizationReason !== null) {
+        finalizationReads = retainedObservedReads(nextContext.messages, observedReads);
+        const packet = buildFinalizationPacket(
+          finalizationRequest,
+          finalizationReads,
+          latestCompactionSummary(nextContext.messages),
+        );
+        if (await finalizationFits({
+          packet,
+          tool: submitTool,
+          counter: counter(),
+          contextWindow: model.contextWindow,
+          reserveTokens: config.contextReserveTokens,
+        })) {
+          finalizationInjected = true;
+          nextContext = {
+            systemPrompt: FINALIZATION_SYSTEM_PROMPT,
+            tools: [submitTool],
+            messages: [{ role: "user", content: packet, timestamp: timestamp() }],
+          };
+        } else {
+          submission.reject("context_budget");
+        }
+      }
       effectiveMessages = [...nextContext.messages];
+      effectiveSystemPrompt = nextContext.systemPrompt;
       effectiveTools = [...(nextContext.tools ?? [])];
       return nextContext === context ? undefined : { context: nextContext };
     },
     shouldStopAfterTurn: async ({ context, message }) => {
       loopReportedContext = true;
+      effectiveSystemPrompt = context.systemPrompt;
       effectiveMessages = [...context.messages];
       effectiveTools = [...(context.tools ?? [])];
-      const completion = candidateCompletion(extractAssistantText(message), requiredQuestions);
-      if (completion) {
-        requestFinalization(completion);
+      if (submission.candidate) {
+        requestFinalization(candidateCompletion(submission.candidate, requiredQuestions));
+        return true;
+      }
+      if (submission.failureKind) return true;
+      if (finalizerStarted) {
+        const calls = message.content.filter((block) => block.type === "toolCall");
+        const submitCount = calls.filter((call) => call.name === SUBMIT_EVIDENCE_TOOL_NAME).length;
+        if (calls.some((call) => call.name !== SUBMIT_EVIDENCE_TOOL_NAME)) submission.reject("unexpected_tool");
+        else if (submitCount > 1) submission.reject("duplicate_submit");
+        else if (submitCount === 1) submission.reject("invalid_arguments");
+        else submission.reject("missing_submit");
         return true;
       }
       return turnCount >= turnLimit;
@@ -542,11 +718,11 @@ async function runPiSessionWithCounter({
   const runInitialLoop = async (): Promise<AgentMessage[]> =>
     await bindings.runAgentLoop(
       [prompt],
-      { systemPrompt, messages: [...effectiveMessages], tools: [...effectiveTools] },
+      { systemPrompt: effectiveSystemPrompt, messages: [...effectiveMessages], tools: [...effectiveTools] },
       loopConfig,
       emit,
       signal,
-      bindings.streamSimple,
+      streamWithTerminalChoice,
     );
 
   let newMessages: AgentMessage[];
@@ -565,11 +741,11 @@ async function runPiSessionWithCounter({
     try {
       loopReportedContext = false;
       const continued = await bindings.runAgentLoopContinue(
-        { systemPrompt, messages: [...effectiveMessages], tools: [...effectiveTools] },
+        { systemPrompt: effectiveSystemPrompt, messages: [...effectiveMessages], tools: [...effectiveTools] },
         loopConfig,
         emit,
         signal,
-        bindings.streamSimple,
+        streamWithTerminalChoice,
       );
       allNewMessages.push(...continued);
       if (!loopReportedContext) effectiveMessages.push(...continued);
@@ -601,8 +777,13 @@ async function runPiSessionWithCounter({
   let assistant = lastAssistant(newMessages);
   if (!assistant) throw providerError("Provider returned no assistant message.", true);
   assistant = await recoverTransientFailure(assistant);
-  const overflow = bindings.isContextOverflow(assistant, model.contextWindow);
-  if (overflow && config.contextCompactionEnabled && !overflowRecovered) {
+  if (finalizationInjected && !finalizerStarted && !submission.failureKind) {
+    assistant = await recoverTransientFailure(await continueLoop());
+  }
+  const overflow = isProviderContextOverflow(assistant, bindings, config, model.contextWindow);
+  if (overflow && finalizerStarted) {
+    submission.reject("context_budget");
+  } else if (overflow && config.contextCompactionEnabled && !overflowRecovered) {
     overflowRecovered = true;
     effectiveMessages = [...(await runCompaction(withoutAssistant(effectiveMessages, assistant), "overflow"))];
     overflowRetries = 1;
@@ -615,22 +796,30 @@ async function runPiSessionWithCounter({
     assistant = await recoverTransientFailure(await continueLoop());
   }
 
-  if (bindings.isContextOverflow(assistant, model.contextWindow)) {
+  if (isProviderContextOverflow(assistant, bindings, config, model.contextWindow) && !submission.failureKind) {
     throw providerError(assistant.errorMessage || "Provider context overflow persisted after recovery.");
   }
-  if (assistant.stopReason === "error" || assistant.stopReason === "aborted") {
+  if ((assistant.stopReason === "error" || assistant.stopReason === "aborted") && !submission.failureKind) {
     throw providerError(assistant.errorMessage, assistant.stopReason === "error");
   }
+  if (!submission.candidate && !submission.failureKind) submission.reject("missing_submit");
 
   return Object.freeze({
-    text: extractAssistantText(assistant),
+    text: visibleAssistantText(assistant),
+    candidate: submission.candidate,
+    observedReads: Object.freeze(observedReads.map((read) => Object.freeze(read))),
+    terminalFailure: submission.failureKind,
     messages: Object.freeze(allNewMessages),
+    explorationTools: Object.freeze([...explorationTools]),
+    contextSystemPrompt: effectiveSystemPrompt,
     contextMessages: Object.freeze([...effectiveMessages]),
+    contextTools: Object.freeze([...effectiveTools]),
     metrics: Object.freeze({
       turns: turnCount,
       toolCalls: toolCallCount,
       providerAttempts,
       providerRetries,
+      submitSchemaTokens,
       finalizationInjected,
       finalizationReason,
       blockedToolCalls,
@@ -654,9 +843,8 @@ async function runPiSessionWithCounter({
   });
 }
 
-export async function runPiSession(options: PiSessionOptions): Promise<Readonly<PiSessionResult>> {
+async function runSession(options: PiSessionExecutionOptions): Promise<Readonly<PiSessionResult>> {
   if (options.tokenCounter) return runPiSessionWithCounter(options, options.tokenCounter);
-  if (!options.config.contextCompactionEnabled) return runPiSessionWithCounter(options, null);
 
   const tokenCounter = new GigatokenCounter();
   try {
@@ -664,4 +852,32 @@ export async function runPiSession(options: PiSessionOptions): Promise<Readonly<
   } finally {
     await tokenCounter.close();
   }
+}
+
+export async function runPiSession(options: PiSessionOptions): Promise<Readonly<PiSessionResult>> {
+  return runSession(options);
+}
+
+export async function runIsolatedFinalizer(options: PiFinalizationOptions): Promise<Readonly<PiSessionResult>> {
+  return runSession({
+    bindings: options.bindings,
+    model: options.model,
+    requestOptions: options.requestOptions,
+    config: options.config,
+    systemPrompt: FINALIZATION_SYSTEM_PROMPT,
+    promptText: "",
+    finalizationRequest: options.request,
+    tools: [],
+    maxTurns: 1,
+    maxToolCalls: 0,
+    ...(options.signal ? { signal: options.signal } : {}),
+    ...(options.onEvent ? { onEvent: options.onEvent } : {}),
+    ...(options.clock ? { clock: options.clock } : {}),
+    ...(options.timestamp ? { timestamp: options.timestamp } : {}),
+    ...(options.tokenCounter ? { tokenCounter: options.tokenCounter } : {}),
+    isolatedFinalization: {
+      observedReads: options.observedReads,
+      compactionSummary: options.compactionSummary ?? null,
+    },
+  });
 }

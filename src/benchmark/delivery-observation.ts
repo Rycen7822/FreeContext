@@ -5,6 +5,7 @@ import type { McpSessionDocument } from "../mcp/session.js";
 import type { ProviderFailureSignal } from "../runtime/provider-failure.js";
 
 export interface ObservedMcpCall {
+  readonly source: "direct_mcp" | "code_await";
   readonly callId: string;
   readonly startedSeen: boolean;
   readonly arguments: unknown;
@@ -102,6 +103,23 @@ function callArguments(value: unknown): Record<string, unknown> | null {
   }
 }
 
+function isFreeContextExec(event: Record<string, unknown>): boolean {
+  if (event.name !== "exec") return false;
+  const source = typeof event.input === "string" ? event.input : typeof event.arguments === "string" ? event.arguments : "";
+  return source.includes("tools.mcp__freecontext__gather_context(") && source.includes("notify(");
+}
+
+function terminalResultText(value: unknown): string | null {
+  const texts = typeof value === "string"
+    ? [value]
+    : Array.isArray(value)
+      ? value.flatMap((item) => isRecord(item) && typeof item.text === "string" ? [item.text] : [])
+      : [];
+  const matches = texts.filter((text) => text.split(/\r?\n/u).some((line) =>
+    /^Session: \/.+\/freecontext-sessions\/.+\.json$/u.test(line)));
+  return matches.length === 1 ? matches[0] ?? null : null;
+}
+
 export function collectFreeContextTransportObservations(
   rawJsonl: string,
 ): readonly Readonly<FreeContextTransportObservation>[] {
@@ -141,8 +159,7 @@ export function collectFreeContextTransportObservations(
     const isOutput = type === "custom_tool_call_output" || type === "function_call_output";
 
     if (isCall && event.name === "exec" && normalizedCallId !== null) {
-      const source = typeof event.input === "string" ? event.input : typeof event.arguments === "string" ? event.arguments : "";
-      if (source.includes("await tools.mcp__freecontext__gather_context(args)") && source.includes("notify(")) {
+      if (isFreeContextExec(event)) {
         const observation: MutableObservation = {
           turnId,
           outerCallId: normalizedCallId,
@@ -230,14 +247,63 @@ export function collectDuplicateSemanticCalls(
   calls: readonly ObservedMcpCall[],
   taskId: string,
 ): readonly Readonly<DuplicateSemanticCall>[] {
-  const firstCallId = calls[0]?.callId;
+  const semanticCalls = calls.filter((call) => call.source === "direct_mcp");
+  const firstCallId = semanticCalls[0]?.callId;
   if (!firstCallId) return Object.freeze([]);
-  return Object.freeze(calls.slice(1).map((call, index) => Object.freeze({
+  return Object.freeze(semanticCalls.slice(1).map((call, index) => Object.freeze({
     taskId,
     callId: call.callId,
     firstCallId,
     duplicateOrdinal: index + 1,
   })));
+}
+
+function collectCodeAwaitTerminalOutputs(rawJsonl: string): readonly ObservedMcpCall[] {
+  const trackedCalls = new Set<string>();
+  const trackedCells = new Set<string>();
+  const observations: ObservedMcpCall[] = [];
+  for (const line of rawJsonl.split("\n")) {
+    if (!line.trim()) continue;
+    let envelope: Record<string, unknown>;
+    try {
+      const parsed: unknown = JSON.parse(line);
+      if (!isRecord(parsed)) continue;
+      envelope = parsed;
+    } catch {
+      continue;
+    }
+    const event = isRecord(envelope.payload) ? envelope.payload : envelope;
+    const type = typeof event.type === "string" ? event.type : "";
+    const callId = event.call_id ?? event.callId;
+    const normalizedCallId = typeof callId === "string" || typeof callId === "number" ? String(callId) : null;
+    if ((type === "custom_tool_call" || type === "function_call") && normalizedCallId !== null) {
+      if (isFreeContextExec(event)) trackedCalls.add(normalizedCallId);
+      if (event.name === "wait") {
+        const args = callArguments(event.arguments ?? event.input);
+        const cellId = args?.cell_id ?? args?.cellId;
+        if ((typeof cellId === "string" || typeof cellId === "number") && trackedCells.has(String(cellId))) {
+          trackedCalls.add(normalizedCallId);
+        }
+      }
+      continue;
+    }
+    if ((type !== "custom_tool_call_output" && type !== "function_call_output") ||
+        normalizedCallId === null || !trackedCalls.has(normalizedCallId)) continue;
+    const rendered = outputText(event.output);
+    const runningCell = rendered.match(/Script running with cell ID (?<cellId>[^\s]+)/u)?.groups?.cellId;
+    if (runningCell) trackedCells.add(runningCell);
+    const text = terminalResultText(event.output);
+    if (text === null) continue;
+    observations.push(Object.freeze({
+      source: "code_await",
+      callId: normalizedCallId,
+      startedSeen: true,
+      arguments: null,
+      text,
+      structuredContent: null,
+    }));
+  }
+  return Object.freeze(observations);
 }
 
 export function collectObservedCalls(rawJsonl: string): readonly ObservedMcpCall[] {
@@ -256,6 +322,7 @@ export function collectObservedCalls(rawJsonl: string): readonly ObservedMcpCall
         if (value.type === "item.completed" || value.type === "item_completed" || item.status === "completed") {
           const observed = textFromResult(item.result);
           calls.push(Object.freeze({
+            source: "direct_mcp",
             callId: normalizedCallId,
             startedSeen: started.has(normalizedCallId),
             arguments: item.arguments ?? null,
@@ -274,12 +341,18 @@ export function collectObservedCalls(rawJsonl: string): readonly ObservedMcpCall
   }
   for (const [callId, callArguments] of started) {
     calls.push(Object.freeze({
+      source: "direct_mcp",
       callId,
       startedSeen: true,
       arguments: callArguments,
       text: null,
       structuredContent: null,
     }));
+  }
+  for (const observation of collectCodeAwaitTerminalOutputs(rawJsonl)) {
+    if (!calls.some((call) => call.source === "direct_mcp" && call.text === observation.text)) {
+      calls.push(observation);
+    }
   }
   return Object.freeze(calls);
 }
@@ -304,14 +377,17 @@ export function evaluateDelivery(
   const observedTextSha256 = observation?.text === null || observation?.text === undefined
     ? null
     : sha256(observation.text);
-  const requestMatches = observation ? isDeepStrictEqual(observation.arguments, request) : null;
-  const structuredContentMatches = observation ? isDeepStrictEqual(observation.structuredContent, result) : null;
+  const directObservation = observation?.source === "direct_mcp";
+  const requestMatches = directObservation ? isDeepStrictEqual(observation.arguments, request) : null;
+  const structuredContentMatches = directObservation ? isDeepStrictEqual(observation.structuredContent, result) : null;
+  const sourceMatches = observation?.source === "code_await" ||
+    (directObservation && requestMatches && structuredContentMatches);
   const deliveryStatus = sessionMatches.length > 1 || (sessionMatches.length === 0 && callMatches.length > 1)
     ? "ambiguous"
     : observation?.text === null || observation?.text === undefined
       ? "missing"
-      : sessionMatches.length === 1 && observation.startedSeen && requestMatches &&
-          observedTextSha256 === serializedTextSha256 && structuredContentMatches
+      : sessionMatches.length === 1 && observation.startedSeen && sourceMatches &&
+          observedTextSha256 === serializedTextSha256
         ? "matched"
         : "mismatch";
   return Object.freeze({

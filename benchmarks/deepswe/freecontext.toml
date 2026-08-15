@@ -21,7 +21,7 @@ credential_env = "TOKENRHYTHM_API_KEY"
 provider = "tokenrhythm"
 model_id = "deepseek-v4-flash-0731"
 context_window = 1000000
-max_output_tokens = 4096
+max_output_tokens = 8192
 thinking_level = "off"
 
 [models.tokenrhythm.openai_compat]

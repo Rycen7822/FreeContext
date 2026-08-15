@@ -9,18 +9,20 @@ import type { ContextTokenCounter } from "../runtime/context-budget.js";
 import { GigatokenCounter } from "../runtime/gigatoken-counter.js";
 import { resolveWorkspaceRevision } from "../runtime/workspace-revision.js";
 import { defaultSessionDirectory } from "../session/store.js";
+import { createWorkspace } from "../tools/workspace.js";
 import {
   FreeContextRequestSchema,
   FreeContextResultSchema,
   SERVER_INSTRUCTIONS,
   TOOL_DESCRIPTION,
 } from "./contracts.js";
-import { createGatherContextHandler } from "./tool.js";
+import { createGatherContextHandler, InvocationContextError } from "./tool.js";
 import type { GatherContextHandlerDependencies, SingleFlightExecutor } from "./tool.js";
 
 export interface McpServerArguments {
   readonly configFile?: string;
   readonly sessionDirectory: string;
+  readonly workspaceRoot?: string;
 }
 
 export interface FreeContextMcpServerDependencies {
@@ -50,7 +52,7 @@ export function parseMcpServerArgs(
   const values = new Map<string, string>();
   for (let index = 0; index < argv.length; index += 1) {
     const flag = argv[index];
-    if (flag !== "--config" && flag !== "--session-dir") {
+    if (flag !== "--config" && flag !== "--session-dir" && flag !== "--workspace-root") {
       throw new ConfigurationError(`Unknown MCP server argument: ${flag ?? "<missing>"}`);
     }
     if (values.has(flag)) throw new ConfigurationError(`Duplicate MCP server argument: ${flag}`);
@@ -62,12 +64,29 @@ export function parseMcpServerArgs(
 
   const configuredSessionDirectory = values.get("--session-dir") ?? env.FREECONTEXT_SESSION_DIR?.trim();
   const configFile = values.get("--config");
+  const workspaceRoot = values.get("--workspace-root");
+  if (workspaceRoot && !path.isAbsolute(workspaceRoot)) {
+    throw new ConfigurationError("--workspace-root requires an absolute path.");
+  }
   return Object.freeze({
     ...(configFile ? { configFile: path.resolve(configFile) } : {}),
     sessionDirectory: configuredSessionDirectory
       ? path.resolve(configuredSessionDirectory)
       : defaultSessionDirectory(env),
+    ...(workspaceRoot ? { workspaceRoot } : {}),
   });
+}
+
+export async function resolveMcpServerArguments(
+  options: Readonly<McpServerArguments>,
+): Promise<Readonly<McpServerArguments>> {
+  if (!options.workspaceRoot) return options;
+  try {
+    const workspace = await createWorkspace(options.workspaceRoot);
+    return Object.freeze({ ...options, workspaceRoot: workspace.root });
+  } catch (error) {
+    throw new ConfigurationError(`Invalid MCP workspace root: ${options.workspaceRoot}`, { cause: error });
+  }
 }
 
 export function createSingleFlightExecutor(): SingleFlightExecutor {
@@ -95,21 +114,48 @@ export function createFreeContextMcpServer(
   );
   const invocationContextProvider = dependencies.invocationContextProvider ?? (async (metadata: unknown) => {
     if (!metadata || typeof metadata !== "object" || !("requestId" in metadata)) {
-      throw new ConfigurationError("The MCP host did not supply a request identity.");
+      throw new InvocationContextError(
+        "missing_request_identity",
+        "The MCP host did not supply a request identity.",
+      );
     }
     const requestId = (metadata as Readonly<{ requestId?: unknown }>).requestId;
     if (typeof requestId !== "string" && typeof requestId !== "number") {
-      throw new ConfigurationError("The MCP host supplied an invalid request identity.");
+      throw new InvocationContextError(
+        "invalid_request_identity",
+        "The MCP host supplied an invalid request identity.",
+      );
     }
-    const roots = await server.server.listRoots();
-    if (roots.roots.length !== 1) {
-      throw new ConfigurationError("FreeContext requires exactly one MCP workspace root.");
+    let workspaceRoot = options.workspaceRoot;
+    if (!workspaceRoot) {
+      const roots = await server.server.listRoots().catch((error: unknown) => {
+        throw new InvocationContextError(
+          "workspace_roots_unavailable",
+          "The MCP host did not provide workspace roots.",
+          { cause: error },
+        );
+      });
+      if (roots.roots.length === 0) {
+        throw new InvocationContextError(
+          "missing_workspace_root",
+          "FreeContext requires one MCP workspace root.",
+        );
+      }
+      if (roots.roots.length > 1) {
+        throw new InvocationContextError(
+          "multiple_workspace_roots",
+          "FreeContext requires exactly one MCP workspace root.",
+        );
+      }
+      const root = roots.roots[0];
+      if (!root || !root.uri.startsWith("file://")) {
+        throw new InvocationContextError(
+          "non_file_workspace_root",
+          "FreeContext requires one file:// MCP workspace root.",
+        );
+      }
+      workspaceRoot = await realpath(fileURLToPath(root.uri));
     }
-    const root = roots.roots[0];
-    if (!root || !root.uri.startsWith("file://")) {
-      throw new ConfigurationError("FreeContext requires one file:// MCP workspace root.");
-    }
-    const workspaceRoot = await realpath(fileURLToPath(root.uri));
     return Object.freeze({
       invocationId: randomUUID(),
       callId: String(requestId),
@@ -177,7 +223,8 @@ export function createFreeContextMcpServer(
 }
 
 export async function runMcpServer(argv: readonly string[] = process.argv.slice(2)): Promise<void> {
-  const runtime = createFreeContextMcpServer(parseMcpServerArgs(argv));
+  const options = await resolveMcpServerArguments(parseMcpServerArgs(argv));
+  const runtime = createFreeContextMcpServer(options);
   if (process.env.FREECONTEXT_DEBUG === "1") {
     runtime.server.server.onerror = (error) => process.stderr.write(`[freecontext-mcp] ${error.message}\n`);
   }

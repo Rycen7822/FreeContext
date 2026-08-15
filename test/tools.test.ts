@@ -85,6 +85,24 @@ test("read, rg, and glob expose bounded repository evidence", async () => {
   }
 });
 
+test("bat reports the actual observed end line for provenance", async (t) => {
+  const executables = await detectToolExecutables();
+  if (!executables.bat) return t.skip("bat is not installed");
+  const root = await setup();
+  try {
+    const workspace = await createWorkspace(root);
+    const toolset = await createRepositoryTools({ Type: FakeType, workspace, config: baseConfig(), executables });
+    const result = await findTool(toolset.tools, "bat").execute("bat-1", {
+      path: "src/app.js",
+      start_line: 2,
+      end_line: 99,
+    });
+    assert.equal((result.details as { readonly actualEndLine?: number }).actualEndLine, 5);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test("model globs cannot re-include protected files", async () => {
   const root = await setup();
   try {

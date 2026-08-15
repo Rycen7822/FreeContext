@@ -56,7 +56,10 @@ test("cost analysis batches all visible text once and separates local from provi
       }],
     });
     await writeJson(path.join(treatment, "freecontext-sessions", "ready.json"), {
-      capture: { primary: { metrics: { usage: { input: 20, output: 5, cacheRead: 4, reasoning: 2, totalTokens: 25 } } } },
+      capture: {
+        schemaVersion: "freecontext-explorer-capture-v2",
+        primary: { metrics: { usage: { input: 20, output: 5, cacheRead: 4, reasoning: 2, totalTokens: 25 } } },
+      },
       runtimeEvents: [],
     });
     await writeJson(path.join(treatment, "freecontext-sessions", "failed.json"), {

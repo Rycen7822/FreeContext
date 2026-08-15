@@ -1,7 +1,9 @@
 import { FreeContextError, SessionPersistenceError } from "../errors.js";
 import { compileFreeContextResult } from "../output/evidence.js";
+import type { ExplorerCandidate } from "../output/evidence.js";
 import type { ContextTokenCounter } from "../runtime/context-budget.js";
-import { extractAssistantText } from "../runtime/pi-session.js";
+import { isSubmitEvidenceDetails, observedReadFromToolResult } from "../runtime/finalization.js";
+import type { ObservedRead } from "../runtime/finalization.js";
 import type { FreeContextRuntimeEvent } from "../runtime/pi-session.js";
 import { runExplorer } from "../runtime/run.js";
 import { captureError, captureRuntimeEvent } from "../runtime/session-capture.js";
@@ -65,10 +67,9 @@ function createAbortGate(signal: AbortSignal): Readonly<{ promise: Promise<void>
   });
 }
 
-function latestCandidateFromEvent(event: FreeContextRuntimeEvent): string {
-  if (event.type === "message_update") return extractAssistantText(event.message);
-  if (event.type === "turn_end") return extractAssistantText(event.message);
-  return "";
+function latestCandidateFromEvent(event: FreeContextRuntimeEvent): Readonly<ExplorerCandidate> | null {
+  if (event.type !== "tool_execution_end" || event.isError) return null;
+  return isSubmitEvidenceDetails(event.result?.details) ? event.result.details.candidate : null;
 }
 
 function captureBytes(capture: Readonly<ExplorerSessionCapture> | null): number {
@@ -102,6 +103,22 @@ export async function executeSingleCall(
   const terminalWinner = (): TerminalWinner => deadline.didExpire() ? "deadline" : "abort";
 
   try {
+    if (operationSignal.aborted) {
+      const winner = terminalWinner();
+      dependencies.terminalStore.tryClaim({
+        invocationId: callContext.invocationId,
+        winner,
+        decidedAt: now().toISOString(),
+        lateDiagnosticFile: null,
+      });
+      return execution(failedResult({
+        code: "DEADLINE_EXCEEDED",
+        reason: errorReason("DEADLINE_EXCEEDED"),
+        sessionId: callContext.invocationId,
+        sessionFile: null,
+        request,
+      }), { terminalWinner: winner, deadlineMs: dependencies.deadlineMs });
+    }
     const reservationPromise = reserve({
       request,
       ...callContext,
@@ -153,7 +170,9 @@ export async function executeSingleCall(
     const lateDiagnosticFile = lateDiagnosticFileFor(reservation.invocation.sessionFile);
     const runtimeEvents: McpRuntimeEvent[] = [];
     let capture: Readonly<ExplorerSessionCapture> | null = null;
-    let latestCandidate = "";
+    let latestCandidate: Readonly<ExplorerCandidate> | null = null;
+    const latestObservedReads: ObservedRead[] = [];
+    const observedReadKeys = new Set<string>();
     let resolveAbortClaim: () => void = () => {};
     const abortClaimed = new Promise<void>((resolve) => { resolveAbortClaim = resolve; });
 
@@ -181,6 +200,16 @@ export async function executeSingleCall(
           onEvent: (event, state) => {
             const candidate = latestCandidateFromEvent(event);
             if (candidate) latestCandidate = candidate;
+            if (event.type === "tool_execution_end") {
+              const observed = observedReadFromToolResult(event.toolName, event.result, event.isError);
+              if (observed) {
+                const key = `${observed.tool}\0${observed.path}\0${observed.startLine}\0${observed.endLine}\0${observed.content}`;
+                if (!observedReadKeys.has(key)) {
+                  observedReadKeys.add(key);
+                  latestObservedReads.push(observed);
+                }
+              }
+            }
             runtimeEvents.push(Object.freeze({
               event: captureRuntimeEvent(event),
               state: Object.freeze({ ...state }),
@@ -234,10 +263,13 @@ export async function executeSingleCall(
       const terminalError = captureError(new FreeContextError(errorReason(code), { code }));
       let result: Readonly<FreeContextResult>;
       try {
-        result = await compile(request, reservation.invocation, latestCandidate, {
-          errorCode: code,
-          reason: errorReason(code),
-        });
+        result = await compile(
+          request,
+          reservation.invocation,
+          latestCandidate,
+          { errorCode: code, reason: errorReason(code) },
+          latestObservedReads,
+        );
       } catch {
         result = failedResult({
           code,

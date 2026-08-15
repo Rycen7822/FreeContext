@@ -1,6 +1,7 @@
 import type { CliConfigOverrides, FreeContextConfig, ResolvedRouteConfig } from "../config.js";
 import { resolveConfig } from "../config.js";
 import { ProviderError } from "../errors.js";
+import type { FreeContextRequest } from "../mcp/contracts.js";
 import { loadSystemPrompt } from "../prompt.js";
 import type { RepositoryToolSet, ToolExecutables, Workspace } from "../tools/contracts.js";
 import { createRepositoryTools } from "../tools/index.js";
@@ -52,6 +53,7 @@ export async function runPrimaryRoute({
   cli,
   workspace,
   promptText,
+  finalizationRequest,
   signal,
   onEvent,
   startedAt,
@@ -60,6 +62,7 @@ export async function runPrimaryRoute({
   cli: CliConfigOverrides;
   workspace: Workspace;
   promptText: string;
+  finalizationRequest: Readonly<FreeContextRequest>;
   signal?: AbortSignal;
   onEvent?: PiSessionEventHandler;
   startedAt: number;
@@ -100,6 +103,7 @@ export async function runPrimaryRoute({
         config,
         systemPrompt: cachedSystemPrompt,
         promptText,
+        finalizationRequest,
         tools: repositoryTools.tools,
         ...(signal ? { signal } : {}),
         ...(onEvent ? { onEvent } : {}),

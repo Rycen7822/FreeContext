@@ -57,11 +57,11 @@ function renderEligibilityPolicy(): string {
   const gates = FREECONTEXT_ELIGIBILITY_POLICY.gates
     .map((gate) => `Gate ${gate.order}: ${gate.instruction}`)
     .join(" ");
-  return `${gates} ${FREECONTEXT_ELIGIBILITY_POLICY.invariants.join(" ")}`;
+  return `For a call-eligible task, make gather_context your first read-only exploration action. ${gates} ${FREECONTEXT_ELIGIBILITY_POLICY.invariants.join(" ")}`;
 }
 
 export const TOOL_DESCRIPTION = renderEligibilityPolicy();
-export const SERVER_INSTRUCTIONS = `FreeContext exposes one read-only ${FREECONTEXT_ELIGIBILITY_POLICY.toolName} tool governed by ${FREECONTEXT_ELIGIBILITY_POLICY.id} in its tool description. FreeContext binds each invocation to the public MCP request id and one file workspace root; the caller supplies only the complete task and evidence questions. Invoke once per task, await the same outer cell while pending, and never replay before the terminal result. Never send credentials or source dumps, or retry unless the prior result names a material gap.`;
+export const SERVER_INSTRUCTIONS = `FreeContext exposes one read-only ${FREECONTEXT_ELIGIBILITY_POLICY.toolName} tool governed by ${FREECONTEXT_ELIGIBILITY_POLICY.id} in its tool description. FreeContext binds each invocation to the public MCP request id and either an operator-configured absolute workspace root or exactly one public MCP file root; the caller supplies only the complete task and evidence questions. Invoke once per task, await the same outer cell while pending, and never replay before the terminal result. Never send credentials or source dumps, or retry unless the prior result names a material gap.`;
 
 export const MODEL_RESULT_MAX_BYTES = 8_192;
 export const RESULT_LIMITS = Object.freeze({
@@ -113,12 +113,12 @@ const uniqueQuestions = ({ evidenceQuestions }: { evidenceQuestions: readonly { 
 
 const RawFreeContextRequestSchema = z.object({
   ...requestFields,
-  knownRefs: z.array(KnownReferenceSchema).max(256),
+  knownRefs: z.array(KnownReferenceSchema).max(256).default([]),
 }).strict().superRefine(uniqueQuestions);
 
 export const FreeContextRequestSchema = z.object({
   ...requestFields,
-  knownRefs: z.array(KnownReferenceSchema).max(12),
+  knownRefs: z.array(KnownReferenceSchema).max(12).default([]),
 }).strict().superRefine(uniqueQuestions);
 
 export const FreeContextInvocationContextSchema = z.object({

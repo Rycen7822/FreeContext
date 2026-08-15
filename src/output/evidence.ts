@@ -14,16 +14,17 @@ import type {
   FreeContextResult,
 } from "../mcp/contracts.js";
 import { assertDirectFileSize, createWorkspace } from "../tools/workspace.js";
-import { clipSingleLine, parseExplorerCandidate, readTextLines } from "./candidate.js";
+import { clipSingleLine, readTextLines } from "./candidate.js";
+import type { ExplorerCandidate } from "./candidate.js";
 import { cropAroundFocus, normalizeCandidatePath, selectEvidence } from "./evidence-selection.js";
 import type { ValidatedEvidenceCandidate } from "./evidence-selection.js";
 import { fitCompiledResult } from "./result-size.js";
+import type { ObservedRead } from "../runtime/finalization.js";
 
-export { parseExplorerCandidate } from "./candidate.js";
 export type {
+  ExplorerCandidate,
   ExplorerEvidenceCandidate,
   ExplorerGapCandidate,
-  ParsedExplorerCandidate,
 } from "./candidate.js";
 
 export interface FreeContextTerminal {
@@ -34,12 +35,13 @@ export interface FreeContextTerminal {
 export async function compileFreeContextResult(
   rawRequest: Readonly<FreeContextRequest>,
   rawInvocation: Readonly<FreeContextInvocationContext>,
-  rawCandidate: unknown,
+  rawCandidate: Readonly<ExplorerCandidate> | null,
   terminal: Readonly<FreeContextTerminal> = Object.freeze({ errorCode: null }),
+  observedReads: readonly Readonly<ObservedRead>[] = Object.freeze([]),
 ): Promise<Readonly<FreeContextResult>> {
   const request = FreeContextRequestSchema.parse(rawRequest);
   const invocation = FreeContextInvocationContextSchema.parse(rawInvocation);
-  const candidate = parseExplorerCandidate(rawCandidate);
+  const candidate = rawCandidate ?? Object.freeze({ summary: "", evidence: [], gaps: [] });
   const workspace = await createWorkspace(invocation.workspaceRoot);
   const questions = new Map(request.evidenceQuestions.map((question) => [question.id, question]));
   const fileLines = new Map<string, readonly string[]>();
@@ -65,6 +67,13 @@ export async function compileFreeContextResult(
       && item.focusLine <= item.endLine;
     if (!normalizedPath || !validNumbers) {
       validationReasons.set(item.questionId, "Evidence path, range, or focus line was invalid.");
+      continue;
+    }
+    const observed = observedReads.some((read) => (
+      read.path === normalizedPath && item.startLine >= read.startLine && item.endLine <= read.endLine
+    ));
+    if (!observed) {
+      validationReasons.set(item.questionId, "Evidence range was not present in a successful read observation.");
       continue;
     }
     try {
@@ -122,7 +131,7 @@ export async function compileFreeContextResult(
   const requiredCovered = request.evidenceQuestions
     .filter((question) => question.required)
     .every((question) => covered.has(question.id));
-  const effectiveError = terminal.errorCode ?? (candidate.problems.length > 0 ? "INTERNAL_ERROR" : null);
+  const effectiveError = terminal.errorCode;
   const status = evidence.length === 0
     ? (effectiveError ? "failed" : "not_found")
     : (requiredCovered && effectiveError === null ? "ready" : "partial");

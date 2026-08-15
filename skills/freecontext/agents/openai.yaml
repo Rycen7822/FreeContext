@@ -1,8 +1,8 @@
 interface:
   display_name: "FreeContext"
-  short_description: "Manual bridge to FreeContext MCP"
+  short_description: "Open FreeContext before complex reads"
 policy:
-  allow_implicit_invocation: false
+  allow_implicit_invocation: true
 dependencies:
   tools:
     - type: "mcp"

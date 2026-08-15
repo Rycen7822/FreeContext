@@ -36,6 +36,7 @@ _REMOTE_CODE_MODE_HOST = _REMOTE_ROOT / "runtime-bin/codex-code-mode-host"
 _REMOTE_RG = _REMOTE_ROOT / "runtime-bin/rg"
 _REMOTE_AGENT_DIR = PurePosixPath("/logs/agent")
 _REMOTE_SESSION_DIR = _REMOTE_AGENT_DIR / "freecontext-sessions"
+_REMOTE_WORKSPACE_ROOT = PurePosixPath("/app")
 
 
 def _runtime_archive() -> Path:
@@ -88,6 +89,7 @@ class PierCodexFreeContext(PierCodexBase):
     def _freecontext_mcp_config_toml(self) -> str:
         return f'''[mcp_servers.freecontext]
 command = "{_REMOTE_LAUNCHER.as_posix()}"
+args = ["--workspace-root", "{_REMOTE_WORKSPACE_ROOT.as_posix()}"]
 env_vars = ["HTTP_PROXY", "HTTPS_PROXY", "http_proxy", "https_proxy", "NO_PROXY", "no_proxy"]
 required = true
 startup_timeout_sec = 30
@@ -187,7 +189,7 @@ approval_mode = "approve"
                 f"FREECONTEXT_PYTHON={_REMOTE_PYTHON.as_posix()}\n"
                 "export TOKENRHYTHM_API_KEY FREECONTEXT_PYTHON NODE_USE_ENV_PROXY=1\n"
                 f"exec {_REMOTE_NODE.as_posix()} {mcp_server} --config {config} "
-                f"--session-dir {_REMOTE_SESSION_DIR.as_posix()}\n"
+                f"--session-dir {_REMOTE_SESSION_DIR.as_posix()} \"$@\"\n"
                 "SH\n"
                 f"chmod 755 {_REMOTE_LAUNCHER.as_posix()}; "
                 f"ln -sfn {_REMOTE_CODEX.as_posix()} /usr/local/bin/codex; "

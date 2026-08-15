@@ -19,6 +19,25 @@ export interface SingleFlightExecutor {
   run<T>(task: () => Promise<T>): Promise<T>;
 }
 
+export type InvocationContextFailureCategory =
+  | "missing_request_identity"
+  | "invalid_request_identity"
+  | "workspace_roots_unavailable"
+  | "missing_workspace_root"
+  | "multiple_workspace_roots"
+  | "non_file_workspace_root"
+  | "invalid_call_context";
+
+export class InvocationContextError extends Error {
+  readonly category: InvocationContextFailureCategory;
+
+  constructor(category: InvocationContextFailureCategory, message: string, options: ErrorOptions = {}) {
+    super(message, options);
+    this.name = "InvocationContextError";
+    this.category = category;
+  }
+}
+
 export interface GatherContextHandlerDependencies extends Omit<
   SingleCallDependencies,
   "deadlineClock" | "deadlineMs" | "terminalStore"
@@ -69,13 +88,22 @@ export function createGatherContextHandler(
     let callContext: Readonly<FreeContextCallContext>;
     try {
       callContext = FreeContextCallContextSchema.parse(await invocationContextProvider(invocationMetadata));
-    } catch {
+    } catch (error) {
+      const contextFailure = error instanceof InvocationContextError
+        ? error
+        : new InvocationContextError(
+          "invalid_call_context",
+          "The MCP host did not supply a valid FreeContext call context.",
+        );
       return callResult(failedResult({
         code: "INVALID_REQUEST",
-        reason: "The MCP host did not supply a valid FreeContext call context.",
+        reason: contextFailure.message,
         sessionId: "unbound-invocation",
         sessionFile: null,
-      }), undefined, { callContextBound: false });
+      }), undefined, {
+        callContextBound: false,
+        contextFailure: contextFailure.category,
+      });
     }
 
     let request;

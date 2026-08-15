@@ -62,6 +62,6 @@ export function buildUserPrompt(request: Readonly<FreeContextRequest>): string {
     ...request.evidenceQuestions.map((question) => (
       `- [${question.role}][${question.id}][${question.required ? "required" : "optional"}] ${question.question}`
     )),
-    "Locate and verify evidence for these exact question IDs and roles, then return only the required <final_answer> block.",
+    "Locate and verify evidence for these exact question IDs and roles. Submit verified evidence with submit_evidence when coverage is complete or the best supported partial result is known.",
   ].join("\n");
 }

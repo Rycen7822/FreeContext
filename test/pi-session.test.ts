@@ -13,8 +13,8 @@ import { ContextBudgetError, ProviderError } from "../src/errors.js";
 import { createModel, createRequestOptions } from "../src/runtime/model.js";
 import type { PiBindings } from "../src/runtime/pi-bindings.js";
 import type { FreeContextRuntimeEvent, PiSessionOptions } from "../src/runtime/pi-session.js";
-import { runPiSession as runPiSessionBase } from "../src/runtime/pi-session.js";
-import { assistantText, baseConfig, fakeBindings } from "./helpers.js";
+import { runIsolatedFinalizer, runPiSession as runPiSessionBase } from "../src/runtime/pi-session.js";
+import { assistantText, baseConfig, baseRequest, fakeBindings } from "./helpers.js";
 
 function bindingsWith(handler: PiBindings["runAgentLoop"]): PiBindings {
   return fakeBindings(handler);
@@ -24,7 +24,13 @@ const tokenCounter = {
   countBatch: async (texts: readonly string[]) => texts.map((text) => Math.ceil(text.length / 4)),
 };
 
-const runPiSession = (options: PiSessionOptions) => runPiSessionBase({ ...options, tokenCounter });
+type TestPiSessionOptions = Omit<PiSessionOptions, "finalizationRequest" | "tokenCounter"> &
+  Partial<Pick<PiSessionOptions, "finalizationRequest">>;
+const runPiSession = (options: TestPiSessionOptions) => runPiSessionBase({
+  ...options,
+  finalizationRequest: options.finalizationRequest ?? baseRequest(),
+  tokenCounter,
+});
 
 const readTool: AgentTool = {
   name: "read",
@@ -42,6 +48,43 @@ const toolResult = {
   isError: false,
   timestamp: 0,
 };
+
+const observedReadResult = {
+  content: [{ type: "text" as const, text: "[read src/index.ts:1-3]\n1 export const entry = true;" }],
+  details: {
+    tool: "read" as const,
+    path: "src/index.ts",
+    startLine: 1,
+    requestedEndLine: 3,
+    actualEndLine: 3,
+    text: "1 export const entry = true;",
+    empty: false,
+    truncated: false,
+  },
+};
+
+function submissionMessage(includeRequiredTests = false) {
+  return assistantText("", {
+    content: [{
+      type: "toolCall" as const,
+      id: "submit-1",
+      name: "submit_evidence",
+      arguments: {
+        summary: "Implementation found.",
+        evidence: [{
+          role: "implementation",
+          question_id: "impl",
+          path: "src/index.ts",
+          start_line: 1,
+          end_line: 3,
+          focus_line: 2,
+          why: "Defines the entry point.",
+        }],
+        gaps: includeRequiredTests ? [{ question_id: "tests", reason: "No test evidence was found." }] : [],
+      },
+    }],
+  });
+}
 
 test("runPiSession wires the low-level Pi loop in parallel mode", async () => {
   const config = baseConfig();
@@ -212,112 +255,51 @@ test("budget hooks block excess calls and force a no-tool final turn", async () 
     tools: [readTool],
   });
   assert.ok(snapshot?.context);
-  assert.deepEqual(snapshot.context.tools, []);
+  assert.deepEqual(snapshot.context.tools?.map((tool) => tool.name), ["submit_evidence"]);
+  assert.equal(snapshot.context.systemPrompt.includes("untrusted data"), true);
   const last = snapshot.context.messages.at(-1);
   assert.equal(last?.role, "user");
-  assert.match(typeof last?.content === "string" ? last.content : "", /budget is exhausted/u);
-  assert.match(typeof last?.content === "string" ? last.content : "", /at most 6 role\/question\/focus evidence spans/u);
-  assert.match(typeof last?.content === "string" ? last.content : "", /closing <\/final_answer> tag/u);
+  const packet = JSON.parse(typeof last?.content === "string" ? last.content : "{}") as Record<string, unknown>;
+  assert.equal(packet.task, baseRequest().taskText);
+  assert.deepEqual(packet.repositoryObservations, []);
   assert.equal(result.metrics.toolCalls, 18);
   assert.equal(result.metrics.blockedToolCalls, 1);
   assert.equal(result.metrics.finalizationInjected, true);
   assert.equal(result.metrics.finalizationReason, "tool_limit");
 });
 
-test("a role-complete candidate ends exploration before the turn limit", async () => {
+test("a sole valid typed submission ends exploration before the turn limit", async () => {
   const config = baseConfig();
-  const final = assistantText(
-    "<final_answer>\nsummary: Implementation found.\nevidence:\n" +
-      "- [implementation][impl] src/index.ts:1-3 (focus 2) — Defines the entry point.\n" +
-      "gaps:\n-\n</final_answer>",
-  );
+  const submittedMessage = submissionMessage();
+  const submittedCall = submittedMessage.content[0];
+  if (submittedCall?.type !== "toolCall") throw new Error("missing submit call");
+  const final = {
+    ...submittedMessage,
+    content: [
+      { type: "thinking" as const, thinking: "private analysis is ignored" },
+      { type: "text" as const, text: "visible text is audit-only" },
+      submittedCall,
+    ],
+  };
   let shouldStop = false;
   const bindings = bindingsWith(async (prompts, context, loopConfig, emit) => {
     await emit({ type: "turn_start" });
+    await emit({ type: "tool_execution_end", toolCallId: "read-1", toolName: "read", result: observedReadResult, isError: false });
+    const submit = context.tools?.find((tool) => tool.name === "submit_evidence");
+    assert.ok(submit);
+    const call = final.content.find((block) => block.type === "toolCall");
+    if (!call) throw new Error("missing submit call");
+    assert.equal(await loopConfig.beforeToolCall?.({ assistantMessage: final, toolCall: call, args: call.arguments, context }), undefined);
+    const submitted = await submit.execute(call.id, call.arguments);
+    await emit({ type: "tool_execution_end", toolCallId: call.id, toolName: call.name, result: submitted, isError: false });
+    await emit({ type: "turn_end", message: final, toolResults: [] });
     shouldStop = await loopConfig.shouldStopAfterTurn?.({
       message: final,
       toolResults: [],
       context: { ...context, messages: [...prompts, final] },
       newMessages: [...prompts, final],
     }) ?? false;
-    await emit({ type: "turn_end", message: final, toolResults: [] });
     return [...prompts, final];
-  });
-  const result = await runPiSession({
-    bindings,
-    model: createModel(config),
-    requestOptions: createRequestOptions(config),
-    config,
-    systemPrompt: "system",
-    promptText: "Evidence questions:\n- [implementation][impl][required] Locate the entry point.",
-    tools: [readTool],
-  });
-
-  assert.equal(shouldStop, true);
-  assert.equal(result.metrics.turns, 1);
-  assert.equal(result.metrics.finalizationReason, "coverage");
-});
-
-test("a valid partial candidate is terminal instead of triggering a repair turn", async () => {
-  const config = baseConfig();
-  const final = assistantText(
-    "<final_answer>\nsummary: Implementation found; tests remain unresolved.\nevidence:\n" +
-      "- [implementation][impl] src/index.ts:1-3 (focus 2) — Defines the entry point.\n" +
-      "gaps:\n- [tests] No test evidence was found.\n</final_answer>",
-  );
-  let shouldStop = false;
-  const bindings = bindingsWith(async (prompts, context, loopConfig, emit) => {
-    await emit({ type: "turn_start" });
-    shouldStop = await loopConfig.shouldStopAfterTurn?.({
-      message: final,
-      toolResults: [],
-      context: { ...context, messages: [...prompts, final] },
-      newMessages: [...prompts, final],
-    }) ?? false;
-    await emit({ type: "turn_end", message: final, toolResults: [] });
-    return [...prompts, final];
-  });
-  const result = await runPiSession({
-    bindings,
-    model: createModel(config),
-    requestOptions: createRequestOptions(config),
-    config,
-    systemPrompt: "system",
-    promptText:
-      "Evidence questions:\n- [implementation][impl][required] Locate the entry point.\n" +
-      "- [test][tests][required] Locate the tests.",
-    tools: [readTool],
-  });
-
-  assert.equal(shouldStop, true);
-  assert.equal(result.metrics.turns, 1);
-  assert.equal(result.metrics.finalizationReason, "partial_candidate");
-});
-
-test("the fifth turn starts without tools and receives one finalization instruction", async () => {
-  const config = baseConfig();
-  const exploratory = assistantText("Still exploring.");
-  let fifthTurnContext: AgentContext | undefined;
-  const bindings = bindingsWith(async (prompts, context, loopConfig, emit) => {
-    let activeContext: AgentContext = { ...context, messages: [...prompts] };
-    for (let turn = 1; turn <= 4; turn += 1) {
-      await emit({ type: "turn_start" });
-      const result = {
-        ...toolResult,
-        toolCallId: `call-${turn}`,
-        content: [{ type: "text" as const, text: `src/file-${turn}.ts:1-2` }],
-      };
-      const update = await loopConfig.prepareNextTurn?.({
-        message: exploratory,
-        context: activeContext,
-        newMessages: [exploratory, result],
-        toolResults: [result],
-      });
-      if (update?.context) activeContext = update.context;
-      await emit({ type: "turn_end", message: exploratory, toolResults: [result] });
-    }
-    fifthTurnContext = activeContext;
-    return [...prompts, exploratory];
   });
   const result = await runPiSession({
     bindings,
@@ -329,25 +311,306 @@ test("the fifth turn starts without tools and receives one finalization instruct
     tools: [readTool],
   });
 
-  assert.deepEqual(fifthTurnContext?.tools, []);
-  const finalizationMessages = fifthTurnContext?.messages.filter(
-    (message) => message.role === "user" && typeof message.content === "string" &&
-      message.content.includes("exploration budget is exhausted"),
-  ) ?? [];
-  assert.equal(finalizationMessages.length, 1);
-  assert.equal(result.metrics.turns, 4);
+  assert.equal(shouldStop, true);
+  assert.equal(result.metrics.turns, 1);
+  assert.equal(result.metrics.finalizationReason, "coverage");
+  assert.equal(result.terminalFailure, null);
+  assert.equal(result.candidate?.summary, "Implementation found.");
+});
+
+test("runIsolatedFinalizer starts with the production finalizer and no exploration turn", async () => {
+  const config = baseConfig();
+  const final = submissionMessage();
+  let initialCalls = 0;
+  let continuationCalls = 0;
+  const bindings = fakeBindings(async (prompts, context, loopConfig, emit) => {
+    initialCalls += 1;
+    assert.deepEqual(context.tools?.map((tool) => tool.name), ["submit_evidence"]);
+    assert.equal(context.systemPrompt.includes("untrusted data"), true);
+    assert.deepEqual(context.messages, []);
+    const prompt = prompts[0];
+    assert.equal(prompt?.role, "user");
+    const packet = JSON.parse(prompt?.role === "user" && typeof prompt.content === "string" ? prompt.content : "{}") as {
+      readonly repositoryObservations?: readonly unknown[];
+    };
+    assert.equal(packet.repositoryObservations?.length, 1);
+
+    await emit({ type: "turn_start" });
+    const submit = context.tools?.[0];
+    const call = final.content[0];
+    assert.ok(submit && call?.type === "toolCall");
+    assert.equal(await loopConfig.beforeToolCall?.({ assistantMessage: final, toolCall: call, args: call.arguments, context }), undefined);
+    const submitted = await submit.execute(call.id, call.arguments);
+    await emit({ type: "tool_execution_end", toolCallId: call.id, toolName: call.name, result: submitted, isError: false });
+    await emit({ type: "turn_end", message: final, toolResults: [] });
+    return [...prompts, final];
+  }, {
+    runAgentLoopContinue: async () => {
+      continuationCalls += 1;
+      return [];
+    },
+  });
+
+  const result = await runIsolatedFinalizer({
+    bindings,
+    model: createModel(config),
+    requestOptions: createRequestOptions(config),
+    config,
+    request: baseRequest(),
+    observedReads: [{
+      tool: "read",
+      path: "src/index.ts",
+      startLine: 1,
+      endLine: 3,
+      content: "1 export const entry = true;",
+    }],
+    tokenCounter,
+  });
+
+  assert.equal(initialCalls, 1);
+  assert.equal(continuationCalls, 0);
+  assert.equal(result.candidate?.summary, "Implementation found.");
+  assert.equal(result.terminalFailure, null);
+  assert.deepEqual(result.explorationTools, []);
+  assert.deepEqual(result.contextTools.map((tool) => tool.name), ["submit_evidence"]);
+  assert.equal(result.metrics.turns, 1);
+  assert.equal(result.metrics.toolCalls, 0);
+  assert.equal(result.metrics.providerAttempts, 1);
+  assert.equal(result.metrics.finalizationInjected, true);
+  assert.equal(result.metrics.finalizationReason, "provider_probe");
+});
+
+test("runIsolatedFinalizer rejects an oversized packet before a provider request", async () => {
+  const config = baseConfig({ contextWindow: 2_000, contextReserveTokens: 1_000 });
+  let providerCalls = 0;
+  const bindings = bindingsWith(async () => {
+    providerCalls += 1;
+    return [];
+  });
+  await assert.rejects(runIsolatedFinalizer({
+    bindings,
+    model: createModel(config),
+    requestOptions: createRequestOptions(config),
+    config,
+    request: baseRequest(),
+    observedReads: [{
+      tool: "read",
+      path: "large.ts",
+      startLine: 1,
+      endLine: 1,
+      content: "x".repeat(8_000),
+    }],
+    tokenCounter,
+  }), ContextBudgetError);
+  assert.equal(providerCalls, 0);
+});
+
+test("a valid typed partial submission is terminal without a repair turn", async () => {
+  const config = baseConfig();
+  const final = submissionMessage(true);
+  let shouldStop = false;
+  const bindings = bindingsWith(async (prompts, context, loopConfig, emit) => {
+    await emit({ type: "turn_start" });
+    await emit({ type: "tool_execution_end", toolCallId: "read-1", toolName: "read", result: observedReadResult, isError: false });
+    const submit = context.tools?.find((tool) => tool.name === "submit_evidence");
+    assert.ok(submit);
+    const call = final.content[0];
+    if (call?.type !== "toolCall") throw new Error("missing submit call");
+    const submitted = await submit.execute(call.id, call.arguments);
+    await emit({ type: "tool_execution_end", toolCallId: call.id, toolName: call.name, result: submitted, isError: false });
+    await emit({ type: "turn_end", message: final, toolResults: [] });
+    shouldStop = await loopConfig.shouldStopAfterTurn?.({
+      message: final,
+      toolResults: [],
+      context: { ...context, messages: [...prompts, final] },
+      newMessages: [...prompts, final],
+    }) ?? false;
+    return [...prompts, final];
+  });
+  const result = await runPiSession({
+    bindings,
+    model: createModel(config),
+    requestOptions: createRequestOptions(config),
+    config,
+    systemPrompt: "system",
+    promptText: "prompt",
+    finalizationRequest: {
+      ...baseRequest(),
+      evidenceQuestions: baseRequest().evidenceQuestions.map((question) => ({ ...question, required: true })),
+    },
+    tools: [readTool],
+  });
+
+  assert.equal(shouldStop, true);
+  assert.equal(result.metrics.turns, 1);
+  assert.equal(result.metrics.finalizationReason, "partial_candidate");
+});
+
+test("mixed and duplicate submit batches are blocked before repository effects", async () => {
+  const submitCall = submissionMessage().content[0];
+  if (submitCall?.type !== "toolCall") throw new Error("missing submit fixture");
+  for (const [expected, names] of [
+    ["mixed_batch", ["read", "submit_evidence"]],
+    ["duplicate_submit", ["submit_evidence", "submit_evidence"]],
+  ] as const) {
+    const message = assistantText("", {
+      content: names.map((name, index) => ({
+        type: "toolCall" as const,
+        id: `${name}-${index}`,
+        name,
+        arguments: name === "submit_evidence" ? submitCall.arguments : {},
+      })),
+    });
+    const blocked: boolean[] = [];
+    const bindings = bindingsWith(async (prompts, context, loopConfig, emit) => {
+      await emit({ type: "turn_start" });
+      for (const call of message.content) {
+        if (call.type !== "toolCall") continue;
+        const decision = await loopConfig.beforeToolCall?.({ assistantMessage: message, toolCall: call, args: call.arguments, context });
+        blocked.push(decision?.block === true);
+      }
+      await emit({ type: "turn_end", message, toolResults: [] });
+      const update = await loopConfig.prepareNextTurn?.({
+        message,
+        toolResults: [],
+        context: { ...context, messages: [...prompts, message] },
+        newMessages: [...prompts, message],
+      });
+      await loopConfig.shouldStopAfterTurn?.({
+        message,
+        toolResults: [],
+        context: update?.context ?? context,
+        newMessages: [...prompts, message],
+      });
+      return [...prompts, message];
+    });
+    const result = await runPiSession({
+      bindings,
+      model: createModel(baseConfig()),
+      requestOptions: createRequestOptions(baseConfig()),
+      config: baseConfig(),
+      systemPrompt: "system",
+      promptText: "prompt",
+      tools: [readTool],
+    });
+    assert.deepEqual(blocked, [true, true], expected);
+    assert.equal(result.metrics.toolCalls, 0, expected);
+    assert.equal(result.metrics.finalizationReason, "protocol_retry", expected);
+  }
+});
+
+test("an over-budget isolated packet fails before starting a finalizer request", async () => {
+  const config = baseConfig({ maxTurns: 2, contextWindow: 5_000, contextReserveTokens: 1_000 });
+  const response = assistantText("explored");
+  const bindings = bindingsWith(async (prompts, context, loopConfig, emit) => {
+    await emit({ type: "turn_start" });
+    await emit({ type: "turn_end", message: response, toolResults: [] });
+    const update = await loopConfig.prepareNextTurn?.({
+      message: response,
+      toolResults: [],
+      context: { ...context, messages: [...prompts, response] },
+      newMessages: [...prompts, response],
+    });
+    await loopConfig.shouldStopAfterTurn?.({
+      message: response,
+      toolResults: [],
+      context: update?.context ?? context,
+      newMessages: [...prompts, response],
+    });
+    return [...prompts, response];
+  });
+  const result = await runPiSession({
+    bindings,
+    model: createModel(config),
+    requestOptions: createRequestOptions(config),
+    config,
+    systemPrompt: "system",
+    promptText: "prompt",
+    finalizationRequest: { ...baseRequest(), taskText: "x".repeat(16_000) },
+    tools: [],
+  });
+  assert.equal(result.terminalFailure, "context_budget");
+  assert.equal(result.metrics.providerAttempts, 1);
+  assert.equal(result.metrics.finalizationInjected, false);
+});
+
+test("the fifth turn receives only the isolated packet and submit tool", async () => {
+  const config = baseConfig();
+  let fifthTurnContext: AgentContext | undefined;
+  const bindings = bindingsWith(async (prompts, context, loopConfig, emit) => {
+    let activeContext: AgentContext = { ...context, messages: [...prompts] };
+    for (let turn = 1; turn <= 4; turn += 1) {
+      const exploratory = assistantText("", {
+        content: [{ type: "toolCall", id: `call-${turn}`, name: "read", arguments: { path: `src/file-${turn}.ts` } }],
+        stopReason: "toolUse",
+      });
+      await emit({ type: "turn_start" });
+      const result = {
+        ...toolResult,
+        toolCallId: `call-${turn}`,
+        content: [{ type: "text" as const, text: `src/file-${turn}.ts:1-2` }],
+      };
+      await emit({
+        type: "tool_execution_end",
+        toolCallId: `call-${turn}`,
+        toolName: "read",
+        result: {
+          content: result.content,
+          details: { tool: "read", path: `src/file-${turn}.ts`, startLine: 1, actualEndLine: 2, truncated: false },
+        },
+        isError: false,
+      });
+      const completedContext = { ...activeContext, messages: [...activeContext.messages, exploratory, result] };
+      await emit({ type: "turn_end", message: exploratory, toolResults: [result] });
+      const update = await loopConfig.prepareNextTurn?.({
+        message: exploratory,
+        context: completedContext,
+        newMessages: [exploratory, result],
+        toolResults: [result],
+      });
+      activeContext = update?.context ?? completedContext;
+    }
+    fifthTurnContext = activeContext;
+    return [...prompts, assistantText("exploration complete")];
+  });
+  const result = await runPiSession({
+    bindings,
+    model: createModel(config),
+    requestOptions: createRequestOptions(config),
+    config,
+    systemPrompt: "system",
+    promptText: "Evidence questions:\n- [implementation][impl][required] Where is it implemented?\n- [test][tests][required] Where is it tested?",
+    tools: [readTool],
+  });
+
+  assert.deepEqual(fifthTurnContext?.tools?.map((tool) => tool.name), ["submit_evidence"]);
+  assert.equal(fifthTurnContext?.messages.length, 1);
+  const finalizationMessage = fifthTurnContext?.messages[0];
+  assert.equal(finalizationMessage?.role, "user");
+  const finalizationText = finalizationMessage?.role === "user" && typeof finalizationMessage.content === "string"
+    ? finalizationMessage.content
+    : "{}";
+  const packet = JSON.parse(finalizationText) as Record<string, unknown>;
+  assert.equal(packet.task, baseRequest().taskText);
+  assert.equal(finalizationText.includes("exploration complete"), false);
+  assert.equal(finalizationText.includes("<final_answer>"), false);
+  assert.equal(result.metrics.turns, 5);
   assert.equal(result.metrics.finalizationInjected, true);
   assert.equal(result.metrics.finalizationReason, "turn_limit");
+  assert.equal(result.metrics.providerAttempts, 5);
+  assert.equal(result.terminalFailure, "missing_submit");
+  assert.equal(result.candidate, null);
+  assert.equal(result.contextSystemPrompt.includes("untrusted data"), true);
   assert.deepEqual(result.metrics.evidenceProgress.map((progress) => progress.totalKeys), [1, 2, 3, 4]);
 });
 
-test("two turns without new normalized evidence force finalization", async () => {
+test("a text-only exploration turn immediately enters isolated finalization", async () => {
   const config = baseConfig();
   const exploratory = assistantText("No new evidence yet.");
   let finalContext: AgentContext | undefined;
   const bindings = bindingsWith(async (prompts, context, loopConfig, emit) => {
     let activeContext: AgentContext = { ...context, messages: [...prompts] };
-    for (let turn = 1; turn <= 2; turn += 1) {
+    for (let turn = 1; turn <= 1; turn += 1) {
       await emit({ type: "turn_start" });
       const update = await loopConfig.prepareNextTurn?.({
         message: exploratory,
@@ -371,10 +634,84 @@ test("two turns without new normalized evidence force finalization", async () =>
     tools: [readTool],
   });
 
-  assert.deepEqual(finalContext?.tools, []);
+  assert.deepEqual(finalContext?.tools?.map((tool) => tool.name), ["submit_evidence"]);
   assert.equal(result.metrics.finalizationInjected, true);
-  assert.equal(result.metrics.finalizationReason, "stagnation");
-  assert.deepEqual(result.metrics.evidenceProgress.map((progress) => progress.newKeys), [[], []]);
+  assert.equal(result.metrics.finalizationReason, "protocol_retry");
+  assert.deepEqual(result.metrics.evidenceProgress.map((progress) => progress.newKeys), [[]]);
+});
+
+test("invalid finalizer arguments fail closed without a sixth provider request", async () => {
+  const config = baseConfig({ maxTurns: 2 });
+  const exploratory = assistantText("explored");
+  const invalid = assistantText("", {
+    content: [{ type: "toolCall", id: "submit-invalid", name: "submit_evidence", arguments: {} }],
+  });
+  const bindings = fakeBindings(
+    async (prompts, context, loopConfig, emit) => {
+      await emit({ type: "turn_start" });
+      const completed = { ...context, messages: [...prompts, exploratory] };
+      await emit({ type: "turn_end", message: exploratory, toolResults: [] });
+      const update = await loopConfig.prepareNextTurn?.({ message: exploratory, toolResults: [], context: completed, newMessages: [...prompts, exploratory] });
+      await loopConfig.shouldStopAfterTurn?.({ message: exploratory, toolResults: [], context: update?.context ?? completed, newMessages: [...prompts, exploratory] });
+      return [...prompts, exploratory];
+    },
+    {
+      runAgentLoopContinue: async (context, loopConfig, emit) => {
+        await emit({ type: "turn_start" });
+        await emit({ type: "turn_end", message: invalid, toolResults: [] });
+        await loopConfig.prepareNextTurn?.({ message: invalid, toolResults: [], context: { ...context, messages: [...context.messages, invalid] }, newMessages: [invalid] });
+        await loopConfig.shouldStopAfterTurn?.({ message: invalid, toolResults: [], context, newMessages: [invalid] });
+        return [invalid];
+      },
+    },
+  );
+  const result = await runPiSession({
+    bindings,
+    model: createModel(config),
+    requestOptions: createRequestOptions(config),
+    config,
+    systemPrompt: "system",
+    promptText: "prompt",
+    tools: [],
+  });
+  assert.equal(result.terminalFailure, "invalid_arguments");
+  assert.equal(result.metrics.providerAttempts, 2);
+  assert.equal(result.candidate, null);
+});
+
+test("finalizer context overflow fails locally without compacting the isolated packet", async () => {
+  const config = baseConfig({ maxTurns: 2 });
+  const exploratory = assistantText("explored");
+  const overflow = overflowMessage();
+  const bindings = fakeBindings(
+    async (prompts, context, loopConfig, emit) => {
+      await emit({ type: "turn_start" });
+      const completed = { ...context, messages: [...prompts, exploratory] };
+      await emit({ type: "turn_end", message: exploratory, toolResults: [] });
+      const update = await loopConfig.prepareNextTurn?.({ message: exploratory, toolResults: [], context: completed, newMessages: [...prompts, exploratory] });
+      await loopConfig.shouldStopAfterTurn?.({ message: exploratory, toolResults: [], context: update?.context ?? completed, newMessages: [...prompts, exploratory] });
+      return [...prompts, exploratory];
+    },
+    {
+      runAgentLoopContinue: async (_context, _loopConfig, emit) => {
+        await emit({ type: "turn_start" });
+        await emit({ type: "turn_end", message: overflow, toolResults: [] });
+        return [overflow];
+      },
+    },
+  );
+  const result = await runPiSession({
+    bindings,
+    model: createModel(config),
+    requestOptions: createRequestOptions(config),
+    config,
+    systemPrompt: "system",
+    promptText: "prompt",
+    tools: [],
+  });
+  assert.equal(result.terminalFailure, "context_budget");
+  assert.equal(result.metrics.providerAttempts, 2);
+  assert.equal(result.metrics.compactions, 0);
 });
 
 test("provider errors redact configured secrets", async () => {
@@ -447,6 +784,72 @@ test("provider errors retain private HTTP status and structured connection categ
       },
     );
   }
+});
+
+test("bare OpenAI 400 errors are provider failures outside Cerebras", async () => {
+  const config = baseConfig({ provider: "tokenrhythm", baseUrl: "https://tokenrhythm.studio/v1", providerRetryDelaysMs: [] });
+  const failure = assistantText("", { stopReason: "error", errorMessage: "400 status code (no body)" });
+  const observed: FreeContextRuntimeEvent[] = [];
+  const bindings = bindingsWith(async (prompts, _context, _loopConfig, emit) => {
+    await emit({ type: "turn_start" });
+    await emit({ type: "turn_end", message: failure, toolResults: [] });
+    return [...prompts, failure];
+  });
+
+  await assert.rejects(
+    () => runIsolatedFinalizer({
+      bindings,
+      model: createModel(config),
+      requestOptions: createRequestOptions(config),
+      config,
+      request: baseRequest(),
+      observedReads: [{
+        tool: "read",
+        path: "src/index.ts",
+        startLine: 1,
+        endLine: 1,
+        content: "1 export const entry = true;",
+      }],
+      tokenCounter,
+      onEvent: (event) => { observed.push(event); },
+    }),
+    (error) => {
+      assert.ok(error instanceof ProviderError);
+      assert.equal(error.statusCode, 400);
+      assert.equal(error.category, "other");
+      return true;
+    },
+  );
+  const failedAttempt = observed.find((event) => event.type === "provider_attempt_failed");
+  assert.ok(failedAttempt && failedAttempt.scope === "primary");
+  assert.equal(failedAttempt.failure.reason, "fatal_http_status");
+  assert.equal(failedAttempt.willRetry, false);
+});
+
+test("bare Cerebras 400 errors retain Pi context-overflow semantics", async () => {
+  const config = baseConfig({ provider: "cerebras", baseUrl: "https://api.cerebras.ai/v1" });
+  const failure = assistantText("", { stopReason: "error", errorMessage: "400 status code (no body)" });
+  const bindings = bindingsWith(async (prompts, _context, _loopConfig, emit) => {
+    await emit({ type: "turn_start" });
+    await emit({ type: "turn_end", message: failure, toolResults: [] });
+    return [...prompts, failure];
+  });
+  const result = await runIsolatedFinalizer({
+    bindings,
+    model: createModel(config),
+    requestOptions: createRequestOptions(config),
+    config,
+    request: baseRequest(),
+    observedReads: [{
+      tool: "read",
+      path: "src/index.ts",
+      startLine: 1,
+      endLine: 1,
+      content: "1 export const entry = true;",
+    }],
+    tokenCounter,
+  });
+  assert.equal(result.terminalFailure, "context_budget");
 });
 
 test("transient provider failures retry the assistant turn without discarding completed tool results", async () => {
@@ -750,7 +1153,7 @@ test("a recognized overflow compacts once and continues with the same budgets an
   assert.equal(initialSignal, controller.signal);
   assert.equal(continuedSignal, controller.signal);
   assert.equal(continuationContext?.systemPrompt, "system");
-  assert.deepEqual(continuationContext?.tools, [readTool]);
+  assert.deepEqual(continuationContext?.tools?.map((tool) => tool.name), ["read", "submit_evidence"]);
   assert.equal(continuationContext?.messages.some((message) => message === overflow), false);
   assert.equal(
     continuationContext?.messages.some(

@@ -40,6 +40,12 @@ function invocation(root: string): FreeContextInvocationContext {
   };
 }
 
+function submission(args: Readonly<Record<string, unknown>>): AssistantMessage {
+  return assistantText("", {
+    content: [{ type: "toolCall", id: "submit-1", name: "submit_evidence", arguments: args }],
+  });
+}
+
 async function fakeDependencies(
   root: string,
   responses: readonly AssistantMessage[],
@@ -55,6 +61,26 @@ async function fakeDependencies(
       const response = responses[index++];
       if (!response) throw new Error("missing fake response");
       await emit({ type: "turn_start" });
+      await emit({
+        type: "tool_execution_end",
+        toolCallId: "read-1",
+        toolName: "read",
+        result: {
+          content: [{ type: "text", text: "[read a.js:1-2]\n1 const a = 1;\n2 export { a };" }],
+          details: { tool: "read", path: "a.js", startLine: 1, actualEndLine: 2, truncated: false },
+        },
+        isError: false,
+      });
+      const call = response.content.find((block) => block.type === "toolCall");
+      if (call) {
+        const submit = context.tools?.find((tool) => tool.name === "submit_evidence");
+        if (!submit) throw new Error("missing submit tool");
+        const before = await loopConfig.beforeToolCall?.({ assistantMessage: response, toolCall: call, args: call.arguments, context });
+        if (!before?.block) {
+          const submitted = await submit.execute(call.id, call.arguments);
+          await emit({ type: "tool_execution_end", toolCallId: call.id, toolName: call.name, result: submitted, isError: false });
+        }
+      }
       await emit({ type: "turn_end", message: response, toolResults: [] });
       await loopConfig.shouldStopAfterTurn?.({
         message: response,
@@ -73,15 +99,15 @@ async function fakeDependencies(
   };
 }
 
-test("runExplorer compiles a canonical ready result and v2 capture", async () => {
+test("runExplorer compiles a canonical ready result and v3 capture", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "freecontext-run-"));
   try {
     await writeFile(path.join(root, "a.js"), "const a = 1;\nexport { a };\n", "utf8");
-    const output = assistantText(
-      "<final_answer>\nsummary: a is exported.\nevidence:\n" +
-      "- [implementation][impl] a.js:1-2 (focus 1) — Defines and exports a.\n" +
-      "gaps:\n- [tests] No test was found.\n</final_answer>",
-    );
+    const output = submission({
+      summary: "a is exported.",
+      evidence: [{ role: "implementation", question_id: "impl", path: "a.js", start_line: 1, end_line: 2, focus_line: 1, why: "Defines and exports a." }],
+      gaps: [{ question_id: "tests", reason: "No test was found." }],
+    });
     let capture: Readonly<ExplorerSessionCapture> | undefined;
     const result = await runExplorer({
       request: request(),
@@ -95,10 +121,14 @@ test("runExplorer compiles a canonical ready result and v2 capture", async () =>
     assert.equal(result.gaps[0]?.questionId, "tests");
     assert.equal(result.sessionId, "session-1");
     assert.ok(capture);
-    assert.equal(capture.schemaVersion, "freecontext-explorer-capture-v2");
+    assert.equal(capture.schemaVersion, "freecontext-explorer-capture-v3");
     assert.equal(capture.request.taskText, "find a");
     assert.equal(capture.invocation.callId, "call-1");
-    assert.equal(capture.primary.output, output.content[0]?.type === "text" ? output.content[0].text : "");
+    assert.equal(capture.primary.output, "");
+    assert.equal(capture.primary.candidate?.summary, "a is exported.");
+    assert.equal(capture.primary.effectiveSystemPrompt, "system");
+    assert.deepEqual(capture.primary.tools.map((tool) => tool.name), ["submit_evidence"]);
+    assert.deepEqual(capture.primary.effectiveTools.map((tool) => tool.name), ["submit_evidence"]);
     assert.equal(capture.primary.metrics.finalizationReason, "coverage");
     assert.equal(capture.primary.metrics.evidenceProgress.length, 1);
     assert.equal(capture.compiler.evidenceCount, 1);
@@ -112,11 +142,11 @@ test("runExplorer makes one model call and returns partial when a required quest
   const root = await mkdtemp(path.join(os.tmpdir(), "freecontext-run-"));
   try {
     await writeFile(path.join(root, "a.js"), "const a = 1;\n", "utf8");
-    const output = assistantText(
-      "<final_answer>\nsummary: only tests were located.\nevidence:\n" +
-      "- [test][tests] a.js:1-1 (focus 1) — Test-shaped fixture.\n" +
-      "gaps:\n- [impl] Implementation was not found.\n</final_answer>",
-    );
+    const output = submission({
+      summary: "only tests were located.",
+      evidence: [{ role: "test", question_id: "tests", path: "a.js", start_line: 1, end_line: 1, focus_line: 1, why: "Test-shaped fixture." }],
+      gaps: [{ question_id: "impl", reason: "Implementation was not found." }],
+    });
     let calls = 0;
     const result = await runExplorer({
       request: request(),
