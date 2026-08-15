@@ -196,6 +196,7 @@ test("isolated finalization sends required submit_evidence without provider stri
   assert.ok(selected);
   const config = {
     ...selected,
+    openAICompat: { ...selected.openAICompat, supportsRequiredToolChoice: true },
     maxTurns: 2,
     contextCompactionEnabled: false,
     providerRetryDelaysMs: [1, 2, 4],
@@ -362,8 +363,8 @@ test("provider probe uses one isolated finalizer context across transient retry"
 
   assert.equal(fetchCalls, 2);
   assert.equal(payloads.length, 2);
-  assert.equal(payloads[0]?.tool_choice, "required");
-  assert.equal(payloads[1]?.tool_choice, "required");
+  assert.equal(payloads[0]?.tool_choice, "auto");
+  assert.equal(payloads[1]?.tool_choice, "auto");
   assert.deepEqual(payloads[1]?.messages, payloads[0]?.messages);
   assert.deepEqual(payloads[1]?.tools, payloads[0]?.tools);
   const tools = payloads[0]?.tools as Array<{ readonly function?: Record<string, unknown> }>;

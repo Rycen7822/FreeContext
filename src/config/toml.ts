@@ -42,6 +42,7 @@ export interface OpenAICompatDocument {
   readonly supportsReasoningEffort?: boolean;
   readonly supportsUsageInStreaming?: boolean;
   readonly supportsStrictMode?: boolean;
+  readonly supportsRequiredToolChoice?: boolean;
   readonly maxTokensField?: string;
 }
 
@@ -137,18 +138,21 @@ function parseOpenAICompat(value: unknown, location: string): Readonly<OpenAICom
     "supports_reasoning_effort",
     "supports_usage_in_streaming",
     "supports_strict_mode",
+    "supports_required_tool_choice",
     "max_tokens_field",
   ], location);
   const supportsDeveloperRole = optionalBoolean(table, "supports_developer_role", location);
   const supportsReasoningEffort = optionalBoolean(table, "supports_reasoning_effort", location);
   const supportsUsageInStreaming = optionalBoolean(table, "supports_usage_in_streaming", location);
   const supportsStrictMode = optionalBoolean(table, "supports_strict_mode", location);
+  const supportsRequiredToolChoice = optionalBoolean(table, "supports_required_tool_choice", location);
   const maxTokensField = optionalString(table, "max_tokens_field", location);
   return Object.freeze({
     ...(supportsDeveloperRole !== undefined ? { supportsDeveloperRole } : {}),
     ...(supportsReasoningEffort !== undefined ? { supportsReasoningEffort } : {}),
     ...(supportsUsageInStreaming !== undefined ? { supportsUsageInStreaming } : {}),
     ...(supportsStrictMode !== undefined ? { supportsStrictMode } : {}),
+    ...(supportsRequiredToolChoice !== undefined ? { supportsRequiredToolChoice } : {}),
     ...(maxTokensField !== undefined ? { maxTokensField } : {}),
   });
 }

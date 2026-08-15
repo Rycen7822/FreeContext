@@ -118,6 +118,7 @@ try {
       supportsReasoningEffort: false,
       supportsUsageInStreaming: false,
       supportsStrictMode: false,
+      supportsRequiredToolChoice: true,
       supportsStore: false,
       maxTokensField: "max_tokens",
     },

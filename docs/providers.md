@@ -49,10 +49,11 @@ supports_developer_role = false
 supports_reasoning_effort = false
 supports_usage_in_streaming = false
 supports_strict_mode = false
+supports_required_tool_choice = true
 max_tokens_field = "max_tokens"
 ```
 
-`auto` uses standard Bearer authentication. Compatibility controls belong to each model because one gateway may expose models with different feature subsets.
+`auto` uses standard Bearer authentication. Compatibility controls belong to each model because one gateway may expose models with different feature subsets. `supports_required_tool_choice` defaults to `true`; set it to `false` only when that model route rejects string `tool_choice = "required"`. The isolated finalizer then sends `auto` while still accepting only a locally validated `submit_evidence` call and failing closed on text or any other tool.
 
 ## Credentials and headers
 

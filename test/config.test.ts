@@ -47,6 +47,7 @@ thinking_level = "high"
 
 [models.backup.openai_compat]
 supports_reasoning_effort = true
+supports_required_tool_choice = false
 max_tokens_field = "max_completion_tokens"
 
 [routes.default]
@@ -87,6 +88,8 @@ test("resolveConfig loads TOML catalogs and keeps CLI over environment over file
     assert.deepEqual(route.targets[0]?.providerRetryDelaysMs, [3000, 6000, 12000]);
     assert.equal(route.targets[0]?.promptPath, path.join(directory, "prompt.md"));
     assert.equal(route.targets[1]?.apiKey, KEYS.BACKUP_KEY);
+    assert.equal(route.targets[0]?.openAICompat.supportsRequiredToolChoice, true);
+    assert.equal(route.targets[1]?.openAICompat.supportsRequiredToolChoice, false);
   });
 });
 
@@ -204,6 +207,7 @@ test("OpenAI model consumes model-specific compatibility metadata", async () => 
     assert.equal(model.api, "openai-completions");
     assert.equal(model.compat.supportsReasoningEffort, true);
     assert.equal(model.compat.maxTokensField, "max_completion_tokens");
+    assert.equal(config.openAICompat.supportsRequiredToolChoice, false);
   });
 });
 

@@ -95,6 +95,7 @@ export function resolveTarget(
       supportsReasoningEffort: model.openAICompat.supportsReasoningEffort ?? false,
       supportsUsageInStreaming: model.openAICompat.supportsUsageInStreaming ?? false,
       supportsStrictMode: model.openAICompat.supportsStrictMode ?? false,
+      supportsRequiredToolChoice: model.openAICompat.supportsRequiredToolChoice ?? true,
       supportsStore: false,
       maxTokensField: normalizeMaxTokensField(
         model.openAICompat.maxTokensField,

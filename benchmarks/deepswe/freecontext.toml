@@ -29,6 +29,7 @@ supports_developer_role = false
 supports_reasoning_effort = false
 supports_usage_in_streaming = false
 supports_strict_mode = false
+supports_required_tool_choice = false
 max_tokens_field = "max_tokens"
 
 [routes.default]

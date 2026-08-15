@@ -582,7 +582,10 @@ async function runPiSessionWithCounter({
   const streamWithTerminalChoice: PiBindings["streamSimple"] = (target, context, options) => {
     const terminalOnly = finalizerStarted && context.tools?.length === 1 && context.tools[0]?.name === SUBMIT_EVIDENCE_TOOL_NAME;
     const effectiveOptions = terminalOnly
-      ? ({ ...options, toolChoice: "required" } as SimpleStreamOptions)
+      ? ({
+          ...options,
+          toolChoice: config.openAICompat.supportsRequiredToolChoice ? "required" : "auto",
+        } as SimpleStreamOptions)
       : options;
     return bindings.streamSimple(target, context, effectiveOptions);
   };

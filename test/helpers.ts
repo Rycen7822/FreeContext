@@ -64,6 +64,7 @@ export function baseConfig(overrides: Partial<FreeContextConfig> = {}): FreeCont
       supportsReasoningEffort: false,
       supportsUsageInStreaming: false,
       supportsStrictMode: false,
+      supportsRequiredToolChoice: true,
       supportsStore: false,
       maxTokensField: "max_tokens",
     },

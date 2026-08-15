@@ -9,6 +9,7 @@ export interface OpenAICompatConfig {
   readonly supportsReasoningEffort: boolean;
   readonly supportsUsageInStreaming: boolean;
   readonly supportsStrictMode: boolean;
+  readonly supportsRequiredToolChoice: boolean;
   readonly supportsStore: false;
   readonly maxTokensField: OpenAIMaxTokensField;
 }
