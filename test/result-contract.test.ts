@@ -84,7 +84,7 @@ test("serializeForModel is text-first and contains every canonical evidence fiel
     "Status: ready",
     "Evidence:",
     "1. [implementation][implementation] src/router.ts:10-24 (focus 17) — Defines provider routing.",
-    "First repository batch: read src/router.ts:10-24 — Read the decisive implementation span.",
+    "First repository cell: read exactly all Evidence ranges above; no range widening, search, status, plan, or branch. Read the decisive implementation span.",
     "Gaps:",
     "-",
     "Summary: The implementation and test locations are verified.",
@@ -95,6 +95,14 @@ test("serializeForModel is text-first and contains every canonical evidence fiel
 });
 
 test("canonical result schema enforces terminal state and span invariants", () => {
+  const sixGaps = Array.from({ length: 6 }, (_, index) => ({ questionId: `question-${index}`, reason: "No observed evidence." }));
+  assert.equal(FreeContextResultSchema.parse({
+    ...readyResult(),
+    status: "not_found",
+    evidence: [],
+    gaps: sixGaps,
+    nextAction: { kind: "direct_search", reason: "Search the unresolved questions." },
+  }).gaps.length, 6);
   assert.throws(() => FreeContextResultSchema.parse({
     ...readyResult(),
     status: "failed",

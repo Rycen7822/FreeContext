@@ -93,7 +93,7 @@ test("submit_evidence exposes only portable shape constraints to the provider", 
 test("local submission validation records exact limits removed from the provider schema", async () => {
   const invalidCases = [
     [{ ...validArguments, evidence: Array.from({ length: 7 }, () => validArguments.evidence[0]) }, ["too_many_evidence"]],
-    [{ ...validArguments, gaps: Array.from({ length: 6 }, () => validArguments.gaps[0]) }, ["too_many_gaps"]],
+    [{ ...validArguments, gaps: Array.from({ length: 7 }, () => validArguments.gaps[0]) }, ["too_many_gaps"]],
     [{ ...validArguments, evidence: [{ ...validArguments.evidence[0], question_id: "bad\nid" }] }, ["invalid_evidence_question_id", "unknown_evidence_question"]],
     [{ ...validArguments, evidence: [{ ...validArguments.evidence[0], path: "" }] }, ["empty_evidence_path", "unobserved_range"]],
     [{ ...validArguments, evidence: [{ ...validArguments.evidence[0], start_line: 0 }] }, ["invalid_evidence_line_numbers", "unobserved_range"]],
@@ -112,6 +112,26 @@ test("local submission validation records exact limits removed from the provider
     assert.equal(state.failureKind, "invalid_arguments");
     assert.deepEqual(state.failureDetails, expected);
   }
+});
+
+test("finalizer rejects full duplicate allocation ahead of a required gap", async () => {
+  const state = createTerminalSubmissionState();
+  const requiredRequest = {
+    ...baseRequest(),
+    evidenceQuestions: baseRequest().evidenceQuestions.map((question) => ({ ...question, required: true })),
+  };
+  const tool = createSubmitEvidenceTool({
+    Type,
+    request: requiredRequest,
+    observedReads: () => [observedRead],
+    state,
+    isFinalizing: () => true,
+  });
+  await assert.rejects(tool.execute("slot-starvation", {
+    ...validArguments,
+    evidence: Array.from({ length: 6 }, () => validArguments.evidence[0]),
+  }), /local semantic/u);
+  assert.deepEqual(state.failureDetails, ["required_gap_after_duplicate_evidence"]);
 });
 
 test("finalizer rejects unobserved evidence and records invalid_arguments", async () => {
@@ -170,10 +190,10 @@ test("isolated packet marks exploration complete and omits repository tool origi
   const parsed = JSON.parse(packet) as Record<string, unknown>;
   assert.equal(parsed.workingSummary, "latest summary");
   assert.deepEqual(parsed.submissionRules, {
-    maxItems: { evidence: 6, gaps: 5 },
+    maxItems: { evidence: 6, gaps: 6 },
     question_id: "exact questions[].id; omit role because the harness derives it",
     citation: "non-empty repository-relative path; integer 1 <= start_line <= focus_line <= end_line <= 10000000; range within one matching repositoryObservation",
-    coverage: "For each required question, cite defining spans for all named concerns; otherwise omit its evidence and gap it. Do this before extras; summary uses only cited components.",
+    coverage: "Allocate one observed span per supported required question before any second span. Gap only when no observation covers every named concern, never because the evidence limit is full.",
   });
   const { tool: _tool, ...modelObservation } = observedRead;
   assert.equal(_tool, "read");
@@ -182,8 +202,8 @@ test("isolated packet marks exploration complete and omits repository tool origi
   assert.equal(packet.includes("[read src/index.ts:4-8]"), false);
   assert.equal(FINALIZATION_SYSTEM_PROMPT.includes("completed repository exploration"), true);
   assert.equal(FINALIZATION_SYSTEM_PROMPT.includes("Repository tools are unavailable"), true);
-  assert.equal(FINALIZATION_SYSTEM_PROMPT.includes("for every named concern"), true);
-  assert.equal(FINALIZATION_SYSTEM_PROMPT.includes("omit that question's citations and gap it"), true);
+  assert.equal(FINALIZATION_SYSTEM_PROMPT.includes("submissionRules.coverage"), true);
+  assert.equal(FINALIZATION_SYSTEM_PROMPT.includes("never claim a present repository observation is absent"), true);
 });
 
 test("compaction keeps only observations whose tool results remain in effective context", () => {

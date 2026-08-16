@@ -148,8 +148,8 @@ export async function compileFreeContextResult(
           startLine: first.startLine,
           endLine: first.endLine,
           reason: status === "ready"
-            ? "Read all evidence in this cell only; afterward edit directly with no intervening search."
-            : "Read all evidence in this cell only; afterward use at most one targeted named-gap search batch before editing.",
+            ? "After this exact-read cell, edit directly with no intervening search."
+            : "After this exact-read cell, use one separate targeted named-gap search batch at most, then edit.",
         }
       : {
           kind: "direct_search",

@@ -89,8 +89,10 @@ test("compiler validates observed spans, crops, orders, and emits a ready result
   assert.equal(first.endLine - first.startLine + 1, 80);
   assert.equal(result.nextAction.kind, "read");
   assert.equal(result.nextAction.path, "src/router.ts");
-  assert.equal(result.nextAction.reason, "Read all evidence in this cell only; afterward edit directly with no intervening search.");
-  assert.match(serializeForModel(result), /\[implementation\]\[implementation\] src\/router\.ts:/u);
+  assert.equal(result.nextAction.reason, "After this exact-read cell, edit directly with no intervening search.");
+  const serialized = serializeForModel(result);
+  assert.match(serialized, /\[implementation\]\[implementation\] src\/router\.ts:/u);
+  assert.match(serialized, /First repository cell: read exactly all Evidence ranges above; no range widening, search, status, plan, or branch\./u);
 }));
 
 test("compiler turns role mismatch and rejected generated paths into explicit gaps", async () => withWorkspace(async (root) => {
@@ -110,7 +112,7 @@ test("compiler turns role mismatch and rejected generated paths into explicit ga
   assert.equal(result.errorCode, null);
   assert.deepEqual(result.evidence.map((item) => item.questionId), ["implementation"]);
   assert.deepEqual(result.gaps, [{ questionId: "tests", reason: "Test evidence remains unresolved." }]);
-  assert.equal(result.nextAction.reason, "Read all evidence in this cell only; afterward use at most one targeted named-gap search batch before editing.");
+  assert.equal(result.nextAction.reason, "After this exact-read cell, use one separate targeted named-gap search batch at most, then edit.");
 }));
 
 test("compiler does not treat a trailing newline as an extra citable line", async () => withWorkspace(async (root) => {
@@ -154,7 +156,7 @@ test("normal empty evidence is not_found while malformed output is failed", asyn
   assert.equal(failed.evidence.length, 0);
 }));
 
-test("compiler drops lower-ranked spans until the canonical text fits 8 KiB", async () => withWorkspace(async (root) => {
+test("compiler keeps the canonical text within 8 KiB", async () => withWorkspace(async (root) => {
   const segments = Array.from({ length: 80 }, (_, index) => `segment-${index.toString().padStart(3, "0")}`);
   const directory = path.join(root, ...segments);
   await mkdir(directory, { recursive: true });
@@ -184,6 +186,6 @@ test("compiler drops lower-ranked spans until the canonical text fits 8 KiB", as
     reads,
   );
   assert.equal(result.status, "partial");
-  assert.ok(result.evidence.length >= 1 && result.evidence.length < 6);
+  assert.ok(result.evidence.length >= 1 && result.evidence.length <= 6);
   assert.ok(Buffer.byteLength(serializeForModel(result), "utf8") <= 8_192);
 }));

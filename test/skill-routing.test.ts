@@ -49,21 +49,35 @@ test("implicit discovery routes complex reads to one MCP tool without copying el
     assert.ok(skill.includes(shape));
   }
   assert.match(skill, /no query refs/u);
-  assert.match(skill, /2–5 unique ids, one per editable facet \(parse, apply, metric, test\), never role-wide buckets/iu);
-  assert.match(skill, /`implementation`, `caller`, `test`, or `contract`/u);
-  assert.match(skill, /contract only if task\/knownRefs names an existing API\/schema\/spec\/compatibility source/iu);
-  assert.match(skill, /never inferred from new behavior or another role/u);
+  assert.match(skill, /2–6 unique ids, one per independent code decision that could trigger another search/iu);
+  assert.match(skill, /split clauses needing different symbols\/files \(parse, catalog, apply, span, metric, test\)/iu);
+  assert.match(skill, /Roles: `implementation`, `caller`, `test`, `contract`/u);
+  assert.match(skill, /contract only for a task\/knownRefs-named API\/schema\/spec\/compatibility source/iu);
   assert.doesNotMatch(skill, /\bworkspace_root\b/u);
   assert.throws(() => FreeContextRequestSchema.parse({
     ...exampleRequest,
     knownRefs: [{ kind: "query", query: "nosec" }],
   }));
   assert.match(skill, /Summaries are not reads/u);
-  assert.match(skill, /Next repository cell: evidence reads only, including `nextAction`/u);
-  assert.match(skill, /no other action/u);
-  assert.match(skill, /ready edits without pre-edit search/u);
-  assert.match(skill, /partial gets at most one targeted named-gap search batch before edit/u);
-  assert.match(skill, /Never use broad discovery or replay/u);
+  const sixQuestions = Array.from({ length: 6 }, (_, index) => ({
+    id: `facet-${index}`,
+    role: "implementation" as const,
+    question: `Where is facet ${index}?`,
+    required: true,
+  }));
+  assert.equal(FreeContextRequestSchema.safeParse({
+    ...exampleRequest,
+    evidenceQuestions: sixQuestions,
+  }).success, true);
+  assert.equal(FreeContextRequestSchema.safeParse({
+    ...exampleRequest,
+    evidenceQuestions: [...sixQuestions, { ...sixQuestions[0], id: "facet-6" }],
+  }).success, false);
+  assert.match(skill, /Next repository cell reads exactly every Evidence range/u);
+  assert.match(skill, /no widening or other action/u);
+  assert.match(skill, /ready edits directly/u);
+  assert.match(skill, /partial permits one separate targeted named-gap search batch/u);
+  assert.match(skill, /Never broad-discover or replay/u);
 
   assert.match(metadata, /^  allow_implicit_invocation: true$/mu);
   assert.equal(metadata.match(/^    - type:/gmu)?.length, 1);

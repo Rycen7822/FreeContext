@@ -42,7 +42,7 @@ export const FREECONTEXT_ELIGIBILITY_POLICY = Object.freeze({
   invariants: Object.freeze([
     "Repository familiarity, known files, and known keywords never weaken cross-document, cross-section, impact-map, or multi-role eligibility.",
     "FreeContext is read-only and never performs edits, tests, Git, package management, web access, or credential work.",
-    "Summaries are not repository reads; the next repository cell contains evidence reads only, including nextAction—no other action; afterward ready edits directly with no pre-edit search, while partial permits at most one targeted named-gap search batch before edit.",
+    "Summaries are not repository reads; the next repository cell reads the exact evidence ranges only—no widening or other action; afterward ready edits directly, while partial permits one separate targeted named-gap search batch before edit.",
   ]),
 });
 
@@ -99,7 +99,7 @@ const requestFields = {
   taskText: z.string()
     .refine((value) => value.trim().length > 0, "taskText must not be empty")
     .refine((value) => codePointLength(value) <= 16_000, "taskText is too long"),
-  evidenceQuestions: z.array(EvidenceQuestionSchema).min(2).max(5),
+  evidenceQuestions: z.array(EvidenceQuestionSchema).min(2).max(RESULT_LIMITS.evidence),
 };
 const uniqueQuestions = ({ evidenceQuestions }: { evidenceQuestions: readonly { id: string }[] }, context: z.core.$RefinementCtx): void => {
   const seen = new Set<string>();
@@ -178,7 +178,7 @@ export const FreeContextResultSchema = z.object({
   status: z.enum(["ready", "partial", "not_found", "failed"]),
   summary: singleLine(RESULT_LIMITS.summaryCodePoints, true),
   evidence: z.array(FreeContextEvidenceSchema).max(RESULT_LIMITS.evidence),
-  gaps: z.array(FreeContextGapSchema).max(5),
+  gaps: z.array(FreeContextGapSchema).max(RESULT_LIMITS.evidence),
   nextAction: FreeContextNextActionSchema,
   errorCode: FreeContextErrorCodeSchema.nullable(),
   sessionId: identifier,
@@ -269,10 +269,11 @@ export function serializeForModel(rawResult: Readonly<FreeContextResult>): strin
   for (const [index, item] of result.evidence.entries()) {
     lines.push(`${index + 1}. [${item.role}][${item.questionId}] ${item.path}:${item.startLine}-${item.endLine} (focus ${item.focusLine}) — ${item.why}`);
   }
-  const location = result.nextAction.kind === "read"
-    ? `${result.nextAction.path}:${result.nextAction.startLine}-${result.nextAction.endLine}`
-    : "-";
-  lines.push(`First repository batch: ${result.nextAction.kind} ${location} — ${result.nextAction.reason}`);
+  if (result.nextAction.kind === "read") {
+    lines.push(`First repository cell: read exactly all Evidence ranges above; no range widening, search, status, plan, or branch. ${result.nextAction.reason}`);
+  } else {
+    lines.push(`Next action: direct_search — ${result.nextAction.reason}`);
+  }
   lines.push("Gaps:");
   if (result.gaps.length === 0) lines.push("-");
   for (const gap of result.gaps) lines.push(`- [${gap.questionId}] ${gap.reason}`);
