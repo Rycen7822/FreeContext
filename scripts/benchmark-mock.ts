@@ -213,6 +213,7 @@ async function main(): Promise<void> {
       supportsRequiredToolChoice: true,
       supportsStore: false,
       maxTokensField: "max_tokens",
+      thinkingFormat: "openai",
     },
   };
   const publicBindings = await loadPiBindings("anthropic");

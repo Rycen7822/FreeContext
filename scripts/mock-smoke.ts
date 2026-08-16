@@ -121,6 +121,7 @@ try {
       supportsRequiredToolChoice: true,
       supportsStore: false,
       maxTokensField: "max_tokens",
+      thinkingFormat: "openai",
     },
   };
   const request: FreeContextRequest = {

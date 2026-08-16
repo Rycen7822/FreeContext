@@ -49,6 +49,7 @@ thinking_level = "high"
 supports_reasoning_effort = true
 supports_required_tool_choice = false
 max_tokens_field = "max_completion_tokens"
+thinking_format = "deepseek"
 
 [routes.default]
 models = ["primary", "backup"]
@@ -207,6 +208,7 @@ test("OpenAI model consumes model-specific compatibility metadata", async () => 
     assert.equal(model.api, "openai-completions");
     assert.equal(model.compat.supportsReasoningEffort, true);
     assert.equal(model.compat.maxTokensField, "max_completion_tokens");
+    assert.equal(model.compat.thinkingFormat, "deepseek");
     assert.equal(config.openAICompat.supportsRequiredToolChoice, false);
   });
 });
@@ -218,6 +220,15 @@ test("invalid OpenAI compatibility and integer values are rejected", async () =>
       await assert.rejects(
         () => resolveConfig({ cli: { configFile, target: "backup" }, processEnv: KEYS }),
         /max_tokens or max_completion_tokens/u,
+      );
+    },
+  );
+  await withConfig(
+    baseToml().replace('thinking_format = "deepseek"', 'thinking_format = "unknown"'),
+    async (configFile) => {
+      await assert.rejects(
+        () => resolveConfig({ cli: { configFile, target: "backup" }, processEnv: KEYS }),
+        /must be openai or deepseek/u,
       );
     },
   );

@@ -44,6 +44,7 @@ export interface OpenAICompatDocument {
   readonly supportsStrictMode?: boolean;
   readonly supportsRequiredToolChoice?: boolean;
   readonly maxTokensField?: string;
+  readonly thinkingFormat?: string;
 }
 
 export interface ModelDocument {
@@ -140,6 +141,7 @@ function parseOpenAICompat(value: unknown, location: string): Readonly<OpenAICom
     "supports_strict_mode",
     "supports_required_tool_choice",
     "max_tokens_field",
+    "thinking_format",
   ], location);
   const supportsDeveloperRole = optionalBoolean(table, "supports_developer_role", location);
   const supportsReasoningEffort = optionalBoolean(table, "supports_reasoning_effort", location);
@@ -147,6 +149,7 @@ function parseOpenAICompat(value: unknown, location: string): Readonly<OpenAICom
   const supportsStrictMode = optionalBoolean(table, "supports_strict_mode", location);
   const supportsRequiredToolChoice = optionalBoolean(table, "supports_required_tool_choice", location);
   const maxTokensField = optionalString(table, "max_tokens_field", location);
+  const thinkingFormat = optionalString(table, "thinking_format", location);
   return Object.freeze({
     ...(supportsDeveloperRole !== undefined ? { supportsDeveloperRole } : {}),
     ...(supportsReasoningEffort !== undefined ? { supportsReasoningEffort } : {}),
@@ -154,6 +157,7 @@ function parseOpenAICompat(value: unknown, location: string): Readonly<OpenAICom
     ...(supportsStrictMode !== undefined ? { supportsStrictMode } : {}),
     ...(supportsRequiredToolChoice !== undefined ? { supportsRequiredToolChoice } : {}),
     ...(maxTokensField !== undefined ? { maxTokensField } : {}),
+    ...(thinkingFormat !== undefined ? { thinkingFormat } : {}),
   });
 }
 

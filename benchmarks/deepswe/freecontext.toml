@@ -31,6 +31,7 @@ supports_usage_in_streaming = false
 supports_strict_mode = false
 supports_required_tool_choice = false
 max_tokens_field = "max_tokens"
+thinking_format = "deepseek"
 
 [routes.default]
 models = ["tokenrhythm"]

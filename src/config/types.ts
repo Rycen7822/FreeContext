@@ -2,6 +2,7 @@ export type ApiProtocol = "anthropic" | "openai";
 export type AuthMode = "auto" | "x-api-key" | "bearer" | "both";
 export type ThinkingLevel = "off" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max";
 export type OpenAIMaxTokensField = "max_tokens" | "max_completion_tokens";
+export type OpenAIThinkingFormat = "openai" | "deepseek";
 export type FallbackReason = "timeout" | "rate_limit" | "server_error" | "connection";
 
 export interface OpenAICompatConfig {
@@ -12,6 +13,7 @@ export interface OpenAICompatConfig {
   readonly supportsRequiredToolChoice: boolean;
   readonly supportsStore: false;
   readonly maxTokensField: OpenAIMaxTokensField;
+  readonly thinkingFormat: OpenAIThinkingFormat;
 }
 
 export interface CliConfigOverrides {

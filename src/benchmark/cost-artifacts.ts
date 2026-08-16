@@ -3,11 +3,13 @@ import path from "node:path";
 import type { BenchmarkCostTrialReference } from "./cost-analysis.js";
 
 export interface NativeUsage {
-  inputTokens: number;
-  outputTokens: number;
-  cachedInputTokens: number;
-  reasoningOutputTokens: number;
-  totalTokens: number;
+  promptTokens: number;
+  completionTokens: number;
+  cachedPromptTokens: number;
+  reasoningTokens: number;
+  visibleCompletionTokens: number;
+  countedTokens: number;
+  reportedTotalTokens: number;
 }
 
 interface TransportMetrics {
@@ -40,6 +42,25 @@ async function jsonFile(filePath: string): Promise<Record<string, unknown>> {
 
 function integer(value: unknown): number {
   return Number.isSafeInteger(value) && (value as number) >= 0 ? value as number : 0;
+}
+
+function nativeUsage(
+  promptTokens: number,
+  completionTokens: number,
+  cachedPromptTokens: number,
+  reasoningTokens: number,
+  reportedTotalTokens: number,
+): NativeUsage {
+  const visibleCompletionTokens = Math.max(0, completionTokens - reasoningTokens);
+  return {
+    promptTokens,
+    completionTokens,
+    cachedPromptTokens,
+    reasoningTokens,
+    visibleCompletionTokens,
+    countedTokens: Math.max(0, reportedTotalTokens - reasoningTokens),
+    reportedTotalTokens,
+  };
 }
 
 function requiredInteger(value: unknown, location: string): number {
@@ -93,40 +114,43 @@ function mainNativeUsage(trajectory: Record<string, unknown>): NativeUsage {
   const extra = metrics.extra && typeof metrics.extra === "object" && !Array.isArray(metrics.extra)
     ? metrics.extra as Record<string, unknown>
     : {};
-  const inputTokens = integer(metrics.total_prompt_tokens);
-  const outputTokens = integer(metrics.total_completion_tokens);
-  return {
-    inputTokens,
-    outputTokens,
-    cachedInputTokens: integer(metrics.total_cached_tokens),
-    reasoningOutputTokens: integer(extra.reasoning_output_tokens),
-    totalTokens: inputTokens + outputTokens,
-  };
+  const promptTokens = integer(metrics.total_prompt_tokens);
+  const completionTokens = integer(metrics.total_completion_tokens);
+  return nativeUsage(
+    promptTokens,
+    completionTokens,
+    integer(metrics.total_cached_tokens),
+    integer(extra.reasoning_output_tokens),
+    promptTokens + completionTokens,
+  );
 }
 
 function emptyNativeUsage(): NativeUsage {
-  return { inputTokens: 0, outputTokens: 0, cachedInputTokens: 0, reasoningOutputTokens: 0, totalTokens: 0 };
+  return nativeUsage(0, 0, 0, 0, 0);
 }
 
 function addNative(target: NativeUsage, source: Readonly<NativeUsage>): void {
-  target.inputTokens += source.inputTokens;
-  target.outputTokens += source.outputTokens;
-  target.cachedInputTokens += source.cachedInputTokens;
-  target.reasoningOutputTokens += source.reasoningOutputTokens;
-  target.totalTokens += source.totalTokens;
+  target.promptTokens += source.promptTokens;
+  target.completionTokens += source.completionTokens;
+  target.cachedPromptTokens += source.cachedPromptTokens;
+  target.reasoningTokens += source.reasoningTokens;
+  target.visibleCompletionTokens += source.visibleCompletionTokens;
+  target.countedTokens += source.countedTokens;
+  target.reportedTotalTokens += source.reportedTotalTokens;
 }
 
 function piUsage(value: unknown): NativeUsage {
   const usage = value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : {};
-  const inputTokens = integer(usage.input);
-  const outputTokens = integer(usage.output);
-  return {
-    inputTokens,
-    outputTokens,
-    cachedInputTokens: integer(usage.cacheRead),
-    reasoningOutputTokens: integer(usage.reasoning),
-    totalTokens: integer(usage.totalTokens) || inputTokens + outputTokens,
-  };
+  const cachedPromptTokens = integer(usage.cacheRead);
+  const promptTokens = integer(usage.input) + cachedPromptTokens + integer(usage.cacheWrite);
+  const completionTokens = integer(usage.output);
+  return nativeUsage(
+    promptTokens,
+    completionTokens,
+    cachedPromptTokens,
+    integer(usage.reasoning),
+    integer(usage.totalTokens) || promptTokens + completionTokens,
+  );
 }
 
 function safeSessionPath(agentDir: string, relativePath: string): string {

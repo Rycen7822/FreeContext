@@ -31,7 +31,7 @@ import {
   SUBMIT_EVIDENCE_TOOL_NAME,
   submitSchemaTokenDelta,
 } from "./finalization.js";
-import type { ObservedRead, TerminalFailureKind } from "./finalization.js";
+import type { ObservedRead, TerminalFailureDetail, TerminalFailureKind } from "./finalization.js";
 import type { FreeContextModel } from "./model.js";
 import { redactProviderError } from "./model.js";
 import { normalizeAssistantFailure, normalizeProviderFailure } from "./provider-failure.js";
@@ -153,6 +153,7 @@ export interface PiSessionMetrics {
   readonly submitSchemaTokens: number;
   readonly finalizationInjected: boolean;
   readonly finalizationReason: FinalizationReason | null;
+  readonly terminalFailureDetails: readonly TerminalFailureDetail[];
   readonly blockedToolCalls: number;
   readonly evidenceProgress: readonly Readonly<TurnEvidenceProgress>[];
   readonly usage: Readonly<Usage>;
@@ -825,6 +826,7 @@ async function runPiSessionWithCounter({
       submitSchemaTokens,
       finalizationInjected,
       finalizationReason,
+      terminalFailureDetails: submission.failureDetails,
       blockedToolCalls,
       evidenceProgress: Object.freeze(evidenceProgress.map((progress) => Object.freeze({
         ...progress,

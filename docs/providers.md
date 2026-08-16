@@ -51,9 +51,10 @@ supports_usage_in_streaming = false
 supports_strict_mode = false
 supports_required_tool_choice = true
 max_tokens_field = "max_tokens"
+thinking_format = "openai"
 ```
 
-`auto` uses standard Bearer authentication. Compatibility controls belong to each model because one gateway may expose models with different feature subsets. `supports_required_tool_choice` defaults to `true`; set it to `false` only when that model route rejects string `tool_choice = "required"`. The isolated finalizer then sends `auto` while still accepting only a locally validated `submit_evidence` call and failing closed on text or any other tool.
+`auto` uses standard Bearer authentication. Compatibility controls belong to each model because one gateway may expose models with different feature subsets. `supports_required_tool_choice` defaults to `true`; set it to `false` only when that model route rejects string `tool_choice = "required"`. The isolated finalizer then sends `auto` while still accepting only a locally validated `submit_evidence` call and failing closed on text or any other tool. `thinking_format` defaults to `openai`; set it to `deepseek` for a DeepSeek-compatible route so `thinking_level = "off"` is sent as `thinking: { "type": "disabled" }` instead of relying on the provider default.
 
 ## Credentials and headers
 

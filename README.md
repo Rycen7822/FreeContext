@@ -284,7 +284,7 @@ freecontext-benchmark-context --agent-dir /logs/agent --task-name TaskNameXXX
 
 This writes `master-agent-context.json`, preserving the complete raw main-agent context and indexing every FreeContext prompt, compact output, and separate `freecontext-sessions/*.json` address. Export fails if the main-agent context does not contain the corresponding full-session reference. The ready-to-use Pier integration is documented in [`benchmarks/deepswe/README.md`](benchmarks/deepswe/README.md).
 
-For accepted benchmark trials, `freecontext-benchmark-costs INPUT.json OUTPUT.json` uses one persistent Python Gigatoken worker with `o200k_base` and a single `encode_batch()` pass. Its input lists `{ "taskId", "success", "agentDir" }` records. The report keeps local main-visible counts, delivered FreeContext output, main provider-native usage, subagent provider-native usage, and additive provider-native system totals in explicitly separate domains, with per-call, per-task, and per-success rates.
+For accepted benchmark trials, `freecontext-benchmark-costs INPUT.json OUTPUT.json` uses one persistent Python Gigatoken worker with `o200k_base` and a single `encode_batch()` pass. Its input lists `{ "taskId", "success", "agentDir" }` records. The report keeps local main-visible counts, delivered FreeContext output, main provider-native usage, subagent provider-native usage, and additive provider-native system totals in explicitly separate domains, with per-call, per-task, and per-success rates. Reasoning tokens are excluded from comparison totals and visible completion counts; provider-reported totals and reasoning details remain separate billing and diagnostic fields.
 
 ### Tests
 
@@ -598,7 +598,7 @@ freecontext-benchmark-context --agent-dir /logs/agent --task-name TaskNameXXX
 
 命令生成 `master-agent-context.json`：完整保留主 agent 原始上下文，并为每次 FreeContext 调用记录 prompt、返回给主 agent 的紧凑输出，以及独立 `freecontext-sessions/*.json` 文件地址。如果主 agent 上下文没有包含对应完整会话引用，导出会直接失败。可直接复用的 Pier 集成见 [`benchmarks/deepswe/README.md`](benchmarks/deepswe/README.md)。
 
-对于已接受的 benchmark trial，可运行 `freecontext-benchmark-costs INPUT.json OUTPUT.json`。输入列出 `{ "taskId", "success", "agentDir" }` 记录；命令只初始化一个 Python Gigatoken worker，以 `o200k_base` 对全部文本执行一次 `encode_batch()`。报告分别保留本地主 agent 可见文本、交付给主 agent 的 FreeContext 输出、主 agent provider-native usage、subagent provider-native usage 和可相加的 provider-native 系统总量，并给出 per-call、per-task、per-success 指标，绝不把本地 Gigatoken 计数与 provider-native usage 混为同一域。
+对于已接受的 benchmark trial，可运行 `freecontext-benchmark-costs INPUT.json OUTPUT.json`。输入列出 `{ "taskId", "success", "agentDir" }` 记录；命令只初始化一个 Python Gigatoken worker，以 `o200k_base` 对全部文本执行一次 `encode_batch()`。报告分别保留本地主 agent 可见文本、交付给主 agent 的 FreeContext 输出、主 agent provider-native usage、subagent provider-native usage 和可相加的 provider-native 系统总量，并给出 per-call、per-task、per-success 指标，绝不把本地 Gigatoken 计数与 provider-native usage 混为同一域。比较总量和可见 completion 明确排除 reasoning token；provider 原始总量和 reasoning 明细仅作为独立的账单与诊断字段保留。
 
 ### 测试
 

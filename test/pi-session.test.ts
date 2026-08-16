@@ -314,6 +314,7 @@ test("a sole valid typed submission ends exploration before the turn limit", asy
   assert.equal(shouldStop, true);
   assert.equal(result.metrics.turns, 1);
   assert.equal(result.metrics.finalizationReason, "coverage");
+  assert.deepEqual(result.metrics.terminalFailureDetails, []);
   assert.equal(result.terminalFailure, null);
   assert.equal(result.candidate?.summary, "Implementation found.");
 });
@@ -675,6 +676,7 @@ test("invalid finalizer arguments fail closed without a sixth provider request",
     tools: [],
   });
   assert.equal(result.terminalFailure, "invalid_arguments");
+  assert.deepEqual(result.metrics.terminalFailureDetails, []);
   assert.equal(result.metrics.providerAttempts, 2);
   assert.equal(result.candidate, null);
 });

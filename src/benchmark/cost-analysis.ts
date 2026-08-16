@@ -64,7 +64,11 @@ export async function analyzeBenchmarkCosts(
       providerNative: {
         main: trial.mainNative,
         subagent: trial.subagentNative,
-        total: { totalTokens: trial.mainNative.totalTokens + trial.subagentNative.totalTokens },
+        total: {
+          countedTokens: trial.mainNative.countedTokens + trial.subagentNative.countedTokens,
+          reportedTotalTokens: trial.mainNative.reportedTotalTokens + trial.subagentNative.reportedTotalTokens,
+          reasoningTokens: trial.mainNative.reasoningTokens + trial.subagentNative.reasoningTokens,
+        },
       },
     });
   });
@@ -73,8 +77,14 @@ export async function analyzeBenchmarkCosts(
   const callCount = trials.reduce((sum, trial) => sum + trial.freeContextCalls, 0);
   const mainVisibleTotal = trials.reduce((sum, trial) => sum + trial.mainVisible.totalTokens, 0);
   const subagentDeliveredTotal = trials.reduce((sum, trial) => sum + trial.subagentDeliveredVisible.totalTokens, 0);
-  const mainNativeTotal = trials.reduce((sum, trial) => sum + trial.providerNative.main.totalTokens, 0);
-  const subagentNativeTotal = trials.reduce((sum, trial) => sum + trial.providerNative.subagent.totalTokens, 0);
+  const nativeTotals = (owner: "main" | "subagent", field: "countedTokens" | "reportedTotalTokens" | "reasoningTokens"): number =>
+    trials.reduce((sum, trial) => sum + trial.providerNative[owner][field], 0);
+  const mainCounted = nativeTotals("main", "countedTokens");
+  const subagentCounted = nativeTotals("subagent", "countedTokens");
+  const mainReported = nativeTotals("main", "reportedTotalTokens");
+  const subagentReported = nativeTotals("subagent", "reportedTotalTokens");
+  const mainReasoning = nativeTotals("main", "reasoningTokens");
+  const subagentReasoning = nativeTotals("subagent", "reasoningTokens");
   const transport = trials.reduce((total, trial) => ({
     observations: total.observations + trial.transport.observations,
     reminderEvents: total.reminderEvents + trial.transport.reminderEvents,
@@ -84,10 +94,14 @@ export async function analyzeBenchmarkCosts(
     latencyMsMax: Math.max(total.latencyMsMax, trial.transport.latencyMsMax),
   }), { observations: 0, reminderEvents: 0, waitToolTurns: 0, latencySamples: 0, latencyMsTotal: 0, latencyMsMax: 0 });
   return Object.freeze({
-    schemaVersion: "freecontext-cost-report-v1",
+    schemaVersion: "freecontext-cost-report-v2",
     method: {
       localVisibleText: { implementation: "Python gigatoken", encoding: "o200k_base from tiktoken", batchMethod: "encode_batch", tokenizerInstances: 1, transportEvents: "included from trajectory tool arguments and observations" },
-      providerNative: "reported usage; not mixed with local Gigatoken counts",
+      providerNative: {
+        source: "reported usage; not mixed with local Gigatoken counts",
+        comparisonTotal: "provider reported total minus reasoning tokens",
+        rawTotal: "preserved separately for billing and diagnostics",
+      },
     },
     population: { tasks: taskCount, successes: successCount, freeContextCalls: callCount },
     aggregate: {
@@ -107,9 +121,21 @@ export async function analyzeBenchmarkCosts(
         },
       },
       providerNative: {
-        main: rates(mainNativeTotal, callCount, taskCount, successCount),
-        subagent: rates(subagentNativeTotal, callCount, taskCount, successCount),
-        total: rates(mainNativeTotal + subagentNativeTotal, callCount, taskCount, successCount),
+        countedWithoutReasoning: {
+          main: rates(mainCounted, callCount, taskCount, successCount),
+          subagent: rates(subagentCounted, callCount, taskCount, successCount),
+          total: rates(mainCounted + subagentCounted, callCount, taskCount, successCount),
+        },
+        providerReported: {
+          main: rates(mainReported, callCount, taskCount, successCount),
+          subagent: rates(subagentReported, callCount, taskCount, successCount),
+          total: rates(mainReported + subagentReported, callCount, taskCount, successCount),
+        },
+        reasoning: {
+          main: rates(mainReasoning, callCount, taskCount, successCount),
+          subagent: rates(subagentReasoning, callCount, taskCount, successCount),
+          total: rates(mainReasoning + subagentReasoning, callCount, taskCount, successCount),
+        },
       },
     },
     trials: Object.freeze(trials),

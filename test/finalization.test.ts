@@ -6,6 +6,7 @@ import {
   buildFinalizationPacket,
   createSubmitEvidenceTool,
   createTerminalSubmissionState,
+  FINALIZATION_SYSTEM_PROMPT,
   finalizationFits,
   latestCompactionSummary,
   observedReadFromToolResult,
@@ -48,6 +49,7 @@ test("submit_evidence accepts one locally valid observed candidate", async () =>
   const result = await tool.execute("submit-1", validArguments);
   assert.equal(result.terminate, true);
   assert.equal(state.failureKind, null);
+  assert.deepEqual(state.failureDetails, []);
   assert.equal(state.candidate?.evidence[0]?.path, "src/index.ts");
   assert.equal((result.details as { readonly tool?: string }).tool, "submit_evidence");
 });
@@ -85,6 +87,7 @@ test("local submission validation retains limits removed from the provider schem
     });
     await assert.rejects(tool.execute(`invalid-${index}`, invalid), /local semantic/u);
     assert.equal(state.failureKind, "invalid_arguments");
+    assert.ok(state.failureDetails.includes("local_shape"));
   }
 });
 
@@ -100,6 +103,28 @@ test("finalizer rejects unobserved evidence and records invalid_arguments", asyn
   await assert.rejects(tool.execute("submit-1", validArguments), /observed-read validation/u);
   assert.equal(state.candidate, null);
   assert.equal(state.failureKind, "invalid_arguments");
+  assert.deepEqual(state.failureDetails, ["unobserved_range"]);
+});
+
+test("finalizer records bounded semantic rejection categories without argument values", async () => {
+  const cases = [
+    [{ ...validArguments, evidence: [{ ...validArguments.evidence[0], question_id: "unknown" }] }, "unknown_evidence_question"],
+    [{ ...validArguments, evidence: [{ ...validArguments.evidence[0], role: "test" }] }, "role_mismatch"],
+    [{ ...validArguments, evidence: [{ ...validArguments.evidence[0], focus_line: 9 }] }, "focus_outside_range"],
+    [{ ...validArguments, gaps: [{ ...validArguments.gaps[0], question_id: "unknown" }] }, "unknown_gap_question"],
+  ] as const;
+  for (const [index, [invalid, expected]] of cases.entries()) {
+    const state = createTerminalSubmissionState();
+    const tool = createSubmitEvidenceTool({
+      Type,
+      request: baseRequest(),
+      observedReads: () => [observedRead],
+      state,
+      isFinalizing: () => true,
+    });
+    await assert.rejects(tool.execute(`semantic-${index}`, invalid), /local semantic/u);
+    assert.deepEqual(state.failureDetails, [expected]);
+  }
 });
 
 test("read observation extraction excludes errors and truncated output", () => {
@@ -113,7 +138,7 @@ test("read observation extraction excludes errors and truncated output", () => {
   assert.equal(observedReadFromToolResult("rg", result, false), null);
 });
 
-test("isolated packet contains only explicit request, latest summary, and retained reads", () => {
+test("isolated packet marks exploration complete and omits repository tool origins", () => {
   const messages: AgentMessage[] = [
     { role: "compactionSummary", summary: "old summary", tokensBefore: 100, timestamp: 1 },
     { role: "assistant", content: [{ type: "text", text: "raw history must not return" }], api: "anthropic-messages", provider: "test", model: "test", usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, reasoning: 0, totalTokens: 0, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } }, stopReason: "stop", timestamp: 2 },
@@ -122,8 +147,14 @@ test("isolated packet contains only explicit request, latest summary, and retain
   const packet = buildFinalizationPacket(baseRequest(), [observedRead], latestCompactionSummary(messages));
   const parsed = JSON.parse(packet) as Record<string, unknown>;
   assert.equal(parsed.workingSummary, "latest summary");
-  assert.deepEqual(parsed.repositoryObservations, [observedRead]);
+  const { tool: _tool, ...modelObservation } = observedRead;
+  assert.equal(_tool, "read");
+  assert.deepEqual(parsed.repositoryObservations, [{ ...modelObservation, content: "4 export const value = 1;" }]);
   assert.equal(packet.includes("raw history must not return"), false);
+  assert.equal(packet.includes("[read src/index.ts:4-8]"), false);
+  assert.equal(FINALIZATION_SYSTEM_PROMPT.includes("completed repository exploration"), true);
+  assert.equal(FINALIZATION_SYSTEM_PROMPT.includes("Repository tools are unavailable"), true);
+  assert.equal(FINALIZATION_SYSTEM_PROMPT.includes("report it as a gap"), true);
 });
 
 test("compaction keeps only observations whose tool results remain in effective context", () => {

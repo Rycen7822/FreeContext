@@ -4,6 +4,7 @@ import type {
   AuthMode,
   FallbackReason,
   OpenAIMaxTokensField,
+  OpenAIThinkingFormat,
   ThinkingLevel,
 } from "./types.js";
 
@@ -93,6 +94,12 @@ export function normalizeMaxTokensField(value: unknown, name: string): OpenAIMax
   const field = String(value || "max_tokens").trim();
   if (field === "max_tokens" || field === "max_completion_tokens") return field;
   throw new ConfigurationError(`${name} must be max_tokens or max_completion_tokens, received: ${value}`);
+}
+
+export function normalizeThinkingFormat(value: unknown, name: string): OpenAIThinkingFormat {
+  const format = String(value || "openai").trim().toLowerCase();
+  if (format === "openai" || format === "deepseek") return format;
+  throw new ConfigurationError(`${name} must be openai or deepseek, received: ${value}`);
 }
 
 export function normalizeFallbackReason(value: string, name: string): FallbackReason {

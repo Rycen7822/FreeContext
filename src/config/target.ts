@@ -5,6 +5,7 @@ import {
   normalizeAuthMode,
   normalizeBaseUrl,
   normalizeMaxTokensField,
+  normalizeThinkingFormat,
   normalizeThinkingLevel,
   parseInteger,
   parseNumber,
@@ -100,6 +101,10 @@ export function resolveTarget(
       maxTokensField: normalizeMaxTokensField(
         model.openAICompat.maxTokensField,
         `models.${target}.openai_compat.max_tokens_field`,
+      ),
+      thinkingFormat: normalizeThinkingFormat(
+        model.openAICompat.thinkingFormat,
+        `models.${target}.openai_compat.thinking_format`,
       ),
     }),
   });

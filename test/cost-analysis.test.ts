@@ -111,11 +111,14 @@ test("cost analysis batches all visible text once and separates local from provi
       perTask: 3,
       perSuccess: 6,
     });
-    const provider = (report.aggregate as Record<string, Record<string, Record<string, number>>>).providerNative;
+    assert.equal(report.schemaVersion, "freecontext-cost-report-v2");
+    const provider = (report.aggregate as Record<string, Record<string, Record<string, Record<string, number>>>>).providerNative;
     assert.ok(provider);
-    assert.equal(provider.main?.total, 152);
-    assert.equal(provider.subagent?.total, 35);
-    assert.equal(provider.total?.total, 187);
+    assert.equal(provider.countedWithoutReasoning?.main?.total, 142);
+    assert.equal(provider.countedWithoutReasoning?.subagent?.total, 33);
+    assert.equal(provider.countedWithoutReasoning?.total?.total, 175);
+    assert.equal(provider.providerReported?.total?.total, 187);
+    assert.equal(provider.reasoning?.total?.total, 12);
     assert.equal((report.method as Record<string, Record<string, unknown>>).localVisibleText?.tokenizerInstances, 1);
     assert.deepEqual((report.aggregate as Record<string, unknown>).transport, {
       observations: 1,

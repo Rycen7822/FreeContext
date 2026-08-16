@@ -77,12 +77,14 @@ test("bundled TokenRhythm config produces the accepted Pi Chat Completions wire 
     "model",
     "stream",
     "temperature",
+    "thinking",
     "tools",
   ]);
   assert.equal(payload.model, "deepseek-v4-flash-0731");
   assert.equal(payload.stream, true);
   assert.equal(payload.max_tokens, 8192);
   assert.equal(payload.temperature, 0);
+  assert.deepEqual(payload.thinking, { type: "disabled" });
 
   const messages = payload.messages as Array<Record<string, unknown>>;
   assert.deepEqual(messages.map((message) => message.role), ["system", "user"]);
@@ -256,7 +258,9 @@ test("isolated finalization sends required submit_evidence without provider stri
   assert.equal(fetchCalls, 3);
   assert.equal(payloads.length, 3);
   assert.equal(Object.hasOwn(payloads[0] ?? {}, "tool_choice"), false);
+  assert.deepEqual(payloads[0]?.thinking, { type: "disabled" });
   assert.equal(payloads[1]?.tool_choice, "required");
+  assert.deepEqual(payloads[1]?.thinking, { type: "disabled" });
   assert.equal(payloads[2]?.tool_choice, "required");
   assert.deepEqual(payloads[2]?.messages, payloads[1]?.messages);
   assert.deepEqual(payloads[2]?.tools, payloads[1]?.tools);
@@ -364,6 +368,7 @@ test("provider probe uses one isolated finalizer context across transient retry"
   assert.equal(fetchCalls, 2);
   assert.equal(payloads.length, 2);
   assert.equal(payloads[0]?.tool_choice, "auto");
+  assert.deepEqual(payloads[0]?.thinking, { type: "disabled" });
   assert.equal(payloads[1]?.tool_choice, "auto");
   assert.deepEqual(payloads[1]?.messages, payloads[0]?.messages);
   assert.deepEqual(payloads[1]?.tools, payloads[0]?.tools);
@@ -377,5 +382,9 @@ test("provider probe uses one isolated finalizer context across transient retry"
   }
   const messages = payloads[0]?.messages as Array<Record<string, unknown>>;
   assert.deepEqual(messages.map((message) => message.role), ["system", "user"]);
-  assert.equal(JSON.stringify(messages).includes("fixture.ts"), true);
+  assert.equal(String(messages[0]?.content).includes("Repository tools are unavailable"), true);
+  const packet = JSON.parse(String(messages[1]?.content)) as { readonly repositoryObservations?: readonly Record<string, unknown>[] };
+  assert.equal(packet.repositoryObservations?.[0]?.path, "fixture.ts");
+  assert.equal(packet.repositoryObservations?.[0]?.content, "1 export const fixture = true;");
+  assert.equal(Object.hasOwn(packet.repositoryObservations?.[0] ?? {}, "tool"), false);
 });

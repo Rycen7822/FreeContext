@@ -67,6 +67,7 @@ export function baseConfig(overrides: Partial<FreeContextConfig> = {}): FreeCont
       supportsRequiredToolChoice: true,
       supportsStore: false,
       maxTokensField: "max_tokens",
+      thinkingFormat: "openai",
     },
     ...overrides,
   };
