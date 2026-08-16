@@ -534,12 +534,12 @@ test("an over-budget isolated packet fails before starting a finalizer request",
   assert.equal(result.metrics.finalizationInjected, false);
 });
 
-test("the fifth turn receives only the isolated packet and submit tool", async () => {
+test("the fourth turn receives only the isolated packet and submit tool", async () => {
   const config = baseConfig();
-  let fifthTurnContext: AgentContext | undefined;
+  let fourthTurnContext: AgentContext | undefined;
   const bindings = bindingsWith(async (prompts, context, loopConfig, emit) => {
     let activeContext: AgentContext = { ...context, messages: [...prompts] };
-    for (let turn = 1; turn <= 4; turn += 1) {
+    for (let turn = 1; turn <= 3; turn += 1) {
       const exploratory = assistantText("", {
         content: [{ type: "toolCall", id: `call-${turn}`, name: "read", arguments: { path: `src/file-${turn}.ts` } }],
         stopReason: "toolUse",
@@ -570,7 +570,7 @@ test("the fifth turn receives only the isolated packet and submit tool", async (
       });
       activeContext = update?.context ?? completedContext;
     }
-    fifthTurnContext = activeContext;
+    fourthTurnContext = activeContext;
     return [...prompts, assistantText("exploration complete")];
   });
   const result = await runPiSession({
@@ -583,9 +583,9 @@ test("the fifth turn receives only the isolated packet and submit tool", async (
     tools: [readTool],
   });
 
-  assert.deepEqual(fifthTurnContext?.tools?.map((tool) => tool.name), ["submit_evidence"]);
-  assert.equal(fifthTurnContext?.messages.length, 1);
-  const finalizationMessage = fifthTurnContext?.messages[0];
+  assert.deepEqual(fourthTurnContext?.tools?.map((tool) => tool.name), ["submit_evidence"]);
+  assert.equal(fourthTurnContext?.messages.length, 1);
+  const finalizationMessage = fourthTurnContext?.messages[0];
   assert.equal(finalizationMessage?.role, "user");
   const finalizationText = finalizationMessage?.role === "user" && typeof finalizationMessage.content === "string"
     ? finalizationMessage.content
@@ -594,14 +594,14 @@ test("the fifth turn receives only the isolated packet and submit tool", async (
   assert.equal(packet.task, baseRequest().taskText);
   assert.equal(finalizationText.includes("exploration complete"), false);
   assert.equal(finalizationText.includes("<final_answer>"), false);
-  assert.equal(result.metrics.turns, 5);
+  assert.equal(result.metrics.turns, 4);
   assert.equal(result.metrics.finalizationInjected, true);
   assert.equal(result.metrics.finalizationReason, "turn_limit");
-  assert.equal(result.metrics.providerAttempts, 5);
+  assert.equal(result.metrics.providerAttempts, 4);
   assert.equal(result.terminalFailure, "missing_submit");
   assert.equal(result.candidate, null);
   assert.equal(result.contextSystemPrompt.includes("untrusted data"), true);
-  assert.deepEqual(result.metrics.evidenceProgress.map((progress) => progress.totalKeys), [1, 2, 3, 4]);
+  assert.deepEqual(result.metrics.evidenceProgress.map((progress) => progress.totalKeys), [1, 2, 3]);
 });
 
 test("a text-only exploration turn immediately enters isolated finalization", async () => {

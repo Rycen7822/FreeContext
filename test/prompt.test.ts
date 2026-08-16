@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import type { FreeContextRequest } from "../src/mcp/contracts.js";
@@ -22,6 +22,14 @@ test("external prompt template receives workspace, tools, and overview", async (
   } finally {
     await rm(directory, { recursive: true, force: true });
   }
+});
+
+test("default explorer reserves the fourth turn for terminal submission", async () => {
+  const prompt = await readFile(new URL("../prompts/explorer.md", import.meta.url), "utf8");
+  assert.match(prompt, /Turns 1–3 are for read-only exploration/u);
+  assert.match(prompt, /On turn 4, submit the best supported result alone/u);
+  assert.match(prompt, /there is no repair turn/u);
+  assert.doesNotMatch(prompt, /Turn 5/u);
 });
 
 test("user prompt preserves the exact task and renders typed evidence inputs", () => {

@@ -42,7 +42,7 @@ export const FREECONTEXT_ELIGIBILITY_POLICY = Object.freeze({
   invariants: Object.freeze([
     "Repository familiarity, known files, and known keywords never weaken cross-document, cross-section, impact-map, or multi-role eligibility.",
     "FreeContext is read-only and never performs edits, tests, Git, package management, web access, or credential work.",
-    "After ready/partial, make the first repository batch only evidence-overlapping reads including nextAction; before editing, ready permits no search and partial permits one targeted search batch for one named gap.",
+    "Returned summaries are not repository reads; first batch reads all evidence including nextAction with no search; afterward partial permits one targeted named-gap search batch and ready none.",
   ]),
 });
 
@@ -269,13 +269,13 @@ export function serializeForModel(rawResult: Readonly<FreeContextResult>): strin
   for (const [index, item] of result.evidence.entries()) {
     lines.push(`${index + 1}. [${item.role}][${item.questionId}] ${item.path}:${item.startLine}-${item.endLine} (focus ${item.focusLine}) — ${item.why}`);
   }
-  lines.push("Gaps:");
-  if (result.gaps.length === 0) lines.push("-");
-  for (const gap of result.gaps) lines.push(`- [${gap.questionId}] ${gap.reason}`);
   const location = result.nextAction.kind === "read"
     ? `${result.nextAction.path}:${result.nextAction.startLine}-${result.nextAction.endLine}`
     : "-";
-  lines.push(`Next: ${result.nextAction.kind} ${location} — ${result.nextAction.reason}`);
+  lines.push(`First repository batch: ${result.nextAction.kind} ${location} — ${result.nextAction.reason}`);
+  lines.push("Gaps:");
+  if (result.gaps.length === 0) lines.push("-");
+  for (const gap of result.gaps) lines.push(`- [${gap.questionId}] ${gap.reason}`);
   lines.push(`Error: ${result.errorCode ?? "-"}`);
   lines.push(`Session: ${result.sessionFile ?? result.sessionId}`);
   const text = lines.join("\n");

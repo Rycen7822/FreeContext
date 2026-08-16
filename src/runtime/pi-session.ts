@@ -43,6 +43,7 @@ import { addUsage, EMPTY_USAGE } from "./usage.js";
 
 export const EXPLORER_MAX_TURNS = 5;
 export const EXPLORER_MAX_TOOL_CALLS = 18;
+const EXPLORATION_TURNS_BEFORE_FINALIZATION = 3;
 
 export type CompactionReason = "threshold" | "overflow";
 export type FinalizationReason =
@@ -338,6 +339,7 @@ async function runPiSessionWithCounter({
   isolatedFinalization,
 }: PiSessionExecutionOptions, tokenCounter: ContextTokenCounter | null): Promise<Readonly<PiSessionResult>> {
   const turnLimit = Math.min(maxTurns, EXPLORER_MAX_TURNS);
+  const explorationTurnLimit = Math.min(EXPLORATION_TURNS_BEFORE_FINALIZATION, turnLimit - 1);
   const toolCallLimit = Math.min(maxToolCalls, EXPLORER_MAX_TOOL_CALLS);
   const sessionStartedAt = clock();
   const counter = (): ContextTokenCounter => {
@@ -656,7 +658,7 @@ async function runPiSessionWithCounter({
         return undefined;
       }
       if (toolCallCount >= toolCallLimit) requestFinalization("tool_limit");
-      else if (completedTurns >= turnLimit - 1) requestFinalization("turn_limit");
+      else if (completedTurns >= explorationTurnLimit) requestFinalization("turn_limit");
       else if (stagnantTurns >= 2) requestFinalization("stagnation");
       if (config.contextCompactionEnabled && !finalizerStarted) {
         const tokens = await estimateEffectiveContextTokens(nextContext.messages, counter());

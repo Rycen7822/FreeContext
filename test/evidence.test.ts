@@ -89,7 +89,7 @@ test("compiler validates observed spans, crops, orders, and emits a ready result
   assert.equal(first.endLine - first.startLine + 1, 80);
   assert.equal(result.nextAction.kind, "read");
   assert.equal(result.nextAction.path, "src/router.ts");
-  assert.equal(result.nextAction.reason, "Read all returned evidence and continue without rediscovering it.");
+  assert.equal(result.nextAction.reason, "Read every returned evidence span; do not search or rediscover.");
   assert.match(serializeForModel(result), /\[implementation\]\[implementation\] src\/router\.ts:/u);
 }));
 
@@ -110,7 +110,7 @@ test("compiler turns role mismatch and rejected generated paths into explicit ga
   assert.equal(result.errorCode, null);
   assert.deepEqual(result.evidence.map((item) => item.questionId), ["implementation"]);
   assert.deepEqual(result.gaps, [{ questionId: "tests", reason: "Test evidence remains unresolved." }]);
-  assert.equal(result.nextAction.reason, "Read all evidence; before editing, use one targeted named-gap search batch, never broad discovery.");
+  assert.equal(result.nextAction.reason, "Read every returned evidence span; do not search in this batch.");
 }));
 
 test("compiler does not treat a trailing newline as an extra citable line", async () => withWorkspace(async (root) => {

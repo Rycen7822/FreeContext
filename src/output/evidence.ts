@@ -148,8 +148,8 @@ export async function compileFreeContextResult(
           startLine: first.startLine,
           endLine: first.endLine,
           reason: status === "partial"
-            ? "Read all evidence; before editing, use one targeted named-gap search batch, never broad discovery."
-            : "Read all returned evidence and continue without rediscovering it.",
+            ? "Read every returned evidence span; do not search in this batch."
+            : "Read every returned evidence span; do not search or rediscover.",
         }
       : {
           kind: "direct_search",

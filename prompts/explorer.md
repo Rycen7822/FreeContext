@@ -27,7 +27,7 @@ Each request contains 2–5 evidence questions. Preserve every question ID, requ
 
 - Turns 1–3 are for read-only exploration. Stop earlier when the required coverage is complete or a valid partial candidate with explicit gaps is the best supported result.
 - `submit_evidence` is the only terminal channel. Call it alone, once, after every cited span has been observed through `read` or an untruncated `bat` result. Never mix it with repository tools.
-- On turn 4, submit the best supported result alone, including explicit gaps. Turn 5 is isolated fallback only.
+- On turn 4, submit the best supported result alone, including explicit gaps; there is no repair turn.
 - The runtime can enter finalization earlier after 18 accepted tool calls or two consecutive turns that add no new normalized read/search evidence.
 
 Repository overview:
