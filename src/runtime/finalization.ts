@@ -2,10 +2,11 @@ import type { AgentMessage, AgentTool } from "@earendil-works/pi-agent-core";
 import type { Type } from "@earendil-works/pi-ai";
 import { RESULT_LIMITS } from "../mcp/contracts.js";
 import type { FreeContextRequest } from "../mcp/contracts.js";
-import type {
-  ExplorerCandidate,
-  ExplorerEvidenceCandidate,
-  ExplorerGapCandidate,
+import {
+  clipSingleLine,
+  type ExplorerCandidate,
+  type ExplorerEvidenceCandidate,
+  type ExplorerGapCandidate,
 } from "../output/candidate.js";
 import { normalizeCandidatePath } from "../output/evidence-selection.js";
 import type { ContextTokenCounter } from "./context-budget.js";
@@ -25,15 +26,12 @@ export type TerminalFailureKind =
   | "context_budget";
 
 export type TerminalFailureDetail =
-  | "invalid_summary"
   | "too_many_evidence"
   | "too_many_gaps"
   | "invalid_evidence_question_id"
   | "empty_evidence_path"
   | "invalid_evidence_line_numbers"
-  | "invalid_evidence_why"
   | "invalid_gap_question_id"
-  | "invalid_gap_reason"
   | "unknown_evidence_question"
   | "focus_outside_range"
   | "unobserved_range"
@@ -119,7 +117,6 @@ function isBoundedSingleLine(value: string, maximum: number): boolean {
 
 function localShapeFailures(candidate: Readonly<ExplorerCandidate>): readonly TerminalFailureDetail[] {
   const failures: TerminalFailureDetail[] = [];
-  if (!isBoundedSingleLine(candidate.summary, RESULT_LIMITS.summaryCodePoints)) failures.push("invalid_summary");
   if (candidate.evidence.length > RESULT_LIMITS.evidence) failures.push("too_many_evidence");
   if (candidate.gaps.length > GAP_LIMIT) failures.push("too_many_gaps");
   for (const item of candidate.evidence) {
@@ -130,11 +127,9 @@ function localShapeFailures(candidate: Readonly<ExplorerCandidate>): readonly Te
       || !Number.isSafeInteger(item.focusLine)
       || item.startLine < 1
       || item.endLine > LINE_NUMBER_LIMIT) failures.push("invalid_evidence_line_numbers");
-    if (!isBoundedSingleLine(item.why, RESULT_LIMITS.detailCodePoints)) failures.push("invalid_evidence_why");
   }
   for (const gap of candidate.gaps) {
     if (!isBoundedSingleLine(gap.questionId, QUESTION_ID_LIMIT)) failures.push("invalid_gap_question_id");
-    if (!isBoundedSingleLine(gap.reason, RESULT_LIMITS.detailCodePoints)) failures.push("invalid_gap_reason");
   }
   return failures;
 }
@@ -185,10 +180,17 @@ export function createSubmitEvidenceTool({
         startLine: item.start_line,
         endLine: item.end_line,
         focusLine: item.focus_line,
-        why: item.why,
+        why: clipSingleLine(item.why, RESULT_LIMITS.detailCodePoints),
       }));
-      const gaps = params.gaps.map((item) => ({ questionId: item.question_id, reason: item.reason }));
-      const candidate = freezeCandidate(params.summary, evidence, gaps);
+      const gaps = params.gaps.map((item) => ({
+        questionId: item.question_id,
+        reason: clipSingleLine(item.reason, RESULT_LIMITS.detailCodePoints),
+      }));
+      const candidate = freezeCandidate(
+        clipSingleLine(params.summary, RESULT_LIMITS.summaryCodePoints),
+        evidence,
+        gaps,
+      );
       const reads = observedReads();
       const failureDetails = [...localShapeFailures(candidate)];
       for (const item of evidence) {
@@ -282,8 +284,6 @@ export function buildFinalizationPacket(
     knownReferences: request.knownRefs,
     workingSummary: compactionSummary,
     submissionRules: {
-      submittedStrings: "non-empty single lines",
-      maxCodePoints: { summary: RESULT_LIMITS.summaryCodePoints, question_id: QUESTION_ID_LIMIT, why: RESULT_LIMITS.detailCodePoints, reason: RESULT_LIMITS.detailCodePoints },
       maxItems: { evidence: RESULT_LIMITS.evidence, gaps: GAP_LIMIT },
       question_id: "exact questions[].id; omit role because the harness derives it",
       citation: `non-empty repository-relative path; integer 1 <= start_line <= focus_line <= end_line <= ${LINE_NUMBER_LIMIT}; range within one matching repositoryObservation`,

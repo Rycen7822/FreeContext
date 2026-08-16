@@ -54,6 +54,27 @@ test("submit_evidence accepts one locally valid observed candidate", async () =>
   assert.equal((result.details as { readonly tool?: string }).tool, "submit_evidence");
 });
 
+test("submit_evidence canonicalizes descriptive text before storing the private candidate", async () => {
+  const state = createTerminalSubmissionState();
+  const tool = createSubmitEvidenceTool({
+    Type,
+    request: baseRequest(),
+    observedReads: () => [observedRead],
+    state,
+    isFinalizing: () => true,
+  });
+  await tool.execute("submit-normalized", {
+    ...validArguments,
+    summary: `${"s".repeat(320)}\nextra`,
+    evidence: [{ ...validArguments.evidence[0], why: `${"w".repeat(140)}\nextra` }],
+    gaps: [{ ...validArguments.gaps[0], reason: `${"r".repeat(140)}\nextra` }],
+  });
+  assert.equal([...(state.candidate?.summary ?? "")].length, 300);
+  assert.equal([...(state.candidate?.evidence[0]?.why ?? "")].length, 120);
+  assert.equal([...(state.candidate?.gaps[0]?.reason ?? "")].length, 120);
+  assert.equal(JSON.stringify(state.candidate).includes("\\n"), false);
+});
+
 test("submit_evidence exposes only portable shape constraints to the provider", () => {
   const tool = createSubmitEvidenceTool({
     Type,
@@ -71,15 +92,12 @@ test("submit_evidence exposes only portable shape constraints to the provider", 
 
 test("local submission validation records exact limits removed from the provider schema", async () => {
   const invalidCases = [
-    [{ ...validArguments, summary: "x".repeat(301) }, ["invalid_summary"]],
     [{ ...validArguments, evidence: Array.from({ length: 7 }, () => validArguments.evidence[0]) }, ["too_many_evidence"]],
     [{ ...validArguments, gaps: Array.from({ length: 6 }, () => validArguments.gaps[0]) }, ["too_many_gaps"]],
     [{ ...validArguments, evidence: [{ ...validArguments.evidence[0], question_id: "bad\nid" }] }, ["invalid_evidence_question_id", "unknown_evidence_question"]],
     [{ ...validArguments, evidence: [{ ...validArguments.evidence[0], path: "" }] }, ["empty_evidence_path", "unobserved_range"]],
     [{ ...validArguments, evidence: [{ ...validArguments.evidence[0], start_line: 0 }] }, ["invalid_evidence_line_numbers", "unobserved_range"]],
-    [{ ...validArguments, evidence: [{ ...validArguments.evidence[0], why: "two\nlines" }] }, ["invalid_evidence_why"]],
     [{ ...validArguments, gaps: [{ ...validArguments.gaps[0], question_id: "bad\nid" }] }, ["invalid_gap_question_id", "unknown_gap_question"]],
-    [{ ...validArguments, gaps: [{ ...validArguments.gaps[0], reason: "two\nlines" }] }, ["invalid_gap_reason"]],
   ] as const;
   for (const [index, [invalid, expected]] of invalidCases.entries()) {
     const state = createTerminalSubmissionState();
@@ -152,8 +170,6 @@ test("isolated packet marks exploration complete and omits repository tool origi
   const parsed = JSON.parse(packet) as Record<string, unknown>;
   assert.equal(parsed.workingSummary, "latest summary");
   assert.deepEqual(parsed.submissionRules, {
-    submittedStrings: "non-empty single lines",
-    maxCodePoints: { summary: 300, question_id: 160, why: 120, reason: 120 },
     maxItems: { evidence: 6, gaps: 5 },
     question_id: "exact questions[].id; omit role because the harness derives it",
     citation: "non-empty repository-relative path; integer 1 <= start_line <= focus_line <= end_line <= 10000000; range within one matching repositoryObservation",
