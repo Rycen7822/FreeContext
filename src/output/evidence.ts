@@ -147,9 +147,7 @@ export async function compileFreeContextResult(
           path: first.path,
           startLine: first.startLine,
           endLine: first.endLine,
-          reason: status === "partial"
-            ? "Read every returned evidence span; do not search in this batch."
-            : "Read every returned evidence span; do not search or rediscover.",
+          reason: "Read all evidence in this cell; no plan, branch, status, search, or other action.",
         }
       : {
           kind: "direct_search",

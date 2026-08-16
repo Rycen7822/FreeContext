@@ -536,10 +536,14 @@ test("an over-budget isolated packet fails before starting a finalizer request",
 
 test("the fourth turn receives only the isolated packet and submit tool", async () => {
   const config = baseConfig();
+  const rgTool: AgentTool = { ...readTool, name: "rg", label: "Search" };
+  const batTool: AgentTool = { ...readTool, name: "bat", label: "Bat" };
+  let thirdTurnTools: readonly string[] | undefined;
   let fourthTurnContext: AgentContext | undefined;
   const bindings = bindingsWith(async (prompts, context, loopConfig, emit) => {
     let activeContext: AgentContext = { ...context, messages: [...prompts] };
     for (let turn = 1; turn <= 3; turn += 1) {
+      if (turn === 3) thirdTurnTools = activeContext.tools?.map((tool) => tool.name);
       const exploratory = assistantText("", {
         content: [{ type: "toolCall", id: `call-${turn}`, name: "read", arguments: { path: `src/file-${turn}.ts` } }],
         stopReason: "toolUse",
@@ -580,9 +584,10 @@ test("the fourth turn receives only the isolated packet and submit tool", async 
     config,
     systemPrompt: "system",
     promptText: "Evidence questions:\n- [implementation][impl][required] Where is it implemented?\n- [test][tests][required] Where is it tested?",
-    tools: [readTool],
+    tools: [readTool, rgTool, batTool],
   });
 
+  assert.deepEqual(thirdTurnTools, ["read", "bat", "submit_evidence"]);
   assert.deepEqual(fourthTurnContext?.tools?.map((tool) => tool.name), ["submit_evidence"]);
   assert.equal(fourthTurnContext?.messages.length, 1);
   const finalizationMessage = fourthTurnContext?.messages[0];

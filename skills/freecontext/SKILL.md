@@ -15,7 +15,7 @@ description: Route complex reads through FreeContext. For multi-file, multi-docu
 {"taskText":"Trace the change.","knownRefs":[{"kind":"path","path":"src/router.ts"}],"evidenceQuestions":[{"id":"implementation","role":"implementation","question":"Where is it implemented?","required":true},{"id":"tests","role":"test","question":"How is it tested?","required":true}]}
 ```
 
-- Returned summaries are not reads. First repository batch: evidence spans including `nextAction`, no search. Afterward, partial gets one targeted named-gap search batch; ready gets none. Never use broad discovery or replay.
+- Summaries are not reads. Next repository cell: evidence reads only, including `nextAction`; no plan, branch, status, or search. Then partial gets one targeted named-gap search batch; ready none. Never use broad discovery or replay.
 - If unavailable, continue with native read-only tools and say so.
 
 Use this exact caller after constructing `args`:

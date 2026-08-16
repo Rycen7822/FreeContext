@@ -26,7 +26,10 @@ test("external prompt template receives workspace, tools, and overview", async (
 
 test("default explorer reserves the fourth turn for terminal submission", async () => {
   const prompt = await readFile(new URL("../prompts/explorer.md", import.meta.url), "utf8");
-  assert.match(prompt, /Turns 1–3 are for read-only exploration/u);
+  assert.match(prompt, /Turn 1: in one parallel wave, locate a candidate for every unresolved required question, including tests and contracts/u);
+  assert.match(prompt, /Turn 2: read one role-matched candidate per required question/u);
+  assert.match(prompt, /Turn 3 only reads located spans with `read`\/`bat` or submits/u);
+  assert.match(prompt, /a late search cannot be cited/u);
   assert.match(prompt, /On turn 4, submit the best supported result alone/u);
   assert.match(prompt, /there is no repair turn/u);
   assert.doesNotMatch(prompt, /Turn 5/u);

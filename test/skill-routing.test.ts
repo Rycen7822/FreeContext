@@ -51,9 +51,10 @@ test("implicit discovery routes complex reads to one MCP tool without copying el
     ...JSON.parse(requestExample),
     knownRefs: [{ kind: "query", query: "nosec" }],
   }));
-  assert.match(skill, /Returned summaries are not reads/u);
-  assert.match(skill, /First repository batch: evidence spans including `nextAction`, no search/u);
-  assert.match(skill, /partial gets one targeted named-gap search batch; ready gets none/u);
+  assert.match(skill, /Summaries are not reads/u);
+  assert.match(skill, /Next repository cell: evidence reads only, including `nextAction`/u);
+  assert.match(skill, /no plan, branch, status, or search/u);
+  assert.match(skill, /partial gets one targeted named-gap search batch; ready none/u);
   assert.match(skill, /Never use broad discovery or replay/u);
 
   assert.match(metadata, /^  allow_implicit_invocation: true$/mu);

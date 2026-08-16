@@ -44,6 +44,7 @@ import { addUsage, EMPTY_USAGE } from "./usage.js";
 export const EXPLORER_MAX_TURNS = 5;
 export const EXPLORER_MAX_TOOL_CALLS = 18;
 const EXPLORATION_TURNS_BEFORE_FINALIZATION = 3;
+const EVIDENCE_CLOSURE_TOOL_NAMES = new Set(["read", "bat", SUBMIT_EVIDENCE_TOOL_NAME]);
 
 export type CompactionReason = "threshold" | "overflow";
 export type FinalizationReason =
@@ -385,6 +386,7 @@ async function runPiSessionWithCounter({
     isFinalizing: () => finalizerStarted,
   });
   const explorationTools = isolatedPacket === null ? [...tools, submitTool] : [];
+  const evidenceClosureTools = explorationTools.filter((tool) => EVIDENCE_CLOSURE_TOOL_NAMES.has(tool.name));
   let effectiveTools = isolatedPacket === null ? [...explorationTools] : [submitTool];
   let loopReportedContext = false;
   let compactions = 0;
@@ -660,6 +662,9 @@ async function runPiSessionWithCounter({
       if (toolCallCount >= toolCallLimit) requestFinalization("tool_limit");
       else if (completedTurns >= explorationTurnLimit) requestFinalization("turn_limit");
       else if (stagnantTurns >= 2) requestFinalization("stagnation");
+      if (finalizationReason === null && completedTurns === explorationTurnLimit - 1) {
+        nextContext = { ...nextContext, tools: [...evidenceClosureTools] };
+      }
       if (config.contextCompactionEnabled && !finalizerStarted) {
         const tokens = await estimateEffectiveContextTokens(nextContext.messages, counter());
         if (bindings.shouldCompact(tokens, model.contextWindow, compactionSettings)) {
