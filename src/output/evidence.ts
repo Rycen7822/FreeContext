@@ -147,7 +147,9 @@ export async function compileFreeContextResult(
           path: first.path,
           startLine: first.startLine,
           endLine: first.endLine,
-          reason: "Read the first compiled evidence span before broader exploration.",
+          reason: status === "partial"
+            ? "Read all returned evidence first; search at most one named gap once before editing."
+            : "Read all returned evidence and continue without rediscovering it.",
         }
       : {
           kind: "direct_search",

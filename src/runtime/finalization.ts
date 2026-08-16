@@ -287,6 +287,7 @@ export function buildFinalizationPacket(
       maxItems: { evidence: RESULT_LIMITS.evidence, gaps: GAP_LIMIT },
       question_id: "exact questions[].id; omit role because the harness derives it",
       citation: `non-empty repository-relative path; integer 1 <= start_line <= focus_line <= end_line <= ${LINE_NUMBER_LIMIT}; range within one matching repositoryObservation`,
+      coverage: "cover each answerable question before duplicates; gap only if no observation answers it",
     },
     repositoryObservations,
   });
