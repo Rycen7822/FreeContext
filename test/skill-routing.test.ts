@@ -28,7 +28,7 @@ test("implicit discovery routes complex reads to one MCP tool without copying el
   assert.doesNotMatch(skill, /never auto-trigger|only (?:after )?an explicit user request/iu);
   assert.match(skill, /typeof tools\.mcp__freecontext__gather_context !== "function"/u);
   assert.doesNotMatch(skill, /ALL_TOOLS/u);
-  assert.match(skill, /never run a separate tool-catalog lookup/u);
+  assert.match(skill, /never query catalogs/u);
   assert.equal(skill.match(/await tools\.mcp__freecontext__gather_context\(args\)/gu)?.length, 1);
   assert.equal(skill.match(/\bnotify\(/gu)?.length, 1);
   assert.equal(skill.match(/functions\.wait/gu)?.length, 1);
@@ -43,9 +43,10 @@ test("implicit discovery routes complex reads to one MCP tool without copying el
   for (const shape of ['{kind:"path",path}', '{kind:"symbol",symbol,path?}', '{kind:"stack",path,line}']) {
     assert.ok(skill.includes(shape));
   }
-  assert.match(skill, /no `query`\/keyword refs/u);
-  assert.match(skill, /use 2–5 unique question ids/iu);
+  assert.match(skill, /no query refs/u);
+  assert.match(skill, /use 2–5 unique ids/iu);
   assert.match(skill, /`implementation`, `caller`, `test`, or `contract`/u);
+  assert.match(skill, /contract requires a distinct existing repository source, not requested new behavior/u);
   assert.doesNotMatch(skill, /\bworkspace_root\b/u);
   assert.throws(() => FreeContextRequestSchema.parse({
     ...JSON.parse(requestExample),

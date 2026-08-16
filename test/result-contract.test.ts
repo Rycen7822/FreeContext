@@ -82,12 +82,12 @@ test("serializeForModel is text-first and contains every canonical evidence fiel
   const text = serializeForModel(result);
   assert.equal(text, [
     "Status: ready",
-    "Summary: The implementation and test locations are verified.",
     "Evidence:",
     "1. [implementation][implementation] src/router.ts:10-24 (focus 17) — Defines provider routing.",
     "First repository batch: read src/router.ts:10-24 — Read the decisive implementation span.",
     "Gaps:",
     "-",
+    "Summary: The implementation and test locations are verified.",
     "Error: -",
     "Session: /private/freecontext/session-1.json",
   ].join("\n"));

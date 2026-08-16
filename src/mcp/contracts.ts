@@ -264,7 +264,7 @@ export function normalizeFreeContextRequest(rawRequest: unknown): Readonly<FreeC
 
 export function serializeForModel(rawResult: Readonly<FreeContextResult>): string {
   const result = FreeContextResultSchema.parse(rawResult);
-  const lines = [`Status: ${result.status}`, `Summary: ${result.summary}`, "Evidence:"];
+  const lines = [`Status: ${result.status}`, "Evidence:"];
   if (result.evidence.length === 0) lines.push("-");
   for (const [index, item] of result.evidence.entries()) {
     lines.push(`${index + 1}. [${item.role}][${item.questionId}] ${item.path}:${item.startLine}-${item.endLine} (focus ${item.focusLine}) — ${item.why}`);
@@ -276,6 +276,7 @@ export function serializeForModel(rawResult: Readonly<FreeContextResult>): strin
   lines.push("Gaps:");
   if (result.gaps.length === 0) lines.push("-");
   for (const gap of result.gaps) lines.push(`- [${gap.questionId}] ${gap.reason}`);
+  lines.push(`Summary: ${result.summary}`);
   lines.push(`Error: ${result.errorCode ?? "-"}`);
   lines.push(`Session: ${result.sessionFile ?? result.sessionId}`);
   const text = lines.join("\n");
