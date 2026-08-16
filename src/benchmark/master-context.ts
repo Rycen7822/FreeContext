@@ -21,6 +21,7 @@ import {
 import type { DuplicateSemanticCall } from "./delivery-observation.js";
 import type { FreeContextTransportObservation } from "./delivery-observation.js";
 import type { MissingReturnCausalEvidence } from "./delivery-observation.js";
+import { collectCompletedHostRepositoryActions } from "./host-action-observation.js";
 
 const OUTPUT_NAME = "master-agent-context.json";
 const DELIVERY_AUDIT_NAME = "delivery-observations.jsonl";
@@ -232,9 +233,28 @@ export async function exportMasterAgentContext({
         result,
         session.serializedTextSha256,
       );
+      const explicitActions = collectParentRepositoryActions(completeMasterContext, session.invocation.callId);
+      const matchingTransports = freeContextTransport.filter((item) =>
+        (item.cellId === session.invocation.callId || item.outerCallId === session.invocation.callId) &&
+          item.completedAt !== null);
+      const matchingTransport = matchingTransports.length === 1 ? matchingTransports[0] : null;
+      const hostObservation = explicitActions.length === 0 && matchingTransport?.completedAt &&
+          session.schemaVersion === "freecontext-mcp-session-v3"
+        ? collectCompletedHostRepositoryActions(completeMasterContext, {
+            completedAt: matchingTransport.completedAt,
+            taskId: taskName.trim(),
+            callId: session.invocation.callId,
+            repetition: "host-observed",
+            gapQuestionIds: result.gaps.map(({ questionId }) => questionId),
+          })
+        : null;
+      const observedActions = explicitActions.length > 0
+        ? explicitActions
+        : hostObservation?.complete ? hostObservation.actions : [];
       const consumptionAudit = analyzeFreeContextConsumption(
         result,
-        collectParentRepositoryActions(completeMasterContext, session.invocation.callId),
+        observedActions,
+        explicitActions.length > 0 ? "explicit_host_event" : "completed_codex_tool_call",
       );
       const missingReturnCausalEvidence = classifyMissingReturn(delivery, session);
       return Object.freeze({

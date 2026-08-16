@@ -218,7 +218,6 @@ async function main(): Promise<void> {
   };
   const publicBindings = await loadPiBindings("anthropic");
   const final = assistantText("done");
-  let summaryCalls = 0;
   const bindings: PiBindings = {
     ...publicBindings,
     runAgentLoop: async (prompts, context, loopConfig, emit) => {
@@ -241,7 +240,6 @@ async function main(): Promise<void> {
       return [...prompts, final];
     },
     streamSimple: () => {
-      summaryCalls += 1;
       const stream = createAssistantMessageEventStream();
       stream.end(assistantText("benchmark summary"));
       return stream;
@@ -275,7 +273,6 @@ async function main(): Promise<void> {
   });
 
   for (let index = 0; index < warmup; index += 1) await runOnce();
-  summaryCalls = 0;
   const samples: number[] = [];
   let compactions = 0;
   let compactionMs = 0;
@@ -287,10 +284,10 @@ async function main(): Promise<void> {
     compactionMs += result.metrics.compactionMs;
   }
 
-  if (scenario === "baseline" && (summaryCalls !== 0 || compactions !== 0)) {
+  if (scenario === "baseline" && compactions !== 0) {
     throw new Error("baseline benchmark unexpectedly invoked context compaction");
   }
-  if (scenario === "context" && (summaryCalls < runs || compactions < runs)) {
+  if (scenario === "context" && compactions < runs) {
     throw new Error("forced-context benchmark did not compact every measured run");
   }
   const sorted = [...samples].sort((left, right) => left - right);

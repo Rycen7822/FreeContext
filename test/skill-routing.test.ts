@@ -51,8 +51,9 @@ test("implicit discovery routes complex reads to one MCP tool without copying el
     ...JSON.parse(requestExample),
     knownRefs: [{ kind: "query", query: "nosec" }],
   }));
-  assert.match(skill, /read the returned `nextAction` span before broader exploration/u);
-  assert.match(skill, /never replay the same request/u);
+  assert.match(skill, /consume evidence and `nextAction`/u);
+  assert.match(skill, /before editing, make at most one targeted search/u);
+  assert.match(skill, /Never repeat searches or replay the call/u);
 
   assert.match(metadata, /^  allow_implicit_invocation: true$/mu);
   assert.equal(metadata.match(/^    - type:/gmu)?.length, 1);

@@ -21,6 +21,7 @@ export interface ParentRepositoryActionEvent {
 
 export interface FreeContextConsumptionAudit {
   readonly schemaVersion: "freecontext-consumption-audit-v1";
+  readonly observationSource: "explicit_host_event" | "completed_codex_tool_call";
   readonly taskId: string;
   readonly callId: string;
   readonly repetition: string;
@@ -119,6 +120,7 @@ function hitsEvidence(action: ParentRepositoryActionEvent["action"], result: Rea
 export function analyzeFreeContextConsumption(
   result: Readonly<FreeContextResult>,
   actions: readonly Readonly<ParentRepositoryActionEvent>[],
+  observationSource: FreeContextConsumptionAudit["observationSource"] = "explicit_host_event",
 ): Readonly<FreeContextConsumptionAudit> | null {
   if (actions.length === 0) return null;
   const [first, ...rest] = actions;
@@ -137,6 +139,7 @@ export function analyzeFreeContextConsumption(
     : 0;
   return Object.freeze({
     schemaVersion: "freecontext-consumption-audit-v1",
+    observationSource,
     taskId: first.taskId,
     callId: first.callId,
     repetition: first.repetition,

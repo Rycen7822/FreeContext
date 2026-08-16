@@ -17,7 +17,7 @@ Prompt-visible discovery shim for the atomic `gather_context` tool.
 {"taskText":"Trace the change.","knownRefs":[{"kind":"path","path":"src/router.ts"}],"evidenceQuestions":[{"id":"implementation","role":"implementation","question":"Where is it implemented?","required":true},{"id":"tests","role":"test","question":"How is it tested?","required":true}]}
 ```
 
-- After a ready or partial result, read the returned `nextAction` span before broader exploration. Address a material gap with the named targeted action; never replay the same request.
+- After ready/partial, consume evidence and `nextAction`. Treat gaps as negative evidence: before editing, make at most one targeted search. Never repeat searches or replay the call.
 - If unavailable, continue with native read-only tools and say so.
 
 Use this exact caller after constructing `args`:

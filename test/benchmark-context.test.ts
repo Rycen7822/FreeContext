@@ -174,6 +174,7 @@ async function createFixture(
   startedOnly = false,
   includeTransport = false,
   includeDirectObservation = true,
+  includeParentAction = true,
 ): Promise<Readonly<{ agentDir: string; masterRaw: string; sessionRaw: string }>> {
   const agentDir = path.join(root, "agent");
   const sessionDir = path.join(agentDir, "sessions", "2026", "08", "09");
@@ -279,21 +280,38 @@ async function createFixture(
         });
       }
     }
-    events.push({
-      schemaVersion: "freecontext-parent-action-v1",
-      taskId: "task-001",
-      callId: session.invocation.callId,
-      repetition: "r1",
-      sequence: 1,
-      action: {
-        kind: "read",
-        path: "src/router.ts",
-        startLine: 1,
-        endLine: 2,
-        broad: false,
-        gapQuestionIds: [],
-      },
-    });
+    if (includeParentAction) {
+      events.push({
+        schemaVersion: "freecontext-parent-action-v1",
+        taskId: "task-001",
+        callId: session.invocation.callId,
+        repetition: "r1",
+        sequence: 1,
+        action: {
+          kind: "read",
+          path: "src/router.ts",
+          startLine: 1,
+          endLine: 2,
+          broad: false,
+          gapQuestionIds: [],
+        },
+      });
+    } else {
+      events.push({
+        timestamp: "2026-08-09T00:00:13.000Z",
+        type: "response_item",
+        payload: {
+          type: "custom_tool_call",
+          name: "exec",
+          call_id: "parent-read-001",
+          input: 'const r = await tools.exec_command({cmd:"sed -n \'1,20p\' src/router.ts",workdir:"/workspace"}); text(r.output);',
+        },
+      }, {
+        timestamp: "2026-08-09T00:00:14.000Z",
+        type: "response_item",
+        payload: { type: "custom_tool_call_output", call_id: "parent-read-001", output: "router" },
+      });
+    }
   } else if (observedText !== null) {
     events.push({ type: "freecontext_tool_output", payload: observedText });
   }
@@ -344,6 +362,7 @@ test("master context exporter joins v3 by session address and preserves the actu
     assert.equal(call?.requestMatches, true);
     assert.equal(call?.structuredContentMatches, true);
     assert.equal(call?.recoverableResult, null);
+    assert.equal(call?.consumptionAudit?.observationSource, "explicit_host_event");
     assert.equal(call?.consumptionAudit?.firstActionEvidenceHit, true);
     assert.equal(call?.consumptionAudit?.evidenceConsumed, true);
     assert.equal(call?.consumptionAudit?.repeatedBroadSearch, false);
@@ -381,9 +400,13 @@ test("master context exporter joins v3 by session address and preserves the actu
 test("same-cell code-await output is the actual observation without a direct MCP item", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "freecontext-code-await-master-"));
   try {
-    const session = v3Session();
+    const base = v3Session();
+    const session = {
+      ...base,
+      invocation: { ...base.invocation, callId: "cell-001" },
+    };
     const actualText = serializeForModel(session.result);
-    const fixture = await createFixture(root, session, actualText, undefined, false, false, true, false);
+    const fixture = await createFixture(root, session, actualText, undefined, false, false, true, false, false);
     const outputPath = await exportMasterAgentContext({
       agentDir: fixture.agentDir,
       taskName: "TaskNameXXX",
@@ -395,12 +418,37 @@ test("same-cell code-await output is the actual observation without a direct MCP
     assert.equal(call?.deliveryStatus, "matched");
     assert.equal(call?.callIdCorrelation, "missing");
     assert.equal(call?.sessionReferenceMatches, 1);
+    assert.equal(call?.consumptionAudit?.observationSource, "completed_codex_tool_call");
+    assert.equal(call?.consumptionAudit?.firstActionEvidenceHit, true);
     assert.equal(call?.serializedTextSha256, call?.observedTextSha256);
     assert.equal(call?.requestMatches, null);
     assert.equal(call?.structuredContentMatches, null);
     assert.equal(call?.recoverableResult, null);
     assert.equal(document.freeContextTransport[0]?.terminalOutputSeen, true);
     assert.deepEqual(document.duplicateSemanticCalls, []);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("fast code-await can correlate the completed outer exec call", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "freecontext-outer-await-master-"));
+  try {
+    const base = v3Session();
+    const session = {
+      ...base,
+      invocation: { ...base.invocation, callId: "outer-001" },
+    };
+    const actualText = serializeForModel(session.result);
+    const fixture = await createFixture(root, session, actualText, undefined, false, false, true, false, false);
+    const outputPath = await exportMasterAgentContext({
+      agentDir: fixture.agentDir,
+      taskName: "TaskNameXXX",
+      now: () => new Date("2026-08-09T01:00:00.000Z"),
+    });
+    const document = JSON.parse(await readFile(outputPath, "utf8")) as BenchmarkMasterAgentContext;
+    assert.equal(document.freeContextCalls[0]?.consumptionAudit?.observationSource, "completed_codex_tool_call");
+    assert.equal(document.freeContextCalls[0]?.consumptionAudit?.firstActionEvidenceHit, true);
   } finally {
     await rm(root, { recursive: true, force: true });
   }
