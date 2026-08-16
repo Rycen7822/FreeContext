@@ -173,7 +173,6 @@ test("isolated packet marks exploration complete and omits repository tool origi
     maxItems: { evidence: 6, gaps: 5 },
     question_id: "exact questions[].id; omit role because the harness derives it",
     citation: "non-empty repository-relative path; integer 1 <= start_line <= focus_line <= end_line <= 10000000; range within one matching repositoryObservation",
-    coverage: "cover each answerable question before duplicates; gap only if no observation answers it",
   });
   const { tool: _tool, ...modelObservation } = observedRead;
   assert.equal(_tool, "read");
@@ -182,7 +181,8 @@ test("isolated packet marks exploration complete and omits repository tool origi
   assert.equal(packet.includes("[read src/index.ts:4-8]"), false);
   assert.equal(FINALIZATION_SYSTEM_PROMPT.includes("completed repository exploration"), true);
   assert.equal(FINALIZATION_SYSTEM_PROMPT.includes("Repository tools are unavailable"), true);
-  assert.equal(FINALIZATION_SYSTEM_PROMPT.includes("report it as a gap"), true);
+  assert.equal(FINALIZATION_SYSTEM_PROMPT.includes("Cite any relevant observation even when incomplete"), true);
+  assert.equal(FINALIZATION_SYSTEM_PROMPT.includes("gap only when no observation is relevant"), true);
 });
 
 test("compaction keeps only observations whose tool results remain in effective context", () => {

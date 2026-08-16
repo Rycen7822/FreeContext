@@ -22,7 +22,7 @@ export interface ParentRepositoryActionEvent {
 }
 
 export interface FreeContextConsumptionAudit {
-  readonly schemaVersion: "freecontext-consumption-audit-v1";
+  readonly schemaVersion: "freecontext-consumption-audit-v2";
   readonly observationSource: "explicit_host_event" | "completed_codex_tool_call";
   readonly taskId: string;
   readonly callId: string;
@@ -34,9 +34,15 @@ export interface FreeContextConsumptionAudit {
   readonly firstActionEvidenceHit: boolean | null;
   readonly evidenceConsumed: boolean;
   readonly firstEvidenceHitSequence: number | null;
+  readonly firstEditSequence: number | null;
   readonly broadSearchCount: number;
   readonly repeatedBroadSearch: boolean;
+  /** Legacy full-trajectory diagnostic; raw host observations cannot prove semantic gap targeting. */
   readonly partialGapSearchCount: number;
+  readonly preEditSearchCount: number;
+  readonly preEditSearchBatchCount: number;
+  readonly preEditBroadSearchCount: number;
+  readonly postEditSearchCount: number;
 }
 
 function positiveInteger(value: unknown): number | null {
@@ -146,6 +152,10 @@ export function analyzeFreeContextConsumption(
     ? [first]
     : actions.filter((event) => event.observationBatchId === first.observationBatchId);
   const broadSearchCount = actions.filter((event) => event.action.kind === "search" && event.action.broad).length;
+  const firstEdit = actions.find((event) => event.action.kind === "edit") ?? null;
+  const beforeFirstEdit = (event: Readonly<ParentRepositoryActionEvent>): boolean => firstEdit === null ||
+    event.sequence < firstEdit.sequence ||
+    (firstEdit.observationBatchId !== null && event.observationBatchId === firstEdit.observationBatchId);
   const gapIds = new Set(result.gaps.map(({ questionId }) => questionId));
   const partialGapSearchCount = result.status === "partial" && firstEvidenceHit
     ? actions.filter((event) => event.sequence > firstEvidenceHit.sequence &&
@@ -153,8 +163,13 @@ export function analyzeFreeContextConsumption(
       event.action.kind === "search" &&
       event.action.gapQuestionIds.some((questionId) => gapIds.has(questionId))).length
     : 0;
+  const preEditSearches = actions.filter((event) => beforeFirstEdit(event) && event.action.kind === "search");
+  const preEditSearchBatchCount = new Set(preEditSearches.map((event) =>
+    event.observationBatchId ?? `sequence:${event.sequence}`)).size;
+  const preEditBroadSearchCount = preEditSearches.filter((event) => event.action.broad).length;
+  const postEditSearchCount = actions.filter((event) => !beforeFirstEdit(event) && event.action.kind === "search").length;
   return Object.freeze({
-    schemaVersion: "freecontext-consumption-audit-v1",
+    schemaVersion: "freecontext-consumption-audit-v2",
     observationSource,
     taskId: first.taskId,
     callId: first.callId,
@@ -166,8 +181,13 @@ export function analyzeFreeContextConsumption(
     firstActionEvidenceHit: firstRepositoryBatch.every((event) => hitsEvidence(event.action, result)),
     evidenceConsumed: firstEvidenceHit !== null,
     firstEvidenceHitSequence: firstEvidenceHit?.sequence ?? null,
+    firstEditSequence: firstEdit?.sequence ?? null,
     broadSearchCount,
-    repeatedBroadSearch: broadSearchCount > 0,
+    repeatedBroadSearch: broadSearchCount > 1,
     partialGapSearchCount,
+    preEditSearchCount: preEditSearches.length,
+    preEditSearchBatchCount,
+    preEditBroadSearchCount,
+    postEditSearchCount,
   });
 }

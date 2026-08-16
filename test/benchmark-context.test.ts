@@ -378,7 +378,7 @@ test("master context exporter joins v3 by session address and preserves the actu
       "utf8",
     )).trim().split("\n").map((line) => JSON.parse(line));
     assert.deepEqual(consumption.map(({ schemaVersion }) => schemaVersion), [
-      "freecontext-consumption-audit-v1",
+      "freecontext-consumption-audit-v2",
       "freecontext-duplicate-semantic-call-v1",
       "freecontext-transport-observation-v1",
     ]);

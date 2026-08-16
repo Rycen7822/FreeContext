@@ -84,6 +84,7 @@ test("audit detects targeted-first consumption and later repeated broad search",
   const audit = analyzeFreeContextConsumption(result(), [
     action(1),
     action(2, { kind: "search", path: null, startLine: null, endLine: null, broad: true }),
+    action(3, { kind: "search", path: null, startLine: null, endLine: null, broad: true }),
   ]);
   assert.ok(audit);
   assert.equal(audit.firstRepositoryAction?.kind, "read");
@@ -92,8 +93,13 @@ test("audit detects targeted-first consumption and later repeated broad search",
   assert.equal(audit.firstActionEvidenceHit, true);
   assert.equal(audit.evidenceConsumed, true);
   assert.equal(audit.firstEvidenceHitSequence, 1);
-  assert.equal(audit.broadSearchCount, 1);
+  assert.equal(audit.firstEditSequence, null);
+  assert.equal(audit.broadSearchCount, 2);
   assert.equal(audit.repeatedBroadSearch, true);
+  assert.equal(audit.preEditSearchCount, 2);
+  assert.equal(audit.preEditSearchBatchCount, 2);
+  assert.equal(audit.preEditBroadSearchCount, 2);
+  assert.equal(audit.postEditSearchCount, 0);
 });
 
 test("audit treats a concurrent outer cell as one evidence-consumption batch", () => {
@@ -108,6 +114,7 @@ test("audit treats a concurrent outer cell as one evidence-consumption batch", (
   assert.equal(audit.firstRepositoryBatchConcurrent, true);
   assert.equal(audit.firstActionEvidenceHit, true);
   assert.equal(audit.partialGapSearchCount, 1);
+  assert.equal(audit.preEditSearchBatchCount, 1);
 });
 
 test("audit requires every first-batch action to hit evidence and does not order peers within a batch", () => {
@@ -133,6 +140,34 @@ test("partial audit counts only named-gap searches after evidence consumption", 
   assert.equal(audit.firstActionEvidenceHit, false);
   assert.equal(audit.evidenceConsumed, true);
   assert.equal(audit.partialGapSearchCount, 1);
+  assert.equal(audit.preEditSearchCount, 3);
+  assert.equal(audit.preEditSearchBatchCount, 3);
+  assert.equal(audit.postEditSearchCount, 0);
+});
+
+test("audit separates conservative pre-edit search batches from post-edit diagnostics", () => {
+  const audit = analyzeFreeContextConsumption(result("partial"), [
+    action(1, {}, { observationBatchId: "cell-1" }),
+    action(2, { kind: "search", path: null, startLine: null, endLine: null, gapQuestionIds: ["tests"] },
+      { observationBatchId: "cell-2" }),
+    action(3, { kind: "search", path: null, startLine: null, endLine: null, gapQuestionIds: ["tests"] },
+      { observationBatchId: "cell-2" }),
+    action(4, { kind: "edit" }, { observationBatchId: "cell-3" }),
+    action(5, { kind: "search", path: null, startLine: null, endLine: null, gapQuestionIds: ["tests"] },
+      { observationBatchId: "cell-3" }),
+    action(6, { kind: "search", path: null, startLine: null, endLine: null, gapQuestionIds: ["tests"] },
+      { observationBatchId: "cell-4" }),
+    action(7, { kind: "search", path: null, startLine: null, endLine: null, broad: true },
+      { observationBatchId: "cell-5" }),
+  ]);
+  assert.ok(audit);
+  assert.equal(audit.firstEditSequence, 4);
+  assert.equal(audit.partialGapSearchCount, 4);
+  assert.equal(audit.preEditSearchCount, 3);
+  assert.equal(audit.preEditSearchBatchCount, 2);
+  assert.equal(audit.broadSearchCount, 1);
+  assert.equal(audit.preEditBroadSearchCount, 0);
+  assert.equal(audit.postEditSearchCount, 2);
 });
 
 test("absence of host events stays unobserved for every result status", () => {

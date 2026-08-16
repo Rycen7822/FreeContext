@@ -110,7 +110,7 @@ test("compiler turns role mismatch and rejected generated paths into explicit ga
   assert.equal(result.errorCode, null);
   assert.deepEqual(result.evidence.map((item) => item.questionId), ["implementation"]);
   assert.deepEqual(result.gaps, [{ questionId: "tests", reason: "Test evidence remains unresolved." }]);
-  assert.equal(result.nextAction.reason, "Read all returned evidence first; search at most one named gap once before editing.");
+  assert.equal(result.nextAction.reason, "Read all evidence; before editing, use one targeted named-gap search batch, never broad discovery.");
 }));
 
 test("compiler does not treat a trailing newline as an extra citable line", async () => withWorkspace(async (root) => {

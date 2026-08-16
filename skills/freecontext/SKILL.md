@@ -15,7 +15,7 @@ description: Route complex reads through FreeContext. For multi-file, multi-docu
 {"taskText":"Trace the change.","knownRefs":[{"kind":"path","path":"src/router.ts"}],"evidenceQuestions":[{"id":"implementation","role":"implementation","question":"Where is it implemented?","required":true},{"id":"tests","role":"test","question":"How is it tested?","required":true}]}
 ```
 
-- After ready/partial, the first repository batch may be parallel but must read only returned evidence and include `nextAction`. Before editing, search one named gap at most once. Never repeat or replay.
+- First repository batch: parallel evidence reads including `nextAction` only. Before editing: ready means no search; partial permits one targeted named-gap search batch. Never use broad discovery or replay.
 - If unavailable, continue with native read-only tools and say so.
 
 Use this exact caller after constructing `args`:
