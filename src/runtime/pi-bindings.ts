@@ -48,6 +48,7 @@ function validateBindings(bindings: PiBindings): Readonly<PiBindings> {
 export async function loadPiBindings(
   api: ApiProtocol,
   overrides: PiBindings | null = null,
+  useStreaming = true,
 ): Promise<Readonly<PiBindings>> {
   if (overrides) return validateBindings(overrides);
 
@@ -59,6 +60,9 @@ export async function loadPiBindings(
       loadProvider(),
     ]);
     const providerStreams: PiAi.ProviderStreams = provider;
+    const streamSimple = api === "openai" && !useStreaming
+      ? (await import("./openai-nonstream.js")).streamOpenAINonStreaming
+      : providerStreams.streamSimple;
     const bindings: PiBindings = {
       runAgentLoop: agent.runAgentLoop,
       runAgentLoopContinue: agent.runAgentLoopContinue,
@@ -70,7 +74,7 @@ export async function loadPiBindings(
       createCompactionSummaryMessage: agent.createCompactionSummaryMessage,
       uuidv7: agent.uuidv7,
       Type: ai.Type,
-      streamSimple: providerStreams.streamSimple,
+      streamSimple,
       isContextOverflow: ai.isContextOverflow,
     };
     return validateBindings(bindings);

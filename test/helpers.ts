@@ -60,6 +60,7 @@ export function baseConfig(overrides: Partial<FreeContextConfig> = {}): FreeCont
     thinkingLevel: "off",
     headers: {},
     openAICompat: {
+      useStreaming: true,
       supportsDeveloperRole: false,
       supportsReasoningEffort: false,
       supportsUsageInStreaming: false,

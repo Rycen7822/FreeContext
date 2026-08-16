@@ -92,6 +92,7 @@ export function resolveTarget(
     thinkingLevel: normalizeThinkingLevel(model.thinkingLevel, `models.${target}.thinking_level`),
     headers: provider.headers,
     openAICompat: Object.freeze({
+      useStreaming: model.openAICompat.useStreaming ?? true,
       supportsDeveloperRole: model.openAICompat.supportsDeveloperRole ?? false,
       supportsReasoningEffort: model.openAICompat.supportsReasoningEffort ?? false,
       supportsUsageInStreaming: model.openAICompat.supportsUsageInStreaming ?? false,

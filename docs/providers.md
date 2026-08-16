@@ -45,6 +45,7 @@ context_window = 128000
 max_output_tokens = 4096
 
 [models.openai_model.openai_compat]
+use_streaming = true
 supports_developer_role = false
 supports_reasoning_effort = false
 supports_usage_in_streaming = false
@@ -54,7 +55,7 @@ max_tokens_field = "max_tokens"
 thinking_format = "openai"
 ```
 
-`auto` uses standard Bearer authentication. Compatibility controls belong to each model because one gateway may expose models with different feature subsets. `supports_required_tool_choice` defaults to `true`; set it to `false` only when that model route rejects string `tool_choice = "required"`. The isolated finalizer then sends `auto` while still accepting only a locally validated `submit_evidence` call and failing closed on text or any other tool. `thinking_format` defaults to `openai`; set it to `deepseek` for a DeepSeek-compatible route so `thinking_level = "off"` is sent as `thinking: { "type": "disabled" }` instead of relying on the provider default.
+`auto` uses standard Bearer authentication. Compatibility controls belong to each model because one gateway may expose models with different feature subsets. `use_streaming` defaults to `true`; set it to `false` when an atomic caller needs one auditable terminal Chat Completions response instead of incremental SSE. FreeContext converts that complete response back into the same Pi event contract, while its existing harness remains the sole retry owner. `supports_required_tool_choice` defaults to `true`; set it to `false` only when that model route rejects string `tool_choice = "required"`. The isolated finalizer then sends `auto` while still accepting only a locally validated `submit_evidence` call and failing closed on text or any other tool. `thinking_format` defaults to `openai`; set it to `deepseek` for a DeepSeek-compatible route so `thinking_level = "off"` is sent as `thinking: { "type": "disabled" }` instead of relying on the provider default.
 
 ## Credentials and headers
 

@@ -206,6 +206,7 @@ async function main(): Promise<void> {
     thinkingLevel: "off",
     headers: {},
     openAICompat: {
+      useStreaming: true,
       supportsDeveloperRole: false,
       supportsReasoningEffort: false,
       supportsUsageInStreaming: false,

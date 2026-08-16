@@ -46,6 +46,7 @@ max_output_tokens = 4096
 thinking_level = "high"
 
 [models.backup.openai_compat]
+use_streaming = false
 supports_reasoning_effort = true
 supports_required_tool_choice = false
 max_tokens_field = "max_completion_tokens"
@@ -91,6 +92,8 @@ test("resolveConfig loads TOML catalogs and keeps CLI over environment over file
     assert.equal(route.targets[1]?.apiKey, KEYS.BACKUP_KEY);
     assert.equal(route.targets[0]?.openAICompat.supportsRequiredToolChoice, true);
     assert.equal(route.targets[1]?.openAICompat.supportsRequiredToolChoice, false);
+    assert.equal(route.targets[0]?.openAICompat.useStreaming, true);
+    assert.equal(route.targets[1]?.openAICompat.useStreaming, false);
   });
 });
 
@@ -113,6 +116,7 @@ test("tracked TOML examples remain loadable without embedded credentials", async
   });
   assert.deepEqual(benchmark.targets.map((target) => target.target), ["tokenrhythm"]);
   assert.equal(benchmark.targets[0]?.model, "deepseek-v4-flash-0731");
+  assert.equal(benchmark.targets[0]?.openAICompat.useStreaming, false);
 });
 
 test("target and route overrides are deterministic", async () => {

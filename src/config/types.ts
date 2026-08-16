@@ -6,6 +6,7 @@ export type OpenAIThinkingFormat = "openai" | "deepseek";
 export type FallbackReason = "timeout" | "rate_limit" | "server_error" | "connection";
 
 export interface OpenAICompatConfig {
+  readonly useStreaming: boolean;
   readonly supportsDeveloperRole: boolean;
   readonly supportsReasoningEffort: boolean;
   readonly supportsUsageInStreaming: boolean;

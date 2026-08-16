@@ -134,6 +134,25 @@ test("finalizer rejects full duplicate allocation ahead of a required gap", asyn
   assert.deepEqual(state.failureDetails, ["required_gap_after_duplicate_evidence"]);
 });
 
+test("finalizer removes a redundant gap after validating evidence for the same question", async () => {
+  const state = createTerminalSubmissionState();
+  const tool = createSubmitEvidenceTool({
+    Type,
+    request: baseRequest(),
+    observedReads: () => [observedRead],
+    state,
+    isFinalizing: () => true,
+  });
+  await tool.execute("redundant-gap", {
+    ...validArguments,
+    evidence: Array.from({ length: 6 }, () => validArguments.evidence[0]),
+    gaps: [{ question_id: "impl", reason: "The implementation was not found." }],
+  });
+  assert.equal(state.failureKind, null);
+  assert.equal(state.candidate?.evidence.length, 6);
+  assert.deepEqual(state.candidate?.gaps, []);
+});
+
 test("finalizer rejects unobserved evidence and records invalid_arguments", async () => {
   const state = createTerminalSubmissionState();
   const tool = createSubmitEvidenceTool({
@@ -193,7 +212,7 @@ test("isolated packet marks exploration complete and omits repository tool origi
     maxItems: { evidence: 6, gaps: 6 },
     question_id: "exact questions[].id; omit role because the harness derives it",
     citation: "non-empty repository-relative path; integer 1 <= start_line <= focus_line <= end_line <= 10000000; range within one matching repositoryObservation",
-    coverage: "Allocate one observed span per supported required question before any second span. Gap only when no observation covers every named concern, never because the evidence limit is full.",
+    coverage: "Allocate one observed span per supported required question before any second span. Evidence and gaps must use disjoint question IDs. Gap only when no observation covers every named concern, never because the evidence limit is full.",
   });
   const { tool: _tool, ...modelObservation } = observedRead;
   assert.equal(_tool, "read");

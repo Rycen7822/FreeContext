@@ -38,6 +38,7 @@ export interface ProviderDocument {
 }
 
 export interface OpenAICompatDocument {
+  readonly useStreaming?: boolean;
   readonly supportsDeveloperRole?: boolean;
   readonly supportsReasoningEffort?: boolean;
   readonly supportsUsageInStreaming?: boolean;
@@ -135,6 +136,7 @@ function parseOpenAICompat(value: unknown, location: string): Readonly<OpenAICom
   if (value === undefined) return Object.freeze({});
   const table = asTable(value, location);
   assertKnownKeys(table, [
+    "use_streaming",
     "supports_developer_role",
     "supports_reasoning_effort",
     "supports_usage_in_streaming",
@@ -143,6 +145,7 @@ function parseOpenAICompat(value: unknown, location: string): Readonly<OpenAICom
     "max_tokens_field",
     "thinking_format",
   ], location);
+  const useStreaming = optionalBoolean(table, "use_streaming", location);
   const supportsDeveloperRole = optionalBoolean(table, "supports_developer_role", location);
   const supportsReasoningEffort = optionalBoolean(table, "supports_reasoning_effort", location);
   const supportsUsageInStreaming = optionalBoolean(table, "supports_usage_in_streaming", location);
@@ -151,6 +154,7 @@ function parseOpenAICompat(value: unknown, location: string): Readonly<OpenAICom
   const maxTokensField = optionalString(table, "max_tokens_field", location);
   const thinkingFormat = optionalString(table, "thinking_format", location);
   return Object.freeze({
+    ...(useStreaming !== undefined ? { useStreaming } : {}),
     ...(supportsDeveloperRole !== undefined ? { supportsDeveloperRole } : {}),
     ...(supportsReasoningEffort !== undefined ? { supportsReasoningEffort } : {}),
     ...(supportsUsageInStreaming !== undefined ? { supportsUsageInStreaming } : {}),

@@ -114,6 +114,7 @@ try {
     thinkingLevel: "off",
     headers: {},
     openAICompat: {
+      useStreaming: true,
       supportsDeveloperRole: false,
       supportsReasoningEffort: false,
       supportsUsageInStreaming: false,

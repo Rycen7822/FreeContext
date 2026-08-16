@@ -78,7 +78,7 @@ export async function runPrimaryRoute({
     const setupStartedAt = index === 0 ? startedAt : clock();
     const config = route.targets[index];
     if (!config) continue;
-    const bindings = dependencies.bindings ?? (await loadPiBindings(config.api));
+    const bindings = dependencies.bindings ?? (await loadPiBindings(config.api, null, config.openAICompat.useStreaming));
     const repositoryTools = dependencies.repositoryTools ?? (await createRepositoryTools({
       Type: bindings.Type,
       workspace,

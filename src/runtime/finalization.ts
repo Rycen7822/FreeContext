@@ -187,13 +187,13 @@ export function createSubmitEvidenceTool({
         questionId: item.question_id,
         reason: clipSingleLine(item.reason, RESULT_LIMITS.detailCodePoints),
       }));
-      const candidate = freezeCandidate(
+      const rawCandidate = freezeCandidate(
         clipSingleLine(params.summary, RESULT_LIMITS.summaryCodePoints),
         evidence,
         gaps,
       );
       const reads = observedReads();
-      const failureDetails = [...localShapeFailures(candidate)];
+      const failureDetails = [...localShapeFailures(rawCandidate)];
       for (const item of evidence) {
         const question = questions.get(item.questionId);
         if (!question) failureDetails.push("unknown_evidence_question");
@@ -203,8 +203,15 @@ export function createSubmitEvidenceTool({
         if (!isObserved(item, reads)) failureDetails.push("unobserved_range");
       }
       if (gaps.some((gap) => !questions.has(gap.questionId))) failureDetails.push("unknown_gap_question");
-      const hasRequiredGap = gaps.some((gap) => questions.get(gap.questionId)?.required);
-      if (hasRequiredGap && evidence.length === RESULT_LIMITS.evidence) {
+      const coveredQuestions = new Set(evidence.map((item) => item.questionId));
+      const normalizedGaps = failureDetails.length === 0
+        ? gaps.filter((gap) => !coveredQuestions.has(gap.questionId))
+        : gaps;
+      const candidate = normalizedGaps === gaps
+        ? rawCandidate
+        : freezeCandidate(rawCandidate.summary, evidence, normalizedGaps);
+      const hasRequiredGap = candidate.gaps.some((gap) => questions.get(gap.questionId)?.required);
+      if (failureDetails.length === 0 && hasRequiredGap && evidence.length === RESULT_LIMITS.evidence) {
         const counts = new Map<string, number>();
         for (const item of evidence) counts.set(item.questionId, (counts.get(item.questionId) ?? 0) + 1);
         if ([...counts.values()].some((count) => count > 1)) {
@@ -296,7 +303,7 @@ export function buildFinalizationPacket(
       maxItems: { evidence: RESULT_LIMITS.evidence, gaps: GAP_LIMIT },
       question_id: "exact questions[].id; omit role because the harness derives it",
       citation: `non-empty repository-relative path; integer 1 <= start_line <= focus_line <= end_line <= ${LINE_NUMBER_LIMIT}; range within one matching repositoryObservation`,
-      coverage: "Allocate one observed span per supported required question before any second span. Gap only when no observation covers every named concern, never because the evidence limit is full.",
+      coverage: "Allocate one observed span per supported required question before any second span. Evidence and gaps must use disjoint question IDs. Gap only when no observation covers every named concern, never because the evidence limit is full.",
     },
     repositoryObservations,
   });

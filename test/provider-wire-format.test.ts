@@ -1,7 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { Type } from "@earendil-works/pi-ai";
-import { streamSimple } from "@earendil-works/pi-ai/api/openai-completions";
 import { resolveConfig } from "../src/config.js";
 import { ProviderError } from "../src/errors.js";
 import { createModel, createRequestOptions } from "../src/runtime/model.js";
@@ -10,6 +9,21 @@ import { runIsolatedFinalizer, runPiSession } from "../src/runtime/pi-session.js
 import { baseRequest } from "./helpers.js";
 
 const DUMMY_KEY = "offline-wire-contract-key";
+
+function completionResponse(
+  id: string,
+  message: Readonly<Record<string, unknown>>,
+  finishReason: "stop" | "tool_calls",
+): Response {
+  return new Response(JSON.stringify({
+    id,
+    object: "chat.completion",
+    created: 1,
+    model: "deepseek-v4-flash-0731",
+    choices: [{ index: 0, message, finish_reason: finishReason }],
+    usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 },
+  }), { status: 200, headers: { "content-type": "application/json" } });
+}
 
 test("bundled TokenRhythm config produces the accepted Pi Chat Completions wire shape offline", async () => {
   const configFile = new URL("../benchmarks/deepswe/freecontext.toml", import.meta.url).pathname;
@@ -45,7 +59,8 @@ test("bundled TokenRhythm config produces the accepted Pi Chat Completions wire 
       parameters: Type.Object({ path: Type.String() }),
       execute: async () => ({ content: [{ type: "text" as const, text: "unused" }], details: {} }),
     };
-    const stream = await streamSimple(
+    const bindings = await loadPiBindings("openai", null, config.openAICompat.useStreaming);
+    const stream = await bindings.streamSimple(
       model,
       {
         systemPrompt: "This is an offline transport contract. Do not call tools.",
@@ -81,7 +96,7 @@ test("bundled TokenRhythm config produces the accepted Pi Chat Completions wire 
     "tools",
   ]);
   assert.equal(payload.model, "deepseek-v4-flash-0731");
-  assert.equal(payload.stream, true);
+  assert.equal(payload.stream, false);
   assert.equal(payload.max_tokens, 8192);
   assert.equal(payload.temperature, 0);
   assert.deepEqual(payload.thinking, { type: "disabled" });
@@ -109,7 +124,7 @@ test("bundled TokenRhythm config produces the accepted Pi Chat Completions wire 
   }
 });
 
-test("the real Pi transport retries a TokenRhythm SERVICE_BUSY response through the harness", async () => {
+test("the non-stream transport retries a TokenRhythm 200 SERVICE_BUSY body through the harness", async () => {
   const configFile = new URL("../benchmarks/deepswe/freecontext.toml", import.meta.url).pathname;
   const route = await resolveConfig({
     cli: { configFile },
@@ -128,49 +143,34 @@ test("the real Pi transport retries a TokenRhythm SERVICE_BUSY response through 
     fetchCalls += 1;
     if (fetchCalls === 1) {
       return new Response(JSON.stringify({ code: "SERVICE_BUSY", message: "服务繁忙，请稍后重试" }), {
-        status: 503,
+        status: 200,
         headers: { "content-type": "application/json" },
       });
     }
-    const event = JSON.stringify({
-      id: "chatcmpl-test",
-      object: "chat.completion.chunk",
-      created: 1,
-      model: "deepseek-v4-flash-0731",
-      choices: [{
-        index: 0,
-        delta: {
-          role: "assistant",
-          tool_calls: [{
-            index: 0,
-            id: "submit-retry",
-            type: "function",
-            function: {
-              name: "submit_evidence",
-              arguments: JSON.stringify({
-                summary: "No repository evidence was needed for the retry probe.",
-                evidence: [],
-                gaps: [
-                  { question_id: "impl", reason: "No repository evidence was requested." },
-                  { question_id: "tests", reason: "No repository evidence was requested." },
-                ],
-              }),
-            },
-          }],
+    return completionResponse("chatcmpl-test", {
+      role: "assistant",
+      content: null,
+      tool_calls: [{
+        id: "submit-retry",
+        type: "function",
+        function: {
+          name: "submit_evidence",
+          arguments: JSON.stringify({
+            summary: "No repository evidence was needed for the retry probe.",
+            evidence: [],
+            gaps: [
+              { question_id: "impl", reason: "No repository evidence was requested." },
+              { question_id: "tests", reason: "No repository evidence was requested." },
+            ],
+          }),
         },
-        finish_reason: "tool_calls",
       }],
-      usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 },
-    });
-    return new Response(`data: ${event}\n\ndata: [DONE]\n\n`, {
-      status: 200,
-      headers: { "content-type": "text/event-stream" },
-    });
+    }, "tool_calls");
   }) as typeof fetch;
 
   try {
     const result = await runPiSession({
-      bindings: await loadPiBindings("openai"),
+      bindings: await loadPiBindings("openai", null, config.openAICompat.useStreaming),
       model: createModel(config),
       requestOptions: createRequestOptions(config),
       config,
@@ -220,23 +220,16 @@ test("isolated finalization sends required submit_evidence without provider stri
         headers: { "content-type": "application/json" },
       });
     }
-    const event = JSON.stringify({
-      id: "chatcmpl-exploration",
-      object: "chat.completion.chunk",
-      created: 1,
-      model: "deepseek-v4-flash-0731",
-      choices: [{ index: 0, delta: { role: "assistant", content: "explored" }, finish_reason: "stop" }],
-      usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 },
-    });
-    return new Response(`data: ${event}\n\ndata: [DONE]\n\n`, {
-      status: 200,
-      headers: { "content-type": "text/event-stream" },
-    });
+    return completionResponse(
+      "chatcmpl-exploration",
+      { role: "assistant", content: "explored" },
+      "stop",
+    );
   }) as typeof fetch;
 
   try {
     await assert.rejects(runPiSession({
-      bindings: await loadPiBindings("openai"),
+      bindings: await loadPiBindings("openai", null, config.openAICompat.useStreaming),
       model: createModel(config),
       requestOptions: {
         ...createRequestOptions(config),
@@ -274,7 +267,7 @@ test("isolated finalization sends required submit_evidence without provider stri
   assert.equal(JSON.stringify(finalMessages).includes("explored"), false);
 });
 
-test("provider probe uses one isolated finalizer context across transient retry", async () => {
+test("provider probe preserves one isolated context across a connection retry", async () => {
   const configFile = new URL("../benchmarks/deepswe/freecontext.toml", import.meta.url).pathname;
   const route = await resolveConfig({
     cli: { configFile },
@@ -289,54 +282,36 @@ test("provider probe uses one isolated finalizer context across transient retry"
   globalThis.fetch = (async () => {
     fetchCalls += 1;
     if (fetchCalls === 1) {
-      return new Response(JSON.stringify({ code: "SERVICE_BUSY", message: "busy", traceId: "offline" }), {
-        status: 503,
-        headers: { "content-type": "application/json" },
-      });
+      throw Object.assign(new Error("socket reset"), { code: "ECONNRESET" });
     }
-    const event = JSON.stringify({
-      id: "chatcmpl-probe",
-      object: "chat.completion.chunk",
-      created: 1,
-      model: "deepseek-v4-flash-0731",
-      choices: [{
-        index: 0,
-        delta: {
-          role: "assistant",
-          tool_calls: [{
-            index: 0,
-            id: "submit-probe",
-            type: "function",
-            function: {
-              name: "submit_evidence",
-              arguments: JSON.stringify({
-                summary: "The fixture export is defined.",
-                evidence: [{
-                  question_id: "impl",
-                  path: "fixture.ts",
-                  start_line: 1,
-                  end_line: 1,
-                  focus_line: 1,
-                  why: "Defines the fixture export.",
-                }],
-                gaps: [{ question_id: "tests", reason: "No test observation was supplied." }],
-              }),
-            },
-          }],
+    return completionResponse("chatcmpl-probe", {
+      role: "assistant",
+      content: null,
+      tool_calls: [{
+        id: "submit-probe",
+        type: "function",
+        function: {
+          name: "submit_evidence",
+          arguments: JSON.stringify({
+            summary: "The fixture export is defined.",
+            evidence: [{
+              question_id: "impl",
+              path: "fixture.ts",
+              start_line: 1,
+              end_line: 1,
+              focus_line: 1,
+              why: "Defines the fixture export.",
+            }],
+            gaps: [{ question_id: "tests", reason: "No test observation was supplied." }],
+          }),
         },
-        finish_reason: "tool_calls",
       }],
-      usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 },
-    });
-    return new Response(`data: ${event}\n\ndata: [DONE]\n\n`, {
-      status: 200,
-      headers: { "content-type": "text/event-stream" },
-    });
+    }, "tool_calls");
   }) as typeof fetch;
 
   try {
     const result = await runIsolatedFinalizer({
-      bindings: await loadPiBindings("openai"),
+      bindings: await loadPiBindings("openai", null, config.openAICompat.useStreaming),
       model: createModel(config),
       requestOptions: {
         ...createRequestOptions(config),
