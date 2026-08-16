@@ -60,8 +60,15 @@ export function collectCompletedHostRepositoryActions(
     } catch { /* Preserved raw JSONL cannot prove an action on this line. */ }
   }
   records.sort((left, right) => left.timestamp - right.timestamp || left.index - right.index);
-  const observed: RepositoryAction[] = [];
-  const pending = new Map<string, Readonly<ExtractedRepositoryActions>>();
+  const observed: {
+    readonly repositoryAction: RepositoryAction;
+    readonly batchId: string;
+    readonly batchConcurrent: boolean;
+    readonly batchOrder: number;
+  }[] = [];
+  const pending = new Map<string, Readonly<{ extracted: ExtractedRepositoryActions; batchOrder: number }>>();
+  const seenCallIds = new Set<string>();
+  let nextBatchOrder = 0;
   for (const record of records) {
     const item = event(record.value);
     const type = item.type;
@@ -71,30 +78,41 @@ export function collectCompletedHostRepositoryActions(
       const source = typeof item.input === "string" ? item.input : typeof item.arguments === "string" ? item.arguments : "";
       if (!source.includes("tools.exec_command") && !source.includes("tools.apply_patch")) continue;
       const extracted = extractRepositoryActionsFromCode(source, boundary.gapQuestionIds);
-      if (!extracted.complete || pending.has(id)) {
+      if (!extracted.complete || seenCallIds.has(id)) {
         return Object.freeze({ complete: false, actions: Object.freeze([]) });
       }
-      pending.set(id, extracted);
+      seenCallIds.add(id);
+      pending.set(id, { extracted, batchOrder: nextBatchOrder });
+      nextBatchOrder += 1;
       continue;
     }
     if ((type !== "custom_tool_call_output" && type !== "function_call_output") || !id) continue;
-    const extracted = pending.get(id);
-    if (!extracted) continue;
+    const batch = pending.get(id);
+    if (!batch) continue;
     pending.delete(id);
+    const { extracted, batchOrder } = batch;
     const output = renderedOutput(item.output);
     if (extracted.actions.length > 0 && /Script (?:error|failed)|exec_command failed/iu.test(output)) {
       if (extracted.actions.every(({ kind }) => kind === "edit")) continue;
       return Object.freeze({ complete: false, actions: Object.freeze([]) });
     }
-    observed.push(...extracted.actions);
+    observed.push(...extracted.actions.map((repositoryAction) => ({
+      repositoryAction,
+      batchId: id,
+      batchConcurrent: extracted.concurrent,
+      batchOrder,
+    })));
   }
   if (pending.size > 0) return Object.freeze({ complete: false, actions: Object.freeze([]) });
-  const actions = observed.map((repositoryAction, index) => Object.freeze({
+  observed.sort((left, right) => left.batchOrder - right.batchOrder);
+  const actions = observed.map(({ repositoryAction, batchId, batchConcurrent }, index) => Object.freeze({
     schemaVersion: "freecontext-parent-action-v1" as const,
     taskId: boundary.taskId,
     callId: boundary.callId,
     repetition: boundary.repetition,
     sequence: index + 1,
+    observationBatchId: batchId,
+    observationBatchConcurrent: batchConcurrent,
     action: Object.freeze(repositoryAction),
   }));
   return Object.freeze({ complete: true, actions: Object.freeze(actions) });

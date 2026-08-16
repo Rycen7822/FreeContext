@@ -5,8 +5,6 @@ description: Route complex reads through FreeContext. For multi-file, multi-docu
 
 # FreeContext routing
 
-Prompt-visible discovery shim for the atomic `gather_context` tool.
-
 - Select it before native repository or document read/search when the task requires multi-file evidence, multi-document synthesis, a cross-module call chain, jointly constraining configuration, long-document multi-fact extraction, or source-bound planning, review, or diagnosis.
 - Keep direct reads for an exact known implementation that needs one bounded read, or for one or two exact candidates after the tool description's permitted probe.
 - Use the exact caller below as the first and only `functions.exec` for this semantic call. Check the direct tool property only; never run a separate tool-catalog lookup or print tool metadata.
@@ -17,7 +15,7 @@ Prompt-visible discovery shim for the atomic `gather_context` tool.
 {"taskText":"Trace the change.","knownRefs":[{"kind":"path","path":"src/router.ts"}],"evidenceQuestions":[{"id":"implementation","role":"implementation","question":"Where is it implemented?","required":true},{"id":"tests","role":"test","question":"How is it tested?","required":true}]}
 ```
 
-- After ready/partial, consume evidence and `nextAction`. Treat gaps as negative evidence: before editing, make at most one targeted search. Never repeat searches or replay the call.
+- After ready/partial, the first repository batch may be parallel but must read only returned evidence and include `nextAction`. Before editing, search one named gap at most once. Never repeat or replay.
 - If unavailable, continue with native read-only tools and say so.
 
 Use this exact caller after constructing `args`:

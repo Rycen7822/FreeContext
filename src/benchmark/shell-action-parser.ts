@@ -21,6 +21,7 @@ export interface RepositoryAction {
 export interface ExtractedRepositoryActions {
   readonly complete: boolean;
   readonly actions: readonly RepositoryAction[];
+  readonly concurrent: boolean;
 }
 
 function parseDoubleQuoted(source: string, quoteIndex: number): string | null {
@@ -248,9 +249,9 @@ export function extractRepositoryActionsFromCode(
     const block = source.slice(marker.index, markers[index + 1]?.index ?? source.length);
     if (marker[1] === "exec_command") {
       const command = stringProperty(block, "cmd");
-      if (command === null) return { complete: false, actions: [] };
+      if (command === null) return { complete: false, actions: [], concurrent };
       const commandResult = commandActions(command, gapQuestionIds);
-      if (commandResult === null) return { complete: false, actions: [] };
+      if (commandResult === null) return { complete: false, actions: [], concurrent };
       actions.push(...commandResult);
     } else {
       const patch = firstStringArgument(block);
@@ -264,6 +265,5 @@ export function extractRepositoryActionsFromCode(
       }
     }
   }
-  if (concurrent && actions.length > 1) return { complete: false, actions: [] };
-  return { complete: true, actions };
+  return { complete: true, actions, concurrent: concurrent && actions.length > 1 };
 }

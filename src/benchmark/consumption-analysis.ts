@@ -9,6 +9,8 @@ export interface ParentRepositoryActionEvent {
   readonly callId: string;
   readonly repetition: string;
   readonly sequence: number;
+  readonly observationBatchId: string | null;
+  readonly observationBatchConcurrent: boolean;
   readonly action: Readonly<{
     readonly kind: ParentRepositoryActionKind;
     readonly path: string | null;
@@ -27,6 +29,8 @@ export interface FreeContextConsumptionAudit {
   readonly repetition: string;
   readonly actionCount: number;
   readonly firstRepositoryAction: Readonly<ParentRepositoryActionEvent["action"]> | null;
+  readonly firstRepositoryBatchSize: number;
+  readonly firstRepositoryBatchConcurrent: boolean;
   readonly firstActionEvidenceHit: boolean | null;
   readonly evidenceConsumed: boolean;
   readonly firstEvidenceHitSequence: number | null;
@@ -46,13 +50,18 @@ function parseActionEvent(value: unknown): Readonly<ParentRepositoryActionEvent>
     throw new Error("Invalid freecontext-parent-action-v1 identity.");
   }
   const sequence = positiveInteger(value.sequence);
+  const observationBatchId = value.observationBatchId ?? null;
+  const observationBatchConcurrent = value.observationBatchConcurrent ?? false;
   const kind = value.action.kind;
   const path = value.action.path;
   const startLine = value.action.startLine;
   const endLine = value.action.endLine;
   const broad = value.action.broad;
   const gapQuestionIds = value.action.gapQuestionIds;
-  if (sequence === null || !["read", "search", "edit", "other"].includes(String(kind)) ||
+  if (sequence === null || !(observationBatchId === null ||
+      (typeof observationBatchId === "string" && observationBatchId.length > 0)) ||
+      typeof observationBatchConcurrent !== "boolean" || (observationBatchConcurrent && observationBatchId === null) ||
+      !["read", "search", "edit", "other"].includes(String(kind)) ||
       !(path === null || typeof path === "string") ||
       !(startLine === null || positiveInteger(startLine) !== null) ||
       !(endLine === null || positiveInteger(endLine) !== null) || typeof broad !== "boolean" ||
@@ -69,6 +78,8 @@ function parseActionEvent(value: unknown): Readonly<ParentRepositoryActionEvent>
     callId: value.callId,
     repetition: value.repetition,
     sequence,
+    observationBatchId,
+    observationBatchConcurrent,
     action: Object.freeze({
       kind: kind as ParentRepositoryActionKind,
       path: path as string | null,
@@ -131,10 +142,15 @@ export function analyzeFreeContextConsumption(
     }
   }
   const firstEvidenceHit = actions.find((event) => hitsEvidence(event.action, result)) ?? null;
+  const firstRepositoryBatch = first.observationBatchId === null
+    ? [first]
+    : actions.filter((event) => event.observationBatchId === first.observationBatchId);
   const broadSearchCount = actions.filter((event) => event.action.kind === "search" && event.action.broad).length;
   const gapIds = new Set(result.gaps.map(({ questionId }) => questionId));
   const partialGapSearchCount = result.status === "partial" && firstEvidenceHit
-    ? actions.filter((event) => event.sequence > firstEvidenceHit.sequence && event.action.kind === "search" &&
+    ? actions.filter((event) => event.sequence > firstEvidenceHit.sequence &&
+      (firstEvidenceHit.observationBatchId === null || event.observationBatchId !== firstEvidenceHit.observationBatchId) &&
+      event.action.kind === "search" &&
       event.action.gapQuestionIds.some((questionId) => gapIds.has(questionId))).length
     : 0;
   return Object.freeze({
@@ -145,7 +161,9 @@ export function analyzeFreeContextConsumption(
     repetition: first.repetition,
     actionCount: actions.length,
     firstRepositoryAction: first.action,
-    firstActionEvidenceHit: hitsEvidence(first.action, result),
+    firstRepositoryBatchSize: firstRepositoryBatch.length,
+    firstRepositoryBatchConcurrent: firstRepositoryBatch.some((event) => event.observationBatchConcurrent),
+    firstActionEvidenceHit: firstRepositoryBatch.every((event) => hitsEvidence(event.action, result)),
     evidenceConsumed: firstEvidenceHit !== null,
     firstEvidenceHitSequence: firstEvidenceHit?.sequence ?? null,
     broadSearchCount,

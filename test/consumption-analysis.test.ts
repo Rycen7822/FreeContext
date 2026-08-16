@@ -33,6 +33,7 @@ function result(status: FreeContextResult["status"] = "ready"): FreeContextResul
 function action(
   sequence: number,
   overrides: Partial<ParentRepositoryActionEvent["action"]> = {},
+  eventOverrides: Partial<Pick<ParentRepositoryActionEvent, "observationBatchId" | "observationBatchConcurrent">> = {},
 ): ParentRepositoryActionEvent {
   return {
     schemaVersion: "freecontext-parent-action-v1",
@@ -40,6 +41,8 @@ function action(
     callId: "call-1",
     repetition: "r1",
     sequence,
+    observationBatchId: null,
+    observationBatchConcurrent: false,
     action: {
       kind: "read",
       path: "src/router.ts",
@@ -49,6 +52,7 @@ function action(
       gapQuestionIds: [],
       ...overrides,
     },
+    ...eventOverrides,
   };
 }
 
@@ -56,11 +60,20 @@ test("collector accepts only explicit host action events for the selected call",
   const raw = [
     "not-json",
     JSON.stringify({ payload: action(2, { kind: "search", path: null, startLine: null, endLine: null, broad: true }) }),
-    JSON.stringify(action(1)),
+    JSON.stringify({
+      schemaVersion: "freecontext-parent-action-v1",
+      taskId: "task-1",
+      callId: "call-1",
+      repetition: "r1",
+      sequence: 1,
+      action: action(1).action,
+    }),
     JSON.stringify({ ...action(3), callId: "other-call" }),
   ].join("\n");
   const actions = collectParentRepositoryActions(raw, "call-1");
   assert.deepEqual(actions.map(({ sequence }) => sequence), [1, 2]);
+  assert.equal(actions[0]?.observationBatchId, null);
+  assert.equal(actions[0]?.observationBatchConcurrent, false);
   assert.throws(
     () => collectParentRepositoryActions(`${JSON.stringify(action(1))}\n${JSON.stringify(action(1))}`, "call-1"),
     /Duplicate parent-action sequence/u,
@@ -74,11 +87,39 @@ test("audit detects targeted-first consumption and later repeated broad search",
   ]);
   assert.ok(audit);
   assert.equal(audit.firstRepositoryAction?.kind, "read");
+  assert.equal(audit.firstRepositoryBatchSize, 1);
+  assert.equal(audit.firstRepositoryBatchConcurrent, false);
   assert.equal(audit.firstActionEvidenceHit, true);
   assert.equal(audit.evidenceConsumed, true);
   assert.equal(audit.firstEvidenceHitSequence, 1);
   assert.equal(audit.broadSearchCount, 1);
   assert.equal(audit.repeatedBroadSearch, true);
+});
+
+test("audit treats a concurrent outer cell as one evidence-consumption batch", () => {
+  const audit = analyzeFreeContextConsumption(result("partial"), [
+    action(1, {}, { observationBatchId: "cell-1", observationBatchConcurrent: true }),
+    action(2, {}, { observationBatchId: "cell-1", observationBatchConcurrent: true }),
+    action(3, { kind: "search", path: null, startLine: null, endLine: null, gapQuestionIds: ["tests"] },
+      { observationBatchId: "cell-2", observationBatchConcurrent: true }),
+  ]);
+  assert.ok(audit);
+  assert.equal(audit.firstRepositoryBatchSize, 2);
+  assert.equal(audit.firstRepositoryBatchConcurrent, true);
+  assert.equal(audit.firstActionEvidenceHit, true);
+  assert.equal(audit.partialGapSearchCount, 1);
+});
+
+test("audit requires every first-batch action to hit evidence and does not order peers within a batch", () => {
+  const audit = analyzeFreeContextConsumption(result("partial"), [
+    action(1, {}, { observationBatchId: "cell-1", observationBatchConcurrent: true }),
+    action(2, { kind: "search", path: null, startLine: null, endLine: null, gapQuestionIds: ["tests"] },
+      { observationBatchId: "cell-1", observationBatchConcurrent: true }),
+  ]);
+  assert.ok(audit);
+  assert.equal(audit.firstActionEvidenceHit, false);
+  assert.equal(audit.evidenceConsumed, true);
+  assert.equal(audit.partialGapSearchCount, 0);
 });
 
 test("partial audit counts only named-gap searches after evidence consumption", () => {
