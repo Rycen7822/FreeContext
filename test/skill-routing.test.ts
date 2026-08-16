@@ -38,19 +38,24 @@ test("implicit discovery routes complex reads to one MCP tool without copying el
   assert.match(skill, /FreeContext installs no waiting Hook/u);
   const requestExample = skill.match(/```json\n(?<json>\{[^\n]+\})\n```/u)?.groups?.json;
   assert.ok(requestExample);
-  assert.doesNotThrow(() => FreeContextRequestSchema.parse(JSON.parse(requestExample)));
+  const exampleRequest = FreeContextRequestSchema.parse(JSON.parse(requestExample));
+  assert.deepEqual(exampleRequest.evidenceQuestions.map(({ id, role }) => ({ id, role })), [
+    { id: "parser", role: "implementation" },
+    { id: "application", role: "caller" },
+    { id: "tests", role: "test" },
+  ]);
   assert.match(skill, /Include `knownRefs` \(`\[\]` when none\): 0–12/u);
   for (const shape of ['{kind:"path",path}', '{kind:"symbol",symbol,path?}', '{kind:"stack",path,line}']) {
     assert.ok(skill.includes(shape));
   }
   assert.match(skill, /no query refs/u);
-  assert.match(skill, /use 2–5 unique facet-specific ids, never role-wide buckets/iu);
+  assert.match(skill, /2–5 unique ids, one per editable facet \(parse, apply, metric, test\), never role-wide buckets/iu);
   assert.match(skill, /`implementation`, `caller`, `test`, or `contract`/u);
-  assert.match(skill, /contract only if task\/knownRefs names an existing API\/schema\/spec\/compatibility source/u);
+  assert.match(skill, /contract only if task\/knownRefs names an existing API\/schema\/spec\/compatibility source/iu);
   assert.match(skill, /never inferred from new behavior or another role/u);
   assert.doesNotMatch(skill, /\bworkspace_root\b/u);
   assert.throws(() => FreeContextRequestSchema.parse({
-    ...JSON.parse(requestExample),
+    ...exampleRequest,
     knownRefs: [{ kind: "query", query: "nosec" }],
   }));
   assert.match(skill, /Summaries are not reads/u);

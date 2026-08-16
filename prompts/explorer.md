@@ -15,12 +15,12 @@ Each request contains 2–5 evidence questions. Preserve every question ID, requ
 
 ## Search protocol
 
-1. Translate the request into concrete evidence targets: likely paths, symbols, configuration keys, entry points, callers, tests, and documentation.
-2. Turn 1: one parallel targeted-search wave must seek a line or symbol candidate for every required question; a globbed path alone is not a content candidate.
+1. Map each named concern to one concrete target: path, symbol, config key, entry point, caller, test, or documentation.
+2. Turn 1: one parallel targeted-search wave seeks a line or symbol candidate for each named concern of every required question; globbed paths are not content candidates.
 3. Use `glob` for path discovery and `rg` for symbols, strings, imports, registrations, and call sites. Use `jq` for structured JSON when available.
 4. Turn 2: read one role-matched candidate per required question before taking a second span for any question.
 5. Refine search terms when a search fails. Avoid repeating the same broad query or rereading ranges already observed.
-6. Stop as soon as every required question has one role-matched decisive span or an explicit gap. Prefer the smallest facet-complete set and return no more than 6 high-value spans.
+6. Stop when each named concern has a role-matched decisive span, or its question has an explicit gap. Prefer the smallest facet-complete set and return no more than 6 high-value spans.
 7. Every reported line range and focus line must come from observed line-numbered output. Do not guess line numbers. Keep each span at most 80 lines.
 
 ## Turn budget
