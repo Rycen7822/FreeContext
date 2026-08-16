@@ -312,7 +312,6 @@ test("provider probe uses one isolated finalizer context across transient retry"
               arguments: JSON.stringify({
                 summary: "The fixture export is defined.",
                 evidence: [{
-                  role: "implementation",
                   question_id: "impl",
                   path: "fixture.ts",
                   start_line: 1,
@@ -377,13 +376,18 @@ test("provider probe uses one isolated finalizer context across transient retry"
   assert.equal(tools[0]?.function?.name, "submit_evidence");
   assert.equal(Object.hasOwn(tools[0]?.function ?? {}, "strict"), false);
   const toolSchema = JSON.stringify(tools[0]?.function?.parameters);
+  assert.equal(toolSchema.includes('"role"'), false);
   for (const unsupported of ["anyOf", "oneOf", "allOf", "const", "pattern", "minLength", "maxLength", "minimum", "maximum", "maxItems"]) {
     assert.equal(toolSchema.includes(`\"${unsupported}\"`), false, unsupported);
   }
   const messages = payloads[0]?.messages as Array<Record<string, unknown>>;
   assert.deepEqual(messages.map((message) => message.role), ["system", "user"]);
   assert.equal(String(messages[0]?.content).includes("Repository tools are unavailable"), true);
-  const packet = JSON.parse(String(messages[1]?.content)) as { readonly repositoryObservations?: readonly Record<string, unknown>[] };
+  const packet = JSON.parse(String(messages[1]?.content)) as {
+    readonly submissionRules?: { readonly question_id?: string };
+    readonly repositoryObservations?: readonly Record<string, unknown>[];
+  };
+  assert.equal(packet.submissionRules?.question_id, "exact questions[].id; omit role because the harness derives it");
   assert.equal(packet.repositoryObservations?.[0]?.path, "fixture.ts");
   assert.equal(packet.repositoryObservations?.[0]?.content, "1 export const fixture = true;");
   assert.equal(Object.hasOwn(packet.repositoryObservations?.[0] ?? {}, "tool"), false);

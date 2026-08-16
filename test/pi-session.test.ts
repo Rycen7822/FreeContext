@@ -72,7 +72,6 @@ function submissionMessage(includeRequiredTests = false) {
       arguments: {
         summary: "Implementation found.",
         evidence: [{
-          role: "implementation",
           question_id: "impl",
           path: "src/index.ts",
           start_line: 1,

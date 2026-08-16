@@ -105,7 +105,7 @@ test("runExplorer compiles a canonical ready result and v3 capture", async () =>
     await writeFile(path.join(root, "a.js"), "const a = 1;\nexport { a };\n", "utf8");
     const output = submission({
       summary: "a is exported.",
-      evidence: [{ role: "implementation", question_id: "impl", path: "a.js", start_line: 1, end_line: 2, focus_line: 1, why: "Defines and exports a." }],
+      evidence: [{ question_id: "impl", path: "a.js", start_line: 1, end_line: 2, focus_line: 1, why: "Defines and exports a." }],
       gaps: [{ question_id: "tests", reason: "No test was found." }],
     });
     let capture: Readonly<ExplorerSessionCapture> | undefined;
@@ -144,7 +144,7 @@ test("runExplorer makes one model call and returns partial when a required quest
     await writeFile(path.join(root, "a.js"), "const a = 1;\n", "utf8");
     const output = submission({
       summary: "only tests were located.",
-      evidence: [{ role: "test", question_id: "tests", path: "a.js", start_line: 1, end_line: 1, focus_line: 1, why: "Test-shaped fixture." }],
+      evidence: [{ question_id: "tests", path: "a.js", start_line: 1, end_line: 1, focus_line: 1, why: "Test-shaped fixture." }],
       gaps: [{ question_id: "impl", reason: "Implementation was not found." }],
     });
     let calls = 0;
