@@ -147,7 +147,9 @@ export async function compileFreeContextResult(
           path: first.path,
           startLine: first.startLine,
           endLine: first.endLine,
-          reason: "Read all evidence in this cell; no plan, branch, status, search, or other action.",
+          reason: status === "ready"
+            ? "Read all evidence in this cell only; afterward edit directly with no intervening search."
+            : "Read all evidence in this cell only; afterward use at most one targeted named-gap search batch before editing.",
         }
       : {
           kind: "direct_search",

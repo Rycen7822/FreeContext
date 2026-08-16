@@ -44,10 +44,10 @@ test("implicit discovery routes complex reads to one MCP tool without copying el
     assert.ok(skill.includes(shape));
   }
   assert.match(skill, /no query refs/u);
-  assert.match(skill, /use 2–5 unique ids/iu);
+  assert.match(skill, /use 2–5 unique facet-specific ids, never role-wide buckets/iu);
   assert.match(skill, /`implementation`, `caller`, `test`, or `contract`/u);
-  assert.match(skill, /contract only when the task or knownRefs name an existing API, schema, spec, or compatibility source/u);
-  assert.match(skill, /never inferred from new behavior or other roles/u);
+  assert.match(skill, /contract only if task\/knownRefs names an existing API\/schema\/spec\/compatibility source/u);
+  assert.match(skill, /never inferred from new behavior or another role/u);
   assert.doesNotMatch(skill, /\bworkspace_root\b/u);
   assert.throws(() => FreeContextRequestSchema.parse({
     ...JSON.parse(requestExample),
@@ -55,8 +55,9 @@ test("implicit discovery routes complex reads to one MCP tool without copying el
   }));
   assert.match(skill, /Summaries are not reads/u);
   assert.match(skill, /Next repository cell: evidence reads only, including `nextAction`/u);
-  assert.match(skill, /no plan, branch, status, or search/u);
-  assert.match(skill, /partial gets one targeted named-gap search batch; ready none/u);
+  assert.match(skill, /no other action/u);
+  assert.match(skill, /ready edits without pre-edit search/u);
+  assert.match(skill, /partial gets at most one targeted named-gap search batch before edit/u);
   assert.match(skill, /Never use broad discovery or replay/u);
 
   assert.match(metadata, /^  allow_implicit_invocation: true$/mu);

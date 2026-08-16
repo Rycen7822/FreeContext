@@ -42,7 +42,7 @@ export const FREECONTEXT_ELIGIBILITY_POLICY = Object.freeze({
   invariants: Object.freeze([
     "Repository familiarity, known files, and known keywords never weaken cross-document, cross-section, impact-map, or multi-role eligibility.",
     "FreeContext is read-only and never performs edits, tests, Git, package management, web access, or credential work.",
-    "Summaries are not repository reads; the next repository cell contains evidence reads only, including nextAction—no plan, branch, status, or search; afterward partial permits one targeted named-gap search batch and ready none.",
+    "Summaries are not repository reads; the next repository cell contains evidence reads only, including nextAction—no other action; afterward ready edits directly with no pre-edit search, while partial permits at most one targeted named-gap search batch before edit.",
   ]),
 });
 

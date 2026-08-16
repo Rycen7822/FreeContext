@@ -7,15 +7,15 @@ description: Route complex reads through FreeContext. For multi-file, multi-docu
 
 - Select it before native repository or document read/search when the task requires multi-file evidence, multi-document synthesis, a cross-module call chain, jointly constraining configuration, long-document multi-fact extraction, or source-bound planning, review, or diagnosis.
 - Keep direct reads for an exact known implementation that needs one bounded read, or for one or two exact candidates after the tool description's permitted probe.
-- Use the caller below as this call's first and only `functions.exec`; never query catalogs or print metadata.
-- Use the MCP tool description as the sole eligibility policy; do not restate its four gates here.
-- Include `knownRefs` (`[]` when none): 0–12 `{kind:"path",path}`, `{kind:"symbol",symbol,path?}`, or `{kind:"stack",path,line}` objects; no query refs. Use 2–5 unique ids with roles `implementation`, `caller`, `test`, or `contract`; contract only when the task or knownRefs name an existing API, schema, spec, or compatibility source, never inferred from new behavior or other roles. Never send identity, secrets, or dumps.
+- Use the caller below as first and only `functions.exec`; never query catalogs or print metadata.
+- Tool description decides eligibility; do not repeat its gates.
+- Include `knownRefs` (`[]` when none): 0–12 `{kind:"path",path}`, `{kind:"symbol",symbol,path?}`, or `{kind:"stack",path,line}`; no query refs. Use 2–5 unique facet-specific ids, never role-wide buckets, with roles `implementation`, `caller`, `test`, or `contract`; contract only if task/knownRefs names an existing API/schema/spec/compatibility source, never inferred from new behavior or another role. No identity, secrets, or dumps.
 
 ```json
 {"taskText":"Trace the change.","knownRefs":[{"kind":"path","path":"src/router.ts"}],"evidenceQuestions":[{"id":"implementation","role":"implementation","question":"Where is it implemented?","required":true},{"id":"tests","role":"test","question":"How is it tested?","required":true}]}
 ```
 
-- Summaries are not reads. Next repository cell: evidence reads only, including `nextAction`; no plan, branch, status, or search. Then partial gets one targeted named-gap search batch; ready none. Never use broad discovery or replay.
+- Summaries are not reads. Next repository cell: evidence reads only, including `nextAction`; no other action. Then ready edits without pre-edit search; partial gets at most one targeted named-gap search batch before edit. Never use broad discovery or replay.
 - If unavailable, continue with native read-only tools and say so.
 
 Use this exact caller after constructing `args`:
