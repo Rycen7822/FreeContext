@@ -173,7 +173,7 @@ test("isolated packet marks exploration complete and omits repository tool origi
     maxItems: { evidence: 6, gaps: 5 },
     question_id: "exact questions[].id; omit role because the harness derives it",
     citation: "non-empty repository-relative path; integer 1 <= start_line <= focus_line <= end_line <= 10000000; range within one matching repositoryObservation",
-    coverage: "Cite or gap every required question before any second citation; summary names only cited repository components.",
+    coverage: "Cite each supported required question before gaps or extra citations; gap only unsupported questions; summary names only cited repository components.",
   });
   const { tool: _tool, ...modelObservation } = observedRead;
   assert.equal(_tool, "read");

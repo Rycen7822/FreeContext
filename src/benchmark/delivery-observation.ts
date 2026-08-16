@@ -42,6 +42,7 @@ export interface FreeContextTransportObservation {
   readonly startedAt: string | null;
   readonly completedAt: string | null;
   readonly latencyMs: number | null;
+  readonly terminalTextSha256?: string | null;
   readonly terminalOutputSeen: boolean;
 }
 
@@ -133,6 +134,7 @@ export function collectFreeContextTransportObservations(
     startedMs: number | null;
     completedAt: string | null;
     completedMs: number | null;
+    terminalTextSha256: string | null;
   };
   const observations: MutableObservation[] = [];
   const outerCalls = new Map<string, MutableObservation>();
@@ -170,6 +172,7 @@ export function collectFreeContextTransportObservations(
           startedMs: timestampMs,
           completedAt: null,
           completedMs: null,
+          terminalTextSha256: null,
         };
         observations.push(observation);
         outerCalls.set(normalizedCallId, observation);
@@ -206,6 +209,8 @@ export function collectFreeContextTransportObservations(
     const observation = outerCalls.get(normalizedCallId) ?? waitCalls.get(normalizedCallId);
     if (!observation) continue;
     const rendered = outputText(event.output);
+    const terminalText = terminalResultText(event.output);
+    if (terminalText !== null) observation.terminalTextSha256 ??= sha256(terminalText);
     if (rendered.includes("FreeContext is still running.")) observation.reminderCount += 1;
     const running = rendered.match(/Script running with cell ID (?<cellId>[^\s]+)/u)?.groups?.cellId;
     if (running) observation.cellId = running;
@@ -227,6 +232,7 @@ export function collectFreeContextTransportObservations(
     latencyMs: observation.startedMs === null || observation.completedMs === null
       ? null
       : Math.max(0, observation.completedMs - observation.startedMs),
+    terminalTextSha256: observation.terminalTextSha256,
     terminalOutputSeen: observation.completedAt !== null,
   })));
 }

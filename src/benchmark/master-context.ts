@@ -235,7 +235,9 @@ export async function exportMasterAgentContext({
       );
       const explicitActions = collectParentRepositoryActions(completeMasterContext, session.invocation.callId);
       const matchingTransports = freeContextTransport.filter((item) =>
-        (item.cellId === session.invocation.callId || item.outerCallId === session.invocation.callId) &&
+        (typeof item.terminalTextSha256 === "string"
+          ? item.terminalTextSha256 === session.serializedTextSha256
+          : item.cellId === session.invocation.callId || item.outerCallId === session.invocation.callId) &&
           item.completedAt !== null);
       const matchingTransport = matchingTransports.length === 1 ? matchingTransports[0] : null;
       const hostObservation = explicitActions.length === 0 && matchingTransport?.completedAt &&

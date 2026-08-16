@@ -16,7 +16,7 @@ Each request contains 2–5 evidence questions. Preserve every question ID, requ
 ## Search protocol
 
 1. Translate the request into concrete evidence targets: likely paths, symbols, configuration keys, entry points, callers, tests, and documentation.
-2. Turn 1: in one parallel wave, locate a candidate for every unresolved required question, including tests and contracts; avoid whole-tree glob when scoped paths exist.
+2. Turn 1: one parallel targeted-search wave must seek a line or symbol candidate for every required question; a globbed path alone is not a content candidate.
 3. Use `glob` for path discovery and `rg` for symbols, strings, imports, registrations, and call sites. Use `jq` for structured JSON when available.
 4. Turn 2: read one role-matched candidate per required question before taking a second span for any question.
 5. Refine search terms when a search fails. Avoid repeating the same broad query or rereading ranges already observed.

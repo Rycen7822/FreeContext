@@ -287,7 +287,7 @@ export function buildFinalizationPacket(
       maxItems: { evidence: RESULT_LIMITS.evidence, gaps: GAP_LIMIT },
       question_id: "exact questions[].id; omit role because the harness derives it",
       citation: `non-empty repository-relative path; integer 1 <= start_line <= focus_line <= end_line <= ${LINE_NUMBER_LIMIT}; range within one matching repositoryObservation`,
-      coverage: "Cite or gap every required question before any second citation; summary names only cited repository components.",
+      coverage: "Cite each supported required question before gaps or extra citations; gap only unsupported questions; summary names only cited repository components.",
     },
     repositoryObservations,
   });

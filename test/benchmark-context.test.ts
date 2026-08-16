@@ -350,6 +350,7 @@ test("master context exporter joins v3 by session address and preserves the actu
       startedAt: "2026-08-09T00:00:00.000Z",
       completedAt: "2026-08-09T00:00:12.000Z",
       latencyMs: 12_000,
+      terminalTextSha256: createHash("sha256").update(actualText).digest("hex"),
       terminalOutputSeen: true,
     }]);
     assert.equal(document.masterAgentContext[0]?.rawJsonl, fixture.masterRaw);
@@ -426,6 +427,27 @@ test("same-cell code-await output is the actual observation without a direct MCP
     assert.equal(call?.recoverableResult, null);
     assert.equal(document.freeContextTransport[0]?.terminalOutputSeen, true);
     assert.deepEqual(document.duplicateSemanticCalls, []);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("terminal text hash correlates a yielded cell when the MCP call id differs", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "freecontext-hash-boundary-master-"));
+  try {
+    const session = v3Session();
+    const actualText = serializeForModel(session.result);
+    const fixture = await createFixture(root, session, actualText, undefined, false, false, true, false, false);
+    const outputPath = await exportMasterAgentContext({
+      agentDir: fixture.agentDir,
+      taskName: "TaskNameXXX",
+      now: () => new Date("2026-08-09T01:00:00.000Z"),
+    });
+    const document = JSON.parse(await readFile(outputPath, "utf8")) as BenchmarkMasterAgentContext;
+    assert.notEqual(document.freeContextTransport[0]?.cellId, session.invocation.callId);
+    assert.equal(document.freeContextTransport[0]?.terminalTextSha256, session.serializedTextSha256);
+    assert.equal(document.freeContextCalls[0]?.consumptionAudit?.observationSource, "completed_codex_tool_call");
+    assert.equal(document.freeContextCalls[0]?.consumptionAudit?.firstActionEvidenceHit, true);
   } finally {
     await rm(root, { recursive: true, force: true });
   }
@@ -568,6 +590,7 @@ test("fast code-await transport completes without a reminder or wait", () => {
     startedAt: "2026-08-09T00:00:00.000Z",
     completedAt: "2026-08-09T00:00:07.999Z",
     latencyMs: 7_999,
+    terminalTextSha256: null,
     terminalOutputSeen: true,
   }]);
 });

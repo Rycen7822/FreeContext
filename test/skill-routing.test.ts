@@ -46,7 +46,8 @@ test("implicit discovery routes complex reads to one MCP tool without copying el
   assert.match(skill, /no query refs/u);
   assert.match(skill, /use 2–5 unique ids/iu);
   assert.match(skill, /`implementation`, `caller`, `test`, or `contract`/u);
-  assert.match(skill, /contract requires a distinct existing repository source, not requested new behavior/u);
+  assert.match(skill, /contract only when the task or knownRefs name an existing API, schema, spec, or compatibility source/u);
+  assert.match(skill, /never inferred from new behavior or other roles/u);
   assert.doesNotMatch(skill, /\bworkspace_root\b/u);
   assert.throws(() => FreeContextRequestSchema.parse({
     ...JSON.parse(requestExample),
