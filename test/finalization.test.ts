@@ -156,24 +156,43 @@ test("finalizer requires each requested minimum or an explicit partial-coverage 
   assert.deepEqual(complete.candidate?.gaps.map((gap) => gap.questionId), ["tests"]);
 });
 
-test("finalizer rejects full duplicate allocation ahead of a required gap", async () => {
+test("finalizer preserves bounded partial evidence when a required gap remains", async () => {
   const state = createTerminalSubmissionState();
   const requiredRequest = {
     ...baseRequest(),
-    evidenceQuestions: baseRequest().evidenceQuestions.map((question) => ({ ...question, required: true })),
+    evidenceQuestions: [
+      { id: "implementation", role: "implementation" as const, question: "Which implementation spans matter?", required: true, minimumSpans: 2 },
+      { id: "caller", role: "caller" as const, question: "Which callers matter?", required: true, minimumSpans: 2 },
+      { id: "contract", role: "contract" as const, question: "Which contract matters?", required: true },
+      { id: "tests", role: "test" as const, question: "Which tests matter?", required: true },
+    ],
   };
+  const reads = Array.from({ length: 6 }, (_, index) => ({
+    ...observedRead,
+    path: `src/evidence-${index}.ts`,
+  }));
   const tool = createSubmitEvidenceTool({
     Type,
     request: requiredRequest,
-    observedReads: () => [observedRead],
+    observedReads: () => reads,
     state,
     isFinalizing: () => true,
   });
-  await assert.rejects(tool.execute("slot-starvation", {
-    ...validArguments,
-    evidence: Array.from({ length: 6 }, () => validArguments.evidence[0]),
-  }), /local semantic/u);
-  assert.deepEqual(state.failureDetails, ["required_gap_after_surplus_evidence"]);
+  const allocations = ["implementation", "implementation", "implementation", "caller", "caller", "tests"] as const;
+  const result = await tool.execute("partial-surplus", {
+    summary: "Six observed spans are verified while the contract remains unresolved.",
+    evidence: allocations.map((question_id, index) => ({
+      ...validArguments.evidence[0],
+      question_id,
+      path: reads[index]!.path,
+    })),
+    gaps: [{ question_id: "contract", reason: "No authoritative contract span was observed." }],
+  });
+  assert.equal(result.terminate, true);
+  assert.equal(state.failureKind, null);
+  assert.deepEqual(state.failureDetails, []);
+  assert.equal(state.candidate?.evidence.length, 6);
+  assert.deepEqual(state.candidate?.gaps.map((gap) => gap.questionId), ["contract"]);
 });
 
 test("finalizer removes a redundant gap after validating evidence for the same question", async () => {

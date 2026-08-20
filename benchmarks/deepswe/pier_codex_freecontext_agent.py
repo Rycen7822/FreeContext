@@ -46,8 +46,8 @@ EXPLICIT_FC_FIRST_POLICY = (
     "be the first repository exploration action. Do not use native repository reads "
     "or searches before it. Use four required outcome questions with implementation, "
     "caller, contract, and test minimumSpans of 2, 2, 1, and 1; do not split them into "
-    "six shallow questions. For a partial result, read its evidence and call FreeContext "
-    "once for the named gaps before any native search."
+    "six shallow questions. For a partial result, read its evidence, then run one narrow "
+    "native search batch for named gaps; never call FreeContext again."
 )
 EXPLICIT_NATIVE_ONLY_POLICY = (
     "[Benchmark arm policy: explicit_native_only]\n"

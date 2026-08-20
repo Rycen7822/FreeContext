@@ -174,7 +174,7 @@ export async function compileFreeContextResult(
           endLine: first.endLine,
           reason: status === "ready"
             ? "After this exact-read cell, edit directly with no intervening search."
-            : "After this exact-read cell, call FreeContext once for the named evidence gaps before editing.",
+            : "After this exact-read cell, run one narrow named-gap search batch before editing; never call FreeContext again.",
         }
       : {
           kind: "direct_search",

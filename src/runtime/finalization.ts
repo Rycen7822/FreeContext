@@ -35,8 +35,7 @@ export type TerminalFailureDetail =
   | "focus_outside_range"
   | "unobserved_range"
   | "unknown_gap_question"
-  | "required_coverage_missing"
-  | "required_gap_after_surplus_evidence";
+  | "required_coverage_missing";
 
 export interface ObservedRead {
   readonly tool: "read" | "bat";
@@ -226,15 +225,6 @@ export function createSubmitEvidenceTool({
       const candidate = normalizedGaps === gaps
         ? rawCandidate
         : freezeCandidate(rawCandidate.summary, evidence, normalizedGaps);
-      const hasRequiredGap = candidate.gaps.some((gap) => questions.get(gap.questionId)?.required);
-      if (failureDetails.length === 0 && hasRequiredGap && evidence.length === RESULT_LIMITS.evidence) {
-        if ([...counts].some(([questionId, count]) => {
-          const question = questions.get(questionId);
-          return count > (question?.required ? minimumEvidenceSpans(question) : 0);
-        })) {
-          failureDetails.push("required_gap_after_surplus_evidence");
-        }
-      }
       if (failureDetails.length > 0) {
         if (isFinalizing()) state.reject("invalid_arguments", failureDetails);
         throw new Error("Submitted evidence failed local semantic or observed-read validation.");

@@ -14,7 +14,7 @@ description: For complex multi-file, multi-document, cross-module, long-document
 {"taskText":"Trace the change.","knownRefs":[],"evidenceQuestions":[{"id":"implementation","role":"implementation","question":"Entry and state owners?","required":true,"minimumSpans":2},{"id":"application","role":"caller","question":"Consumers and behavior?","required":true,"minimumSpans":2},{"id":"contract","role":"contract","question":"Compatibility contract?","required":true},{"id":"tests","role":"test","question":"Focused tests?","required":true}]}
 ```
 
-- Summaries are not reads. Next repository cell reads every Evidence range in one `Promise.all` of literal `tools.exec_command({cmd:"..."})` calls—no arrays/maps, widening, or other action. Ready then edits directly. For partial, call FreeContext once more for only the named gaps after that read cell and before native search; never replay completed questions or broad-discover.
+- Summaries are not reads. Next repository cell reads every Evidence range in one `Promise.all` of literal `tools.exec_command({cmd:"..."})` calls—no arrays/maps, widening, or other action. Ready then edits directly. For partial, run at most one narrow native search batch for only the named gaps after that read cell; never call FreeContext again or broad-discover.
 - If unavailable, use native read-only tools and say so.
 
 Use this exact caller after constructing `args`:

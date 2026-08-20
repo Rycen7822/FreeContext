@@ -77,8 +77,8 @@ test("implicit discovery routes complex reads to one MCP tool without copying el
   assert.match(skill, /Next repository cell reads every Evidence range in one `Promise\.all` of literal `tools\.exec_command/iu);
   assert.match(skill, /no arrays\/maps, widening, or other action/iu);
   assert.match(skill, /Ready then edits directly/u);
-  assert.match(skill, /For partial, call FreeContext once more for only the named gaps/iu);
-  assert.match(skill, /never replay completed questions or broad-discover/iu);
+  assert.match(skill, /For partial, run at most one narrow native search batch for only the named gaps/iu);
+  assert.match(skill, /never call FreeContext again or broad-discover/iu);
 
   assert.match(metadata, /^  allow_implicit_invocation: true$/mu);
   assert.equal(metadata.match(/^    - type:/gmu)?.length, 1);

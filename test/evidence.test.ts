@@ -131,7 +131,7 @@ test("compiler cannot mark a required multi-span question ready after one narrow
   assert.equal(partial.gaps.find((gap) => gap.questionId === "implementation")?.reason,
     "Only 1 of 2 required spans were validated.");
   assert.equal(partial.nextAction.reason,
-    "After this exact-read cell, call FreeContext once for the named evidence gaps before editing.");
+    "After this exact-read cell, run one narrow named-gap search batch before editing; never call FreeContext again.");
 
   const complete = await compileFreeContextResult(
     adequacyRequest,
@@ -230,7 +230,7 @@ test("compiler turns role mismatch and rejected generated paths into explicit ga
   assert.equal(result.errorCode, null);
   assert.deepEqual(result.evidence.map((item) => item.questionId), ["implementation"]);
   assert.deepEqual(result.gaps, [{ questionId: "tests", reason: "Test evidence remains unresolved." }]);
-  assert.equal(result.nextAction.reason, "After this exact-read cell, call FreeContext once for the named evidence gaps before editing.");
+  assert.equal(result.nextAction.reason, "After this exact-read cell, run one narrow named-gap search batch before editing; never call FreeContext again.");
 }));
 
 test("compiler does not treat a trailing newline as an extra citable line", async () => withWorkspace(async (root) => {
