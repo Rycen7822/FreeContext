@@ -121,7 +121,7 @@ test("no-network MCP loopback awaits one terminal Promise and never emits an int
     assert.equal(tool?.title, "Gather context with FreeContext");
     assert.equal(tool?.description, TOOL_DESCRIPTION);
     assert.ok(tool?.description?.startsWith(
-      "For a call-eligible task, make gather_context your first read-only exploration action. ",
+      "For an initially call-eligible task, make gather_context your first read-only exploration action; a permitted gap-only follow-up occurs only after exact evidence reads. ",
     ));
     let previousGateIndex = -1;
     for (const gate of FREECONTEXT_ELIGIBILITY_POLICY.gates) {

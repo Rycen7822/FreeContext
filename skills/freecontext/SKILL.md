@@ -8,13 +8,13 @@ description: For complex multi-file, multi-document, cross-module, long-document
 - Use before native reads/searches for multi-file/document evidence, cross-module chains, joint config, long-document extraction, or source-bound work.
 - Direct-read only for one known bounded implementation or 1–2 exact post-probe candidates.
 - First tool cell: read only this file—never append pwd, rg, fd, Git, plan, catalog, or repo actions. Next cell directly calls `tools.mcp__freecontext__gather_context`; never inspect a tool catalog first.
-- Args: `knownRefs` (`[]` when none) accepts 0–12 path, symbol, or stack refs. Code tasks use four required outcome questions—implementation, caller, contract, tests—with `minimumSpans` 2/2/1/1; keep other constraints in `taskText`, not six shallow questions. Other tasks use 2–6 questions; omitted `minimumSpans` means 1. Contract role requires a named API/schema/spec/compatibility rule. No identities, secrets, dumps, or query refs.
+- Args: `knownRefs` (`[]` when none) accepts 0–12 path, symbol, or stack refs. Initial code calls use four required outcome questions—implementation, caller, contract, tests—with `minimumSpans` 2/2/1/1, not six shallow questions. Other initial calls use 2–6 questions; a gap follow-up uses only its 1–6 unresolved questions. Contract role requires a named API/schema/spec/compatibility rule. No identities, secrets, dumps, or query refs.
 
 ```json
 {"taskText":"Trace the change.","knownRefs":[],"evidenceQuestions":[{"id":"implementation","role":"implementation","question":"Entry and state owners?","required":true,"minimumSpans":2},{"id":"application","role":"caller","question":"Consumers and behavior?","required":true,"minimumSpans":2},{"id":"contract","role":"contract","question":"Compatibility contract?","required":true},{"id":"tests","role":"test","question":"Focused tests?","required":true}]}
 ```
 
-- Summaries are not reads. Next repository cell reads every Evidence range in one `Promise.all` of literal `tools.exec_command({cmd:"..."})` calls—no arrays/maps, widening, or other action. Ready then edits directly. For partial, run at most one narrow native search batch for only the named gaps after that read cell; never call FreeContext again or broad-discover.
+- Summaries are not reads. Next repository cell reads every Evidence range in one `Promise.all` of literal `tools.exec_command({cmd:"..."})` calls—no arrays/maps, widening, or other action. Ready then edits. After an initial partial, call FreeContext once with only its unresolved questions and returned paths as `knownRefs`; read the new Evidence, then edit. Never native-search before edit or make a third call.
 - If unavailable, use native read-only tools and say so.
 
 Use this exact caller after constructing `args`:
@@ -24,7 +24,7 @@ if (typeof tools.mcp__freecontext__gather_context !== "function") {
   throw new Error("FreeContext MCP tool is unavailable.");
 }
 const reminder = setTimeout(() => {
-  notify("FreeContext is still running. Do not call it again; wait for this cell until the terminal result.");
+  notify("FreeContext is still running. Do not replay this call; wait for its terminal result.");
 }, 8_000);
 try {
   const result = await tools.mcp__freecontext__gather_context(args);
@@ -38,4 +38,4 @@ try {
 }
 ```
 
-If `functions.exec` yields a cell ID, call `functions.wait({ cell_id, yield_time_ms: 300000, max_tokens: 10000 })` exactly once next. While pending, never recall FreeContext, wait twice, inspect private sessions, or stringify results. A slow call emits one timer notice at most. FreeContext installs no waiting Hook.
+If `functions.exec` yields a cell ID, call `functions.wait({ cell_id, yield_time_ms: 300000, max_tokens: 10000 })` exactly once next. While pending, never replay it, wait twice, inspect private sessions, or stringify results. A slow call emits one timer notice at most. FreeContext installs no waiting Hook.

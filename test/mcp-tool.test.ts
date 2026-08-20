@@ -106,8 +106,9 @@ test("gather_context describes broad read delegation without claiming parent act
     SERVER_INSTRUCTIONS,
     /public MCP request id and either an operator-configured absolute workspace root or exactly one public MCP file root/u,
   );
-  assert.match(SERVER_INSTRUCTIONS, /Make exactly one call per task, await the same outer cell while pending, and never replay after any terminal result/u);
-  assert.match(SERVER_INSTRUCTIONS, /partial result permits one targeted native search batch for its exact material gaps/u);
+  assert.match(SERVER_INSTRUCTIONS, /Make one initial call and await the same outer cell while it is pending/u);
+  assert.match(SERVER_INSTRUCTIONS, /one fresh follow-up call may contain only its unresolved questions/u);
+  assert.match(SERVER_INSTRUCTIONS, /never make a third call/u);
   assert.doesNotMatch(`${SERVER_INSTRUCTIONS}\n${TOOL_DESCRIPTION}`, /\b(?:commit|push|edit files)\b/u);
 });
 

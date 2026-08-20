@@ -11,7 +11,7 @@ export interface FreeContextEligibilityGate {
 }
 
 export const FREECONTEXT_ELIGIBILITY_POLICY = Object.freeze({
-  id: "freecontext-eligibility-v1",
+  id: "freecontext-eligibility-v2",
   toolName: "gather_context",
   gates: Object.freeze([
     Object.freeze({
@@ -42,7 +42,7 @@ export const FREECONTEXT_ELIGIBILITY_POLICY = Object.freeze({
   invariants: Object.freeze([
     "Repository familiarity, known files, and known keywords never weaken cross-document, cross-section, impact-map, or multi-role eligibility.",
     "FreeContext is read-only and never performs edits, tests, Git, package management, web access, or credential work.",
-    "Summaries are not repository reads; the next repository cell reads the exact evidence ranges only—no widening or other action; afterward ready edits directly, while partial permits one separate targeted named-gap search batch before edit.",
+    "Summaries are not repository reads; the next repository cell reads the exact evidence ranges only—no widening or other action; afterward ready edits directly, while an initial partial permits one fresh gap-only FreeContext invocation before edit.",
   ]),
 });
 
@@ -57,11 +57,11 @@ function renderEligibilityPolicy(): string {
   const gates = FREECONTEXT_ELIGIBILITY_POLICY.gates
     .map((gate) => `Gate ${gate.order}: ${gate.instruction}`)
     .join(" ");
-  return `For a call-eligible task, make gather_context your first read-only exploration action. ${gates} ${FREECONTEXT_ELIGIBILITY_POLICY.invariants.join(" ")}`;
+  return `For an initially call-eligible task, make gather_context your first read-only exploration action; a permitted gap-only follow-up occurs only after exact evidence reads. ${gates} ${FREECONTEXT_ELIGIBILITY_POLICY.invariants.join(" ")}`;
 }
 
 export const TOOL_DESCRIPTION = renderEligibilityPolicy();
-export const SERVER_INSTRUCTIONS = `FreeContext exposes one read-only ${FREECONTEXT_ELIGIBILITY_POLICY.toolName} tool governed by ${FREECONTEXT_ELIGIBILITY_POLICY.id} in its tool description. FreeContext binds each invocation to the public MCP request id and either an operator-configured absolute workspace root or exactly one public MCP file root; the caller supplies only the complete task and evidence questions. Make exactly one call per task, await the same outer cell while pending, and never replay after any terminal result. A partial result permits one targeted native search batch for its exact material gaps. Never send credentials or source dumps.`;
+export const SERVER_INSTRUCTIONS = `FreeContext exposes one read-only ${FREECONTEXT_ELIGIBILITY_POLICY.toolName} tool governed by ${FREECONTEXT_ELIGIBILITY_POLICY.id} in its tool description. FreeContext binds each invocation to the public MCP request id and either an operator-configured absolute workspace root or exactly one public MCP file root; the caller supplies only the complete task and evidence questions. Make one initial call and await the same outer cell while it is pending; never replay a pending or terminal invocation. After reading an initial partial result's exact evidence, one fresh follow-up call may contain only its unresolved questions. Read that result and edit without native exploration; never make a third call. Never send credentials or source dumps.`;
 
 export const MODEL_RESULT_MAX_BYTES = 8_192;
 export const RESULT_LIMITS = Object.freeze({
@@ -101,7 +101,7 @@ const requestFields = {
   taskText: z.string()
     .refine((value) => value.trim().length > 0, "taskText must not be empty")
     .refine((value) => codePointLength(value) <= 16_000, "taskText is too long"),
-  evidenceQuestions: z.array(EvidenceQuestionSchema).min(2).max(RESULT_LIMITS.evidence),
+  evidenceQuestions: z.array(EvidenceQuestionSchema).min(1).max(RESULT_LIMITS.evidence),
 };
 const validateQuestions = ({ evidenceQuestions }: {
   evidenceQuestions: readonly { id: string; required: boolean; minimumSpans?: number | undefined }[];

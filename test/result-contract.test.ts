@@ -71,6 +71,10 @@ test("canonical request separates model intent from host invocation facts", () =
   });
   assert.equal(request.taskText, taskText);
   assert.equal(request.evidenceQuestions.length, 2);
+  assert.equal(FreeContextRequestSchema.safeParse({
+    ...request,
+    evidenceQuestions: [request.evidenceQuestions[1]],
+  }).success, true);
   assert.equal("workspaceRoot" in request, false);
   assert.throws(() => FreeContextRequestSchema.parse({
     ...request,

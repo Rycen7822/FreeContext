@@ -84,8 +84,8 @@ test("submit_evidence exposes only portable shape constraints to the provider", 
     isFinalizing: () => false,
   });
   const schema = JSON.stringify(tool.parameters);
-  assert.match(tool.description, /up to six observed spans/iu);
-  assert.match(tool.description, /1 total when fully supported/iu);
+  assert.match(tool.description, /six observed spans.*required allocation.*reserved slots/iu);
+  assert.match(tool.description, /1 reserved slots/iu);
   assert.match(tool.description, /minimumSpans/iu);
   assert.equal(schema.includes('"role"'), false);
   for (const unsupported of ["anyOf", "oneOf", "allOf", "const", "pattern", "minLength", "maxLength", "minimum", "maximum", "maxItems"]) {
@@ -272,9 +272,12 @@ test("isolated packet marks exploration complete and omits repository tool origi
   assert.deepEqual(parsed.submissionRules, {
     maxItems: { evidence: 6, gaps: 6 },
     requiredMinimumSpans: 1,
+    requiredAllocation: [
+      { question_id: "impl", role: "implementation", slots: 1 },
+    ],
     question_id: "exact questions[].id; omit role because the harness derives it",
     citation: "non-empty repository-relative path; integer 1 <= start_line <= focus_line <= end_line <= 10000000; range within one matching repositoryObservation",
-    coverage: "For every required question, allocate its minimumSpans distinct role-matched observed spans (default one) before optional evidence. If any required minimum cannot be met, include that exact question ID in gaps; a partially covered question may have both evidence and a gap. Test role requires an actual test/spec file or inline test block, never a production helper whose name contains test. Never substitute another role or claim a present observation is absent.",
+    coverage: "Treat requiredAllocation as reserved quotas: fill every quota with distinct role-matched observed spans before any surplus. Cite relevant partial observations instead of replacing their quota with surplus; if a quota still cannot be met, include that exact question ID in gaps. Test role requires an actual test/spec file or inline test block, never a production helper whose name contains test. Never substitute another role or claim a present role-matched observation is absent.",
   });
   const { tool: _tool, ...modelObservation } = observedRead;
   assert.equal(_tool, "read");
@@ -283,8 +286,27 @@ test("isolated packet marks exploration complete and omits repository tool origi
   assert.equal(packet.includes("[read src/index.ts:4-8]"), false);
   assert.equal(FINALIZATION_SYSTEM_PROMPT.includes("completed repository exploration"), true);
   assert.equal(FINALIZATION_SYSTEM_PROMPT.includes("Repository tools are unavailable"), true);
-  assert.equal(FINALIZATION_SYSTEM_PROMPT.includes("submissionRules.coverage"), true);
-  assert.equal(FINALIZATION_SYSTEM_PROMPT.includes("never claim a present repository observation is absent"), true);
+  assert.equal(FINALIZATION_SYSTEM_PROMPT.includes("submissionRules.requiredAllocation"), true);
+  assert.equal(FINALIZATION_SYSTEM_PROMPT.includes("never claim a present role-matched repository observation is absent"), true);
+
+  const quotaRequest = {
+    ...baseRequest(),
+    evidenceQuestions: [
+      { id: "implementation", role: "implementation" as const, question: "Implementation?", required: true, minimumSpans: 2 },
+      { id: "application", role: "caller" as const, question: "Callers?", required: true, minimumSpans: 2 },
+      { id: "contract", role: "contract" as const, question: "Contract?", required: true },
+      { id: "tests", role: "test" as const, question: "Tests?", required: true },
+    ],
+  };
+  const quotaPacket = JSON.parse(buildFinalizationPacket(quotaRequest, [observedRead], null)) as {
+    submissionRules: { requiredAllocation: unknown };
+  };
+  assert.deepEqual(quotaPacket.submissionRules.requiredAllocation, [
+    { question_id: "implementation", role: "implementation", slots: 2 },
+    { question_id: "application", role: "caller", slots: 2 },
+    { question_id: "contract", role: "contract", slots: 1 },
+    { question_id: "tests", role: "test", slots: 1 },
+  ]);
 });
 
 test("compaction keeps only observations whose tool results remain in effective context", () => {

@@ -49,10 +49,11 @@ test("implicit discovery routes complex reads to one MCP tool without copying el
   ]);
   assert.match(skill, /`knownRefs` \(`\[\]` when none\) accepts 0–12 path, symbol, or stack refs/u);
   assert.match(skill, /No identities, secrets, dumps, or query refs/u);
-  assert.match(skill, /Code tasks use four required outcome questions/iu);
+  assert.match(skill, /Initial code calls use four required outcome questions/iu);
   assert.match(skill, /`minimumSpans` 2\/2\/1\/1/u);
   assert.match(skill, /not six shallow questions/iu);
-  assert.match(skill, /Other tasks use 2–6 questions/iu);
+  assert.match(skill, /Other initial calls use 2–6 questions/iu);
+  assert.match(skill, /gap follow-up uses only its 1–6 unresolved questions/iu);
   assert.match(skill, /Contract role requires a named API\/schema\/spec\/compatibility rule/iu);
   assert.doesNotMatch(skill, /\bworkspace_root\b/u);
   assert.throws(() => FreeContextRequestSchema.parse({
@@ -76,9 +77,9 @@ test("implicit discovery routes complex reads to one MCP tool without copying el
   }).success, false);
   assert.match(skill, /Next repository cell reads every Evidence range in one `Promise\.all` of literal `tools\.exec_command/iu);
   assert.match(skill, /no arrays\/maps, widening, or other action/iu);
-  assert.match(skill, /Ready then edits directly/u);
-  assert.match(skill, /For partial, run at most one narrow native search batch for only the named gaps/iu);
-  assert.match(skill, /never call FreeContext again or broad-discover/iu);
+  assert.match(skill, /Ready then edits/iu);
+  assert.match(skill, /initial partial, call FreeContext once with only its unresolved questions/iu);
+  assert.match(skill, /Never native-search before edit or make a third call/iu);
 
   assert.match(metadata, /^  allow_implicit_invocation: true$/mu);
   assert.equal(metadata.match(/^    - type:/gmu)?.length, 1);

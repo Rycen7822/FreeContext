@@ -41,13 +41,15 @@ _REMOTE_WORKSPACE_ROOT = PurePosixPath("/app")
 EXPLICIT_FC_FIRST_POLICY = (
     "[Benchmark arm policy: explicit_fc_first]\n"
     "Before any repository exploration, use the installed FreeContext skill. "
-    "The first tool cell must read only that SKILL.md; the next tool cell must call "
-    "gather_context exactly once and wait for its terminal result. FreeContext must "
+    "The first tool cell must read only that SKILL.md; the next tool cell must make "
+    "the initial gather_context call and wait for its terminal result. FreeContext must "
     "be the first repository exploration action. Do not use native repository reads "
     "or searches before it. Use four required outcome questions with implementation, "
     "caller, contract, and test minimumSpans of 2, 2, 1, and 1; do not split them into "
-    "six shallow questions. For a partial result, read its evidence, then run one narrow "
-    "native search batch for named gaps; never call FreeContext again."
+    "six shallow questions. For an initial partial result, read its evidence, then call "
+    "gather_context once more with only the unresolved questions and returned paths as "
+    "knownRefs. Read the follow-up evidence, then edit; never native-search before the "
+    "first edit or make a third call."
 )
 EXPLICIT_NATIVE_ONLY_POLICY = (
     "[Benchmark arm policy: explicit_native_only]\n"
