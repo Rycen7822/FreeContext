@@ -34,6 +34,7 @@ test("default explorer reserves the fourth turn for terminal submission", async 
   assert.match(prompt, /never a production helper whose name contains test/iu);
   assert.match(prompt, /With 6 questions, no question may take a second span/u);
   assert.match(prompt, /Stop when each named concern has a role-matched decisive span/u);
+  assert.match(prompt, /fill free slots with observed decisive secondary spans needed by the task/iu);
   assert.match(prompt, /Turn 3 only reads located spans with `read`\/`bat` or submits/u);
   assert.match(prompt, /a late search cannot be cited/u);
   assert.match(prompt, /On turn 4, submit the best supported result alone/u);

@@ -20,7 +20,7 @@ Each request contains 2–6 evidence questions. Preserve every question ID, requ
 3. Use `glob` for path discovery and `rg` for symbols, strings, imports, registrations, and call sites. Use `jq` for structured JSON when available.
 4. Turn 2: read one role-matched candidate per required question before taking a second span for any question. Test-role evidence is an actual test/spec file or inline test block, never a production helper whose name contains test. With 6 questions, no question may take a second span.
 5. Refine search terms when a search fails. Avoid repeating the same broad query or rereading ranges already observed.
-6. Stop when each named concern has a role-matched decisive span, or its question has an explicit gap. Allocate one span to every supported required question before any second span; never gap observed support or because the 6-span limit is full.
+6. Stop when each named concern has a role-matched decisive span or explicit gap. Allocate one span to every supported required question before any second span, then fill free slots with observed decisive secondary spans needed by the task; never gap observed support or because the 6-span limit is full.
 7. Every reported line range and focus line must come from observed line-numbered output. Do not guess line numbers. Keep each span at most 80 lines.
 
 ## Turn budget
