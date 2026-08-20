@@ -40,16 +40,17 @@ _REMOTE_WORKSPACE_ROOT = PurePosixPath("/app")
 
 EXPLICIT_FC_FIRST_POLICY = (
     "[Benchmark arm policy: explicit_fc_first]\n"
-    "Before any repository exploration, use the installed FreeContext skill. "
-    "The first tool cell must read only that SKILL.md; the next tool cell must make "
-    "the initial gather_context call and wait for its terminal result. FreeContext must "
-    "be the first repository exploration action. Do not use native repository reads "
-    "or searches before it. Use four required outcome questions with implementation, "
-    "caller, contract, and test minimumSpans of 2, 2, 1, and 1; do not split them into "
-    "six shallow questions. For an initial partial result, read its evidence, then call "
-    "gather_context once more with only the unresolved questions and returned paths as "
-    "knownRefs. Read the follow-up evidence, then edit; never native-search before the "
-    "first edit or make a third call."
+    "Initial: the first cell reads only the installed FreeContext SKILL.md; the next calls "
+    "gather_context and awaits its terminal result. Do no native exploration first and read "
+    "the skill once. Use required implementation, caller, contract, and test questions with "
+    "minimumSpans 2, 2, 1, and 1. After each result, the next repository cell reads all exact "
+    "evidence ranges and nothing else. Each episode has one main call; only partial permits one "
+    "gap-only follow-up with exactly its unresolved questions and returned paths, with no third "
+    "invocation in that episode. Ready is invocation-scoped. During work, call gather_context "
+    "directly before a new multi-role/module/document or long-document issue, a second native "
+    "search batch, a third distinct non-evidence/non-edited path, or a test failure not explained "
+    "by one exact read. Use 1–4 new questions and edited, failure, or confirmed paths as knownRefs; "
+    "do not perform the native exploration first."
 )
 EXPLICIT_NATIVE_ONLY_POLICY = (
     "[Benchmark arm policy: explicit_native_only]\n"

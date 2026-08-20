@@ -7,6 +7,7 @@ import type { FreeContextResult } from "../src/mcp/contracts.js";
 
 const BOUNDARY = {
   completedAt: "2026-08-16T01:32:27.400Z",
+  endedBefore: null,
   taskId: "task-1",
   callId: "2",
   repetition: "host-observed",
@@ -60,6 +61,19 @@ function partialResult(): FreeContextResult {
   };
 }
 
+const AUDIT_CONTEXT = {
+  observationSource: "completed_codex_tool_call",
+  taskId: "task-1",
+  callId: "2",
+  repetition: "host-observed",
+  episodeIndex: 1,
+  invocationKind: "initial",
+  windowStartedAfter: BOUNDARY.completedAt,
+  windowEndedBefore: null,
+  windowObserved: true,
+  exactDuplicate: false,
+} as const;
+
 test("completed Codex cells yield ordered, evidence-addressable host actions", () => {
   const raw = completedCell(
     'const r = await tools.exec_command({cmd:"git status --short && sed -n \'1,45p\' bandit/core/manager.py && sed -n \'120,165p\' bandit/core/tester.py && rg -n \'nosec\' bandit tests",workdir:"/app"}); text(r.output);',
@@ -95,16 +109,14 @@ test("completed Codex cells yield ordered, evidence-addressable host actions", (
   const audit = analyzeFreeContextConsumption(
     partialResult(),
     observation.actions,
-    "completed_codex_tool_call",
+    AUDIT_CONTEXT,
   );
-  assert.ok(audit);
   assert.equal(audit.observationSource, "completed_codex_tool_call");
   assert.equal(audit.firstRepositoryBatchSize, 3);
   assert.equal(audit.firstRepositoryBatchConcurrent, false);
-  assert.equal(audit.firstActionEvidenceHit, false);
-  assert.equal(audit.evidenceConsumed, true);
-  assert.equal(audit.partialGapSearchCount, 0);
-  assert.equal(audit.repeatedBroadSearch, false);
+  assert.equal(audit.allEvidenceConsumed, true);
+  assert.equal(audit.searchCount, 1);
+  assert.deepEqual(audit.escapedExplorationReasons, ["first_batch_not_evidence_only"]);
 });
 
 test("host observation stays unobserved for dynamic, failed, or incomplete cells", () => {
@@ -139,12 +151,11 @@ test("host observation stays unobserved for dynamic, failed, or incomplete cells
   const concurrentAudit = analyzeFreeContextConsumption(
     partialResult(),
     concurrentObservation.actions,
-    "completed_codex_tool_call",
+    AUDIT_CONTEXT,
   );
-  assert.ok(concurrentAudit);
   assert.equal(concurrentAudit.firstRepositoryBatchSize, 2);
   assert.equal(concurrentAudit.firstRepositoryBatchConcurrent, true);
-  assert.equal(concurrentAudit.firstActionEvidenceHit, true);
+  assert.equal(concurrentAudit.allEvidenceConsumed, true);
 
   const incomplete = record("2026-08-16T01:32:30.000Z", {
     type: "custom_tool_call",
@@ -153,14 +164,53 @@ test("host observation stays unobserved for dynamic, failed, or incomplete cells
     input: 'await tools.exec_command({cmd:"sed -n \'1,45p\' bandit/core/manager.py"});',
   });
   assert.equal(collectCompletedHostRepositoryActions(incomplete, BOUNDARY).complete, false);
+
+  const missingTimestamp = JSON.stringify({
+    type: "response_item",
+    payload: {
+      type: "custom_tool_call",
+      name: "exec",
+      call_id: "cell-1",
+      input: 'await tools.exec_command({cmd:"sed -n \'1,45p\' bandit/core/manager.py"});',
+    },
+  });
+  assert.equal(collectCompletedHostRepositoryActions(missingTimestamp, BOUNDARY).complete, false);
 });
 
 test("calls at or before the FreeContext completion boundary are excluded", () => {
   const raw = completedCell('await tools.exec_command({cmd:"sed -n \'1,45p\' bandit/core/manager.py"});')
-    .replaceAll("2026-08-16T01:32:30.000Z", "2026-08-16T01:32:20.000Z");
+    .replaceAll("2026-08-16T01:32:30.000Z", "2026-08-16T01:32:20.000Z")
+    .replaceAll("2026-08-16T01:32:31.000Z", "2026-08-16T01:32:21.000Z");
   const observation = collectCompletedHostRepositoryActions(raw, BOUNDARY);
   assert.equal(observation.complete, true);
   assert.deepEqual(observation.actions, []);
+});
+
+test("exclusive upper boundaries prevent suffix duplication and crossing cells fail closed", () => {
+  const bounded = { ...BOUNDARY, endedBefore: "2026-08-16T01:32:32.000Z" };
+  const raw = [
+    completedCell('await tools.exec_command({cmd:"sed -n \'1,5p\' first.py"});'),
+    completedCell('await tools.exec_command({cmd:"sed -n \'1,5p\' second.py"});')
+      .replaceAll("2026-08-16T01:32:30.000Z", "2026-08-16T01:32:34.000Z")
+      .replaceAll("2026-08-16T01:32:31.000Z", "2026-08-16T01:32:35.000Z")
+      .replaceAll("cell-1", "cell-2"),
+  ].join("\n");
+  const observation = collectCompletedHostRepositoryActions(raw, bounded);
+  assert.equal(observation.complete, true);
+  assert.deepEqual(observation.actions.map(({ action }) => action.path), ["first.py"]);
+
+  const crossingUpper = completedCell('await tools.exec_command({cmd:"sed -n \'1,5p\' first.py"});')
+    .replaceAll("2026-08-16T01:32:31.000Z", "2026-08-16T01:32:32.000Z");
+  assert.equal(collectCompletedHostRepositoryActions(crossingUpper, bounded).complete, false);
+
+  const crossingLower = completedCell('await tools.exec_command({cmd:"sed -n \'1,5p\' first.py"});')
+    .replaceAll("2026-08-16T01:32:30.000Z", "2026-08-16T01:32:27.000Z");
+  assert.equal(collectCompletedHostRepositoryActions(crossingLower, bounded).complete, false);
+
+  assert.deepEqual(collectCompletedHostRepositoryActions("", {
+    ...BOUNDARY,
+    endedBefore: BOUNDARY.completedAt,
+  }), { complete: true, actions: [] });
 });
 
 test("overlapping outer cells retain call order and reused call ids fail closed", () => {

@@ -7,6 +7,7 @@ import type { ExtractedRepositoryActions, RepositoryAction } from "./shell-actio
 
 export interface HostActionBoundary {
   readonly completedAt: string;
+  readonly endedBefore: string | null;
   readonly taskId: string;
   readonly callId: string;
   readonly repetition: string;
@@ -38,7 +39,11 @@ export function collectCompletedHostRepositoryActions(
   boundary: Readonly<HostActionBoundary>,
 ): Readonly<HostActionObservation> {
   const completedAt = Date.parse(boundary.completedAt);
-  if (Number.isNaN(completedAt)) return Object.freeze({ complete: false, actions: Object.freeze([]) });
+  const endedBefore = boundary.endedBefore === null ? null : Date.parse(boundary.endedBefore);
+  if (Number.isNaN(completedAt) || (endedBefore !== null &&
+      (Number.isNaN(endedBefore) || endedBefore < completedAt))) {
+    return Object.freeze({ complete: false, actions: Object.freeze([]) });
+  }
   const records: { readonly value: Record<string, unknown>; readonly timestamp: number; readonly index: number }[] = [];
   let recordIndex = 0;
   for (const line of rawJsonl.split("\n")) {
@@ -66,7 +71,11 @@ export function collectCompletedHostRepositoryActions(
     readonly batchConcurrent: boolean;
     readonly batchOrder: number;
   }[] = [];
-  const pending = new Map<string, Readonly<{ extracted: ExtractedRepositoryActions; batchOrder: number }>>();
+  const pending = new Map<string, Readonly<{
+    extracted: ExtractedRepositoryActions;
+    batchOrder: number;
+    startedAt: number;
+  }>>();
   const seenCallIds = new Set<string>();
   let nextBatchOrder = 0;
   for (const record of records) {
@@ -74,23 +83,34 @@ export function collectCompletedHostRepositoryActions(
     const type = item.type;
     const id = callId(item);
     if ((type === "custom_tool_call" || type === "function_call") && item.name === "exec" && id) {
-      if (record.timestamp <= completedAt) continue;
       const source = typeof item.input === "string" ? item.input : typeof item.arguments === "string" ? item.arguments : "";
       if (!source.includes("tools.exec_command") && !source.includes("tools.apply_patch")) continue;
+      if (endedBefore !== null && record.timestamp >= endedBefore) continue;
       const extracted = extractRepositoryActionsFromCode(source, boundary.gapQuestionIds);
-      if (!extracted.complete || seenCallIds.has(id)) {
+      if (seenCallIds.has(id)) {
         return Object.freeze({ complete: false, actions: Object.freeze([]) });
       }
       seenCallIds.add(id);
-      pending.set(id, { extracted, batchOrder: nextBatchOrder });
-      nextBatchOrder += 1;
+      const inside = record.timestamp > completedAt;
+      pending.set(id, { extracted, batchOrder: inside ? nextBatchOrder : -1, startedAt: record.timestamp });
+      if (inside) nextBatchOrder += 1;
       continue;
     }
     if ((type !== "custom_tool_call_output" && type !== "function_call_output") || !id) continue;
     const batch = pending.get(id);
     if (!batch) continue;
     pending.delete(id);
-    const { extracted, batchOrder } = batch;
+    const { extracted, batchOrder, startedAt } = batch;
+    if (startedAt <= completedAt) {
+      if (record.timestamp > completedAt) {
+        return Object.freeze({ complete: false, actions: Object.freeze([]) });
+      }
+      continue;
+    }
+    if (endedBefore !== null && record.timestamp >= endedBefore) {
+      return Object.freeze({ complete: false, actions: Object.freeze([]) });
+    }
+    if (!extracted.complete) return Object.freeze({ complete: false, actions: Object.freeze([]) });
     const output = renderedOutput(item.output);
     if (extracted.actions.length > 0 && /Script (?:error|failed)|exec_command failed/iu.test(output)) {
       if (extracted.actions.every(({ kind }) => kind === "edit")) continue;

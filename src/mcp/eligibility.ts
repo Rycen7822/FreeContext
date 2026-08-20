@@ -18,6 +18,8 @@ export interface FreeContextEligibilityFacts {
   readonly crossDocumentSynthesis: boolean;
   readonly longDocumentMultiFact: boolean;
   readonly sourceBoundPurpose: "planning" | "review" | "diagnosis" | null;
+  readonly nativeSearchBatchCount: number;
+  readonly distinctNonEvidenceReadPathCount: number;
   readonly boundedReadSufficient: boolean;
   readonly exactCandidateCount: number | null;
   readonly forbiddenActions: readonly ForbiddenFreeContextAction[];
@@ -39,9 +41,10 @@ function requiredRoles(questions: readonly EvidenceQuestion[]): ReadonlySet<Evid
   return new Set(questions.filter((question) => question.required).map((question) => question.role));
 }
 
-function hasPreciseImplementationReference(references: readonly KnownReference[]): boolean {
+function hasPreciseReference(references: readonly KnownReference[]): boolean {
   return references.some((reference) =>
-    reference.kind === "stack" || (reference.kind === "symbol" && reference.path !== undefined));
+    reference.kind === "path" || reference.kind === "stack" ||
+    (reference.kind === "symbol" && reference.path !== undefined));
 }
 
 export function decideFreeContextEligibility(
@@ -57,6 +60,10 @@ export function decideFreeContextEligibility(
   if (!Number.isInteger(facts.jointConfigCount) || facts.jointConfigCount < 0) {
     throw new RangeError("jointConfigCount must be a non-negative integer.");
   }
+  if (!Number.isInteger(facts.nativeSearchBatchCount) || facts.nativeSearchBatchCount < 0 ||
+      !Number.isInteger(facts.distinctNonEvidenceReadPathCount) || facts.distinctNonEvidenceReadPathCount < 0) {
+    throw new RangeError("Native search batches and distinct read paths must be non-negative integers.");
+  }
   if (facts.exactCandidateCount !== null &&
       (!Number.isInteger(facts.exactCandidateCount) || facts.exactCandidateCount < 0 || facts.exactCandidateCount > 6)) {
     throw new RangeError("exactCandidateCount must be null or an integer from zero through six.");
@@ -70,22 +77,25 @@ export function decideFreeContextEligibility(
     return Object.freeze({ outcome: "call", gate: selected.order, reason: selected.instruction });
   }
 
-  const knownSingleImplementation = roles.size === 1 && roles.has("implementation") &&
-    hasPreciseImplementationReference(facts.knownRefs) && facts.boundedReadSufficient;
-  if (knownSingleImplementation) {
+  if (facts.nativeSearchBatchCount >= 1 || facts.distinctNonEvidenceReadPathCount >= 2) {
     const selected = gate(2);
+    return Object.freeze({ outcome: "call", gate: selected.order, reason: selected.instruction });
+  }
+
+  if (facts.exactCandidateCount !== null) {
+    const selected = gate(3);
+    return Object.freeze({
+      outcome: facts.exactCandidateCount === 0 || facts.exactCandidateCount >= 3 ? "call" : "direct_read",
+      gate: selected.order,
+      reason: selected.instruction,
+    });
+  }
+
+  if (hasPreciseReference(facts.knownRefs) && facts.boundedReadSufficient) {
+    const selected = gate(4);
     return Object.freeze({ outcome: "direct_read", gate: selected.order, reason: selected.instruction });
   }
 
-  if (facts.exactCandidateCount === null) {
-    const selected = gate(3);
-    return Object.freeze({ outcome: "exact_probe", gate: selected.order, reason: selected.instruction });
-  }
-
-  const selected = gate(4);
-  return Object.freeze({
-    outcome: facts.exactCandidateCount === 0 || facts.exactCandidateCount >= 3 ? "call" : "direct_read",
-    gate: selected.order,
-    reason: selected.instruction,
-  });
+  const selected = gate(5);
+  return Object.freeze({ outcome: "exact_probe", gate: selected.order, reason: selected.instruction });
 }

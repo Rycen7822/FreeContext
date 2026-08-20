@@ -4,45 +4,54 @@ import path from "node:path";
 export type FreeContextEligibilityOutcome = "call" | "direct_read" | "exact_probe";
 
 export interface FreeContextEligibilityGate {
-  readonly order: 1 | 2 | 3 | 4;
-  readonly id: "complex_scope" | "single_known_implementation" | "exact_candidate_probe" | "candidate_count";
+  readonly order: 1 | 2 | 3 | 4 | 5;
+  readonly id: "delegated_scope" | "native_escalation" | "bounded_direct_action" | "exact_candidate_probe" | "candidate_count";
   readonly outcome: FreeContextEligibilityOutcome | "candidate_dependent";
   readonly instruction: string;
 }
 
 export const FREECONTEXT_ELIGIBILITY_POLICY = Object.freeze({
-  id: "freecontext-eligibility-v2",
+  id: "freecontext-eligibility-v3",
   toolName: "gather_context",
   gates: Object.freeze([
     Object.freeze({
       order: 1,
-      id: "complex_scope",
+      id: "delegated_scope",
       outcome: "call",
-      instruction: "Before any repository probe, call for two or more required evidence roles, a cross-module call chain, two or more jointly constraining configs, cross-document synthesis, long-document multi-fact extraction, or source-bound planning, review, or diagnosis.",
+      instruction: "Call before native exploration at task start or for a new mid-task issue needing two evidence roles, a cross-module chain, two joint configs, cross-document synthesis, long-document facts, or source-bound planning, review, or diagnosis.",
     }),
     Object.freeze({
       order: 2,
-      id: "single_known_implementation",
-      outcome: "direct_read",
-      instruction: "Skip only when the required scope is implementation-only, a stack reference or path-qualified symbol is known, and one bounded read is sufficient.",
+      id: "native_escalation",
+      outcome: "call",
+      instruction: "Call before a second native search batch or third distinct non-evidence, non-edited read path.",
     }),
     Object.freeze({
       order: 3,
-      id: "exact_candidate_probe",
-      outcome: "exact_probe",
-      instruction: "Otherwise make at most one exact path or symbol probe, return at most six relative candidates, and do not read source text.",
+      id: "candidate_count",
+      outcome: "candidate_dependent",
+      instruction: "After one exact probe, call for zero or three to six candidates; read one or two directly.",
     }),
     Object.freeze({
       order: 4,
-      id: "candidate_count",
-      outcome: "candidate_dependent",
-      instruction: "Call for zero or three to six candidates; directly read one or two exact candidates.",
+      id: "bounded_direct_action",
+      outcome: "direct_read",
+      instruction: "Without a probe, directly read only a changed hunk or exact failure location when one bounded read suffices; Git status or diff and tests stay direct.",
+    }),
+    Object.freeze({
+      order: 5,
+      id: "exact_candidate_probe",
+      outcome: "exact_probe",
+      instruction: "Otherwise make one exact path or symbol probe returning at most six paths and no source text.",
     }),
   ] satisfies readonly FreeContextEligibilityGate[]),
   invariants: Object.freeze([
-    "Repository familiarity, known files, and known keywords never weaken cross-document, cross-section, impact-map, or multi-role eligibility.",
-    "FreeContext is read-only and never performs edits, tests, Git, package management, web access, or credential work.",
-    "Summaries are not repository reads; the next repository cell reads the exact evidence ranges only—no widening or other action; afterward ready edits directly, while an initial partial permits one fresh gap-only FreeContext invocation before edit.",
+    "Familiarity, known files, or keywords never weaken cross-document, cross-section, impact-map, or multi-role eligibility.",
+    "FreeContext is read-only: no edits, tests, Git, packages, web, or credentials.",
+    "Read the skill once at task start; later episodes call gather_context directly without catalog discovery.",
+    "Reentrant episodes use one to four new questions and edited, failure, or confirmed paths as knownRefs.",
+    "Each episode is one main call plus one immediate gap-only follow-up only for partial; ready is invocation-scoped and pending is never replayed.",
+    "After every result, the next repository cell reads all exact evidence ranges and nothing else.",
   ]),
 });
 
@@ -57,11 +66,11 @@ function renderEligibilityPolicy(): string {
   const gates = FREECONTEXT_ELIGIBILITY_POLICY.gates
     .map((gate) => `Gate ${gate.order}: ${gate.instruction}`)
     .join(" ");
-  return `For an initially call-eligible task, make gather_context your first read-only exploration action; a permitted gap-only follow-up occurs only after exact evidence reads. ${gates} ${FREECONTEXT_ELIGIBILITY_POLICY.invariants.join(" ")}`;
+  return `Use gather_context as the first read-only exploration action for an eligible initial or mid-task episode. ${gates} ${FREECONTEXT_ELIGIBILITY_POLICY.invariants.join(" ")}`;
 }
 
 export const TOOL_DESCRIPTION = renderEligibilityPolicy();
-export const SERVER_INSTRUCTIONS = `FreeContext exposes one read-only ${FREECONTEXT_ELIGIBILITY_POLICY.toolName} tool governed by ${FREECONTEXT_ELIGIBILITY_POLICY.id} in its tool description. FreeContext binds each invocation to the public MCP request id and either an operator-configured absolute workspace root or exactly one public MCP file root; the caller supplies only the complete task and evidence questions. Make one initial call and await the same outer cell while it is pending; never replay a pending or terminal invocation. After reading an initial partial result's exact evidence, one fresh follow-up call may contain only its unresolved questions. Read that result and edit without native exploration; never make a third call. Never send credentials or source dumps.`;
+export const SERVER_INSTRUCTIONS = `FreeContext exposes one read-only ${FREECONTEXT_ELIGIBILITY_POLICY.toolName} tool governed by ${FREECONTEXT_ELIGIBILITY_POLICY.id}. Each invocation binds to the public MCP request id and either an operator-configured absolute workspace root or one public MCP file root; the caller sends only the current issue and evidence questions. Each initial or reentrant episode makes one main call and awaits the same outer cell; never replay a pending or terminal invocation. After exact evidence reads, only partial permits one immediate follow-up with exactly its unresolved questions and returned paths. Ready is invocation-scoped; a later trigger starts a new episode. Never send credentials or source dumps.`;
 
 export const MODEL_RESULT_MAX_BYTES = 8_192;
 export const RESULT_LIMITS = Object.freeze({

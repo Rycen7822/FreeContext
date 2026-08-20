@@ -22,6 +22,8 @@ import type { DuplicateSemanticCall } from "./delivery-observation.js";
 import type { FreeContextTransportObservation } from "./delivery-observation.js";
 import type { MissingReturnCausalEvidence } from "./delivery-observation.js";
 import { collectCompletedHostRepositoryActions } from "./host-action-observation.js";
+import { buildFreeContextInvocationWindows } from "./invocation-window.js";
+import type { FreeContextInvocationKind, FreeContextInvocationWindow } from "./invocation-window.js";
 
 const OUTPUT_NAME = "master-agent-context.json";
 const DELIVERY_AUDIT_NAME = "delivery-observations.jsonl";
@@ -49,6 +51,12 @@ export interface FreeContextCallReference {
   readonly structuredContentMatches: boolean | null;
   readonly recoverableResult: Readonly<FreeContextResult> | null;
   readonly missingReturnCausalEvidence: Readonly<MissingReturnCausalEvidence> | null;
+  readonly episodeIndex: number | null;
+  readonly invocationKind: FreeContextInvocationKind | null;
+  readonly windowStartedAfter: string | null;
+  readonly windowEndedBefore: string | null;
+  readonly windowObserved: boolean | null;
+  readonly exactDuplicate: boolean | null;
   readonly consumptionAudit: Readonly<FreeContextConsumptionAudit> | null;
 }
 
@@ -102,6 +110,15 @@ interface HistoricalBenchmarkSession {
 
 type AuditableMcpSession = McpSessionDocument | HistoricalMcpSessionV2;
 type FreeContextSessionDocument = AuditableMcpSession | HistoricalMcpSession | HistoricalBenchmarkSession;
+
+interface LoadedFreeContextSession {
+  readonly filePath: string;
+  readonly session: FreeContextSessionDocument;
+}
+
+interface LoadedAuditableMcpSession extends LoadedFreeContextSession {
+  readonly session: AuditableMcpSession;
+}
 
 function isAuditableMcpSession(session: FreeContextSessionDocument): session is AuditableMcpSession {
   return session.schemaVersion === "freecontext-mcp-session-v2" || session.schemaVersion === "freecontext-mcp-session-v3";
@@ -216,8 +233,41 @@ export async function exportMasterAgentContext({
     if (!(error instanceof Error && "code" in error && error.code === "ENOENT")) throw error;
   }
 
-  const freeContextCalls = await Promise.all(freeContextFiles.map(async (filePath) => {
-    const session = parseSessionDocument(await readFile(filePath, "utf8"), filePath);
+  const loadedSessions: readonly Readonly<LoadedFreeContextSession>[] = await Promise.all(
+    freeContextFiles.map(async (filePath) => Object.freeze({
+      filePath,
+      session: parseSessionDocument(await readFile(filePath, "utf8"), filePath),
+    })),
+  );
+  const auditableSessions = loadedSessions.filter(
+    (entry): entry is Readonly<LoadedAuditableMcpSession> => isAuditableMcpSession(entry.session),
+  );
+  const invocationWindows = buildFreeContextInvocationWindows(
+    auditableSessions.map(({ session }) => ({
+      callId: session.invocation.callId,
+      request: session.request,
+      result: session.result,
+      serializedTextSha256: session.serializedTextSha256,
+    })),
+    freeContextTransport,
+  );
+  const windowContextByFile = new Map<string, Readonly<{
+    window: Readonly<FreeContextInvocationWindow>;
+    nextWindow: Readonly<FreeContextInvocationWindow> | undefined;
+  }>>();
+  for (const [position, window] of invocationWindows.entries()) {
+    const entry = auditableSessions[window.inputIndex];
+    if (!entry) throw new Error(`FreeContext window has no source session at index ${window.inputIndex}.`);
+    windowContextByFile.set(entry.filePath, Object.freeze({ window, nextWindow: invocationWindows[position + 1] }));
+  }
+  const orderedSessions = [
+    ...invocationWindows.map((window) => auditableSessions[window.inputIndex]).filter(
+      (entry): entry is Readonly<LoadedAuditableMcpSession> => entry !== undefined,
+    ),
+    ...loadedSessions.filter(({ session }) => !isAuditableMcpSession(session)),
+  ];
+
+  const freeContextCalls = orderedSessions.map(({ filePath, session }) => {
     const relativePath = posixRelative(root, filePath);
     const runtimeSessionFile = path.posix.join(RUNTIME_AGENT_DIR, relativePath);
     if (isAuditableMcpSession(session)) {
@@ -234,29 +284,44 @@ export async function exportMasterAgentContext({
         session.serializedTextSha256,
       );
       const explicitActions = collectParentRepositoryActions(completeMasterContext, session.invocation.callId);
-      const matchingTransports = freeContextTransport.filter((item) =>
-        (typeof item.terminalTextSha256 === "string"
-          ? item.terminalTextSha256 === session.serializedTextSha256
-          : item.cellId === session.invocation.callId || item.outerCallId === session.invocation.callId) &&
-          item.completedAt !== null);
-      const matchingTransport = matchingTransports.length === 1 ? matchingTransports[0] : null;
-      const hostObservation = explicitActions.length === 0 && matchingTransport?.completedAt &&
-          session.schemaVersion === "freecontext-mcp-session-v3"
+      const windowContext = windowContextByFile.get(filePath);
+      if (!windowContext) throw new Error(`FreeContext session has no invocation window: ${filePath}`);
+      const { window, nextWindow } = windowContext;
+      const hostObservation = explicitActions.length === 0 && window.windowObserved && window.windowStartedAfter
         ? collectCompletedHostRepositoryActions(completeMasterContext, {
-            completedAt: matchingTransport.completedAt,
+            completedAt: window.windowStartedAfter,
+            endedBefore: window.windowEndedBefore,
             taskId: taskName.trim(),
             callId: session.invocation.callId,
             repetition: "host-observed",
             gapQuestionIds: result.gaps.map(({ questionId }) => questionId),
           })
         : null;
-      const observedActions = explicitActions.length > 0
+      const windowObserved = window.windowObserved &&
+        (explicitActions.length > 0 || hostObservation?.complete === true);
+      const observedActions = !windowObserved ? [] : explicitActions.length > 0
         ? explicitActions
-        : hostObservation?.complete ? hostObservation.actions : [];
+        : hostObservation?.actions ?? [];
+      const actionIdentity = explicitActions[0];
       const consumptionAudit = analyzeFreeContextConsumption(
         result,
         observedActions,
-        explicitActions.length > 0 ? "explicit_host_event" : "completed_codex_tool_call",
+        {
+          observationSource: explicitActions.length > 0 ? "explicit_host_event" : "completed_codex_tool_call",
+          taskId: actionIdentity?.taskId ?? taskName.trim(),
+          callId: session.invocation.callId,
+          repetition: actionIdentity?.repetition ?? "host-observed",
+          episodeIndex: window.episodeIndex,
+          invocationKind: window.invocationKind,
+          windowStartedAfter: window.windowStartedAfter,
+          windowEndedBefore: window.windowEndedBefore,
+          windowObserved,
+          exactDuplicate: window.exactDuplicate,
+          windowFailureReasons: windowObserved
+            ? window.failureReasons
+            : [...window.failureReasons, ...(window.windowObserved ? ["host_action_observation"] : [])],
+          followedByGapFollowup: nextWindow?.invocationKind === "gap_followup",
+        },
       );
       const missingReturnCausalEvidence = classifyMissingReturn(delivery, session);
       return Object.freeze({
@@ -275,6 +340,12 @@ export async function exportMasterAgentContext({
         structuredContentMatches: delivery.structuredContentMatches,
         recoverableResult: delivery.deliveryStatus === "matched" ? null : result,
         missingReturnCausalEvidence,
+        episodeIndex: window.episodeIndex,
+        invocationKind: window.invocationKind,
+        windowStartedAfter: window.windowStartedAfter,
+        windowEndedBefore: window.windowEndedBefore,
+        windowObserved,
+        exactDuplicate: window.exactDuplicate,
         consumptionAudit,
       } satisfies FreeContextCallReference);
     }
@@ -296,9 +367,15 @@ export async function exportMasterAgentContext({
       structuredContentMatches: null,
       recoverableResult: null,
       missingReturnCausalEvidence: null,
+      episodeIndex: null,
+      invocationKind: null,
+      windowStartedAfter: null,
+      windowEndedBefore: null,
+      windowObserved: null,
+      exactDuplicate: null,
       consumptionAudit: null,
     } satisfies FreeContextCallReference);
-  }));
+  });
 
   const createdAt = now().toISOString();
   const document: BenchmarkMasterAgentContext = {

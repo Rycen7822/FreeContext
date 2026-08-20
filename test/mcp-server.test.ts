@@ -121,7 +121,7 @@ test("no-network MCP loopback awaits one terminal Promise and never emits an int
     assert.equal(tool?.title, "Gather context with FreeContext");
     assert.equal(tool?.description, TOOL_DESCRIPTION);
     assert.ok(tool?.description?.startsWith(
-      "For an initially call-eligible task, make gather_context your first read-only exploration action; a permitted gap-only follow-up occurs only after exact evidence reads. ",
+      "Use gather_context as the first read-only exploration action for an eligible initial or mid-task episode. ",
     ));
     let previousGateIndex = -1;
     for (const gate of FREECONTEXT_ELIGIBILITY_POLICY.gates) {
@@ -135,6 +135,7 @@ test("no-network MCP loopback awaits one terminal Promise and never emits an int
       openWorldHint: true,
     });
     assert.deepEqual(tool?.inputSchema.required, ["taskText", "evidenceQuestions"]);
+    assert.deepEqual(Object.keys(tool?.inputSchema.properties ?? {}).sort(), ["evidenceQuestions", "knownRefs", "taskText"]);
     const questionItem = (tool?.inputSchema.properties?.evidenceQuestions as {
       readonly items?: { readonly properties?: Record<string, { readonly type?: string }>; readonly required?: readonly string[] };
     } | undefined)?.items;

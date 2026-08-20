@@ -6,7 +6,7 @@ import os from "node:os";
 import path from "node:path";
 import type { BenchmarkMasterAgentContext } from "../src/benchmark/master-context.js";
 import { exportMasterAgentContext } from "../src/benchmark/master-context.js";
-import { serializeForModel } from "../src/mcp/contracts.js";
+import { FREECONTEXT_ELIGIBILITY_POLICY, serializeForModel } from "../src/mcp/contracts.js";
 import { failedResult } from "../src/mcp/failure.js";
 import type { McpSessionDocument } from "../src/mcp/session.js";
 import { collectFreeContextTransportObservations, evaluateDelivery } from "../src/benchmark/delivery-observation.js";
@@ -364,9 +364,10 @@ test("master context exporter joins v3 by session address and preserves the actu
     assert.equal(call?.structuredContentMatches, true);
     assert.equal(call?.recoverableResult, null);
     assert.equal(call?.consumptionAudit?.observationSource, "explicit_host_event");
-    assert.equal(call?.consumptionAudit?.firstActionEvidenceHit, true);
-    assert.equal(call?.consumptionAudit?.evidenceConsumed, true);
-    assert.equal(call?.consumptionAudit?.repeatedBroadSearch, false);
+    assert.equal(call?.consumptionAudit?.allEvidenceConsumed, true);
+    assert.equal(call?.consumptionAudit?.broadSearchCount, 0);
+    assert.equal(call?.invocationKind, "initial");
+    assert.equal(call?.windowObserved, true);
     assert.deepEqual(document.duplicateSemanticCalls, [{
       taskId: "task-001",
       callId: "call-duplicate",
@@ -379,7 +380,7 @@ test("master context exporter joins v3 by session address and preserves the actu
       "utf8",
     )).trim().split("\n").map((line) => JSON.parse(line));
     assert.deepEqual(consumption.map(({ schemaVersion }) => schemaVersion), [
-      "freecontext-consumption-audit-v2",
+      "freecontext-consumption-audit-v3",
       "freecontext-duplicate-semantic-call-v1",
       "freecontext-transport-observation-v1",
     ]);
@@ -420,7 +421,7 @@ test("same-cell code-await output is the actual observation without a direct MCP
     assert.equal(call?.callIdCorrelation, "missing");
     assert.equal(call?.sessionReferenceMatches, 1);
     assert.equal(call?.consumptionAudit?.observationSource, "completed_codex_tool_call");
-    assert.equal(call?.consumptionAudit?.firstActionEvidenceHit, true);
+    assert.equal(call?.consumptionAudit?.allEvidenceConsumed, true);
     assert.equal(call?.serializedTextSha256, call?.observedTextSha256);
     assert.equal(call?.requestMatches, null);
     assert.equal(call?.structuredContentMatches, null);
@@ -447,7 +448,7 @@ test("terminal text hash correlates a yielded cell when the MCP call id differs"
     assert.notEqual(document.freeContextTransport[0]?.cellId, session.invocation.callId);
     assert.equal(document.freeContextTransport[0]?.terminalTextSha256, session.serializedTextSha256);
     assert.equal(document.freeContextCalls[0]?.consumptionAudit?.observationSource, "completed_codex_tool_call");
-    assert.equal(document.freeContextCalls[0]?.consumptionAudit?.firstActionEvidenceHit, true);
+    assert.equal(document.freeContextCalls[0]?.consumptionAudit?.allEvidenceConsumed, true);
   } finally {
     await rm(root, { recursive: true, force: true });
   }
@@ -470,7 +471,7 @@ test("fast code-await can correlate the completed outer exec call", async () => 
     });
     const document = JSON.parse(await readFile(outputPath, "utf8")) as BenchmarkMasterAgentContext;
     assert.equal(document.freeContextCalls[0]?.consumptionAudit?.observationSource, "completed_codex_tool_call");
-    assert.equal(document.freeContextCalls[0]?.consumptionAudit?.firstActionEvidenceHit, true);
+    assert.equal(document.freeContextCalls[0]?.consumptionAudit?.allEvidenceConsumed, true);
   } finally {
     await rm(root, { recursive: true, force: true });
   }
@@ -692,21 +693,186 @@ test("historical benchmark sessions retain only an observation that actually app
   }
 });
 
+test("two-call export assigns each completed host cell to one disjoint invocation window", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "freecontext-windowed-master-"));
+  try {
+    const agentDir = path.join(root, "agent");
+    const sessionDir = path.join(agentDir, "sessions", "2026", "08", "21");
+    const freeContextDir = path.join(agentDir, "freecontext-sessions");
+    await Promise.all([mkdir(sessionDir, { recursive: true }), mkdir(freeContextDir, { recursive: true })]);
+    const makeSession = (
+      callId: string,
+      questionId: string,
+      evidencePath: string,
+      startedAt: string,
+      finishedAt: string,
+    ): McpSessionDocument => {
+      const base = v3Session();
+      const sessionFile = `/logs/agent/freecontext-sessions/${callId}.json`;
+      const request = {
+        taskText: `locate ${questionId}`,
+        knownRefs: [],
+        evidenceQuestions: [{
+          id: questionId,
+          role: "implementation" as const,
+          question: `Where is ${questionId}?`,
+          required: true,
+        }],
+      };
+      const result = {
+        ...base.result,
+        evidence: [{
+          ...base.result.evidence[0]!,
+          path: evidencePath,
+          questionId,
+        }],
+        gaps: [],
+        nextAction: { kind: "read" as const, path: evidencePath, startLine: 1, endLine: 2, reason: "Read it." },
+        sessionId: callId,
+        sessionFile,
+      };
+      const serialized = serializeForModel(result);
+      return {
+        ...base,
+        startedAt,
+        finishedAt,
+        request,
+        invocation: {
+          ...base.invocation,
+          invocationId: `invocation-${callId}`,
+          callId,
+          sessionId: callId,
+          sessionFile,
+        },
+        result,
+        serializedTextSha256: createHash("sha256").update(serialized).digest("hex"),
+        terminalDecision: {
+          ...base.terminalDecision,
+          invocationId: `invocation-${callId}`,
+          decidedAt: finishedAt,
+        },
+      };
+    };
+    const sessions = [
+      makeSession("call-001", "implementation", "src/router.ts", "2026-08-21T00:00:00.000Z", "2026-08-21T00:00:10.000Z"),
+      makeSession("call-002", "contract", "src/contract.ts", "2026-08-21T00:00:20.000Z", "2026-08-21T00:00:30.000Z"),
+    ];
+    const events: unknown[] = [];
+    for (const [index, session] of sessions.entries()) {
+      const second = index === 1;
+      const startedAt = second ? "2026-08-21T00:00:20.000Z" : "2026-08-21T00:00:00.000Z";
+      const completedAt = second ? "2026-08-21T00:00:30.000Z" : "2026-08-21T00:00:10.000Z";
+      const readStartedAt = second ? "2026-08-21T00:00:32.000Z" : "2026-08-21T00:00:12.000Z";
+      const readCompletedAt = second ? "2026-08-21T00:00:33.000Z" : "2026-08-21T00:00:13.000Z";
+      const serialized = serializeForModel(session.result);
+      const outerCallId = `outer-${index + 1}`;
+      events.push({
+        timestamp: startedAt,
+        type: "response_item",
+        payload: {
+          type: "custom_tool_call",
+          name: "exec",
+          call_id: outerCallId,
+          input: "const result = await tools.mcp__freecontext__gather_context({taskText: \"x\"}); notify(\"running\"); text(result);",
+        },
+      }, {
+        timestamp: completedAt,
+        type: "response_item",
+        payload: {
+          type: "custom_tool_call_output",
+          call_id: outerCallId,
+          output: [
+            { type: "input_text", text: "Script completed\n" },
+            { type: "input_text", text: serialized },
+          ],
+        },
+      }, {
+        type: "item.started",
+        item: {
+          id: session.invocation.callId,
+          type: "mcp_tool_call",
+          server: "freecontext",
+          tool: "gather_context",
+          arguments: session.request,
+          result: null,
+          status: "in_progress",
+        },
+      }, {
+        type: "item.completed",
+        item: {
+          id: session.invocation.callId,
+          type: "mcp_tool_call",
+          server: "freecontext",
+          tool: "gather_context",
+          arguments: session.request,
+          result: {
+            content: [{ type: "text", text: serialized }],
+            structured_content: session.result,
+          },
+          status: "completed",
+        },
+      }, {
+        timestamp: readStartedAt,
+        type: "response_item",
+        payload: {
+          type: "custom_tool_call",
+          name: "exec",
+          call_id: `read-${index + 1}`,
+          input: `await tools.exec_command({cmd:"sed -n '1,2p' ${session.result.evidence[0]!.path}"});`,
+        },
+      }, {
+        timestamp: readCompletedAt,
+        type: "response_item",
+        payload: { type: "custom_tool_call_output", call_id: `read-${index + 1}`, output: "ok" },
+      });
+    }
+    await Promise.all([
+      writeFile(path.join(sessionDir, "rollout.jsonl"), `${events.map((event) => JSON.stringify(event)).join("\n")}\n`, "utf8"),
+      ...sessions.map((session) => writeFile(
+        path.join(freeContextDir, `${session.invocation.callId}.json`),
+        `${JSON.stringify(session, null, 2)}\n`,
+        "utf8",
+      )),
+    ]);
+
+    const outputPath = await exportMasterAgentContext({ agentDir, taskName: "two-call-window" });
+    const document = JSON.parse(await readFile(outputPath, "utf8")) as BenchmarkMasterAgentContext;
+    assert.deepEqual(document.freeContextCalls.map(({ invocationKind, episodeIndex, consumptionAudit }) => ({
+      invocationKind,
+      episodeIndex,
+      escaped: consumptionAudit?.escapedExplorationReasons,
+    })), [
+      { invocationKind: "initial", episodeIndex: 1, escaped: [] },
+      { invocationKind: "reentrant", episodeIndex: 2, escaped: [] },
+    ]);
+    assert.deepEqual(document.freeContextCalls.map(({ windowEndedBefore }) => windowEndedBefore), [
+      "2026-08-21T00:00:20.000Z",
+      null,
+    ]);
+    assert.deepEqual(document.freeContextCalls.map(({ consumptionAudit }) => consumptionAudit?.actionCount), [1, 1]);
+    assert.ok(document.freeContextCalls.every(({ consumptionAudit }) =>
+      consumptionAudit?.allEvidenceConsumed && consumptionAudit.escapedExplorationReasons.length === 0));
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test("canonical Pier adapter registers direct MCP without legacy CLI wrappers", async () => {
   const source = await readFile(new URL("../benchmarks/deepswe/pier_codex_freecontext_agent.py", import.meta.url), "utf8");
   const freeContextConfig = await readFile(new URL("../benchmarks/deepswe/freecontext.toml", import.meta.url), "utf8");
   const explicitPolicies = `EXPLICIT_FC_FIRST_POLICY = (
     "[Benchmark arm policy: explicit_fc_first]\\n"
-    "Before any repository exploration, use the installed FreeContext skill. "
-    "The first tool cell must read only that SKILL.md; the next tool cell must make "
-    "the initial gather_context call and wait for its terminal result. FreeContext must "
-    "be the first repository exploration action. Do not use native repository reads "
-    "or searches before it. Use four required outcome questions with implementation, "
-    "caller, contract, and test minimumSpans of 2, 2, 1, and 1; do not split them into "
-    "six shallow questions. For an initial partial result, read its evidence, then call "
-    "gather_context once more with only the unresolved questions and returned paths as "
-    "knownRefs. Read the follow-up evidence, then edit; never native-search before the "
-    "first edit or make a third call."
+    "Initial: the first cell reads only the installed FreeContext SKILL.md; the next calls "
+    "gather_context and awaits its terminal result. Do no native exploration first and read "
+    "the skill once. Use required implementation, caller, contract, and test questions with "
+    "minimumSpans 2, 2, 1, and 1. After each result, the next repository cell reads all exact "
+    "evidence ranges and nothing else. Each episode has one main call; only partial permits one "
+    "gap-only follow-up with exactly its unresolved questions and returned paths, with no third "
+    "invocation in that episode. Ready is invocation-scoped. During work, call gather_context "
+    "directly before a new multi-role/module/document or long-document issue, a second native "
+    "search batch, a third distinct non-evidence/non-edited path, or a test failure not explained "
+    "by one exact read. Use 1–4 new questions and edited, failure, or confirmed paths as knownRefs; "
+    "do not perform the native exploration first."
 )
 EXPLICIT_NATIVE_ONLY_POLICY = (
     "[Benchmark arm policy: explicit_native_only]\\n"
@@ -714,6 +880,7 @@ EXPLICIT_NATIVE_ONLY_POLICY = (
     "and do not invoke FreeContext."
 )`;
   assert.equal(source.includes(explicitPolicies), true, "explicit arm policy text drifted");
+  for (const gate of FREECONTEXT_ELIGIBILITY_POLICY.gates) assert.equal(source.includes(gate.instruction), false);
   for (const pattern of [
     /\[mcp_servers\.freecontext\]/u,
     /enabled_tools = \["gather_context"\]/u,

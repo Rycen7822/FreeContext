@@ -1,5 +1,6 @@
 import type { FreeContextResult } from "../mcp/contracts.js";
 import { isRecord } from "./delivery-observation.js";
+import type { FreeContextInvocationKind } from "./invocation-window.js";
 
 export type ParentRepositoryActionKind = "read" | "search" | "edit" | "other";
 
@@ -22,27 +23,45 @@ export interface ParentRepositoryActionEvent {
 }
 
 export interface FreeContextConsumptionAudit {
-  readonly schemaVersion: "freecontext-consumption-audit-v2";
+  readonly schemaVersion: "freecontext-consumption-audit-v3";
   readonly observationSource: "explicit_host_event" | "completed_codex_tool_call";
   readonly taskId: string;
   readonly callId: string;
   readonly repetition: string;
+  readonly episodeIndex: number;
+  readonly invocationKind: FreeContextInvocationKind;
+  readonly windowStartedAfter: string | null;
+  readonly windowEndedBefore: string | null;
+  readonly windowObserved: boolean;
   readonly actionCount: number;
-  readonly firstRepositoryAction: Readonly<ParentRepositoryActionEvent["action"]> | null;
   readonly firstRepositoryBatchSize: number;
   readonly firstRepositoryBatchConcurrent: boolean;
-  readonly firstActionEvidenceHit: boolean | null;
-  readonly evidenceConsumed: boolean;
-  readonly firstEvidenceHitSequence: number | null;
-  readonly firstEditSequence: number | null;
+  readonly firstRepositoryBatchReadOnly: boolean;
+  readonly firstRepositoryBatchEvidenceOnly: boolean;
+  readonly allEvidenceConsumed: boolean;
+  readonly consumedEvidenceCount: number;
+  readonly searchCount: number;
+  readonly searchBatchCount: number;
   readonly broadSearchCount: number;
-  readonly repeatedBroadSearch: boolean;
-  /** Legacy full-trajectory diagnostic; raw host observations cannot prove semantic gap targeting. */
-  readonly partialGapSearchCount: number;
-  readonly preEditSearchCount: number;
-  readonly preEditSearchBatchCount: number;
-  readonly preEditBroadSearchCount: number;
-  readonly postEditSearchCount: number;
+  readonly distinctNonEvidenceReadPaths: number;
+  readonly editCount: number;
+  readonly exactDuplicate: boolean;
+  readonly escapedExplorationReasons: readonly string[];
+}
+
+export interface FreeContextConsumptionAuditContext {
+  readonly observationSource: FreeContextConsumptionAudit["observationSource"];
+  readonly taskId: string;
+  readonly callId: string;
+  readonly repetition: string;
+  readonly episodeIndex: number;
+  readonly invocationKind: FreeContextInvocationKind;
+  readonly windowStartedAfter: string | null;
+  readonly windowEndedBefore: string | null;
+  readonly windowObserved: boolean;
+  readonly exactDuplicate: boolean;
+  readonly windowFailureReasons?: readonly string[];
+  readonly followedByGapFollowup?: boolean;
 }
 
 function positiveInteger(value: unknown): number | null {
@@ -127,67 +146,107 @@ function normalizePath(value: string): string {
   return value.replace(/\\/gu, "/").replace(/^\.\//u, "");
 }
 
-function hitsEvidence(action: ParentRepositoryActionEvent["action"], result: Readonly<FreeContextResult>): boolean {
+function hitsEvidenceItem(
+  action: ParentRepositoryActionEvent["action"],
+  evidence: FreeContextResult["evidence"][number],
+): boolean {
   if (action.kind !== "read" || action.path === null || action.startLine === null || action.endLine === null) return false;
   const actionPath = normalizePath(action.path);
-  return result.evidence.some((item) => normalizePath(item.path) === actionPath &&
-    action.startLine! <= item.endLine && action.endLine! >= item.startLine);
+  return normalizePath(evidence.path) === actionPath &&
+    action.startLine <= evidence.endLine && action.endLine >= evidence.startLine;
+}
+
+function hitsAnyEvidence(
+  action: ParentRepositoryActionEvent["action"],
+  result: Readonly<FreeContextResult>,
+): boolean {
+  return result.evidence.some((evidence) => hitsEvidenceItem(action, evidence));
+}
+
+function batchKey(event: Readonly<ParentRepositoryActionEvent>): string {
+  return event.observationBatchId ?? `sequence:${event.sequence}`;
 }
 
 export function analyzeFreeContextConsumption(
   result: Readonly<FreeContextResult>,
   actions: readonly Readonly<ParentRepositoryActionEvent>[],
-  observationSource: FreeContextConsumptionAudit["observationSource"] = "explicit_host_event",
-): Readonly<FreeContextConsumptionAudit> | null {
-  if (actions.length === 0) return null;
-  const [first, ...rest] = actions;
-  if (!first) return null;
-  for (const event of rest) {
-    if (event.taskId !== first.taskId || event.callId !== first.callId || event.repetition !== first.repetition) {
-      throw new Error(`Mixed parent-action identity for callId ${first.callId}.`);
+  context: Readonly<FreeContextConsumptionAuditContext>,
+): Readonly<FreeContextConsumptionAudit> {
+  if (!context.windowObserved && actions.length > 0) {
+    throw new Error(`Unobserved window ${context.callId} cannot contain attributed actions.`);
+  }
+  for (const event of actions) {
+    if (event.taskId !== context.taskId || event.callId !== context.callId ||
+        event.repetition !== context.repetition) {
+      throw new Error(`Mixed parent-action identity for callId ${context.callId}.`);
     }
   }
-  const firstEvidenceHit = actions.find((event) => hitsEvidence(event.action, result)) ?? null;
-  const firstRepositoryBatch = first.observationBatchId === null
-    ? [first]
-    : actions.filter((event) => event.observationBatchId === first.observationBatchId);
-  const broadSearchCount = actions.filter((event) => event.action.kind === "search" && event.action.broad).length;
-  const firstEdit = actions.find((event) => event.action.kind === "edit") ?? null;
-  const beforeFirstEdit = (event: Readonly<ParentRepositoryActionEvent>): boolean => firstEdit === null ||
-    event.sequence < firstEdit.sequence ||
-    (firstEdit.observationBatchId !== null && event.observationBatchId === firstEdit.observationBatchId);
-  const gapIds = new Set(result.gaps.map(({ questionId }) => questionId));
-  const partialGapSearchCount = result.status === "partial" && firstEvidenceHit
-    ? actions.filter((event) => event.sequence > firstEvidenceHit.sequence &&
-      (firstEvidenceHit.observationBatchId === null || event.observationBatchId !== firstEvidenceHit.observationBatchId) &&
-      event.action.kind === "search" &&
-      event.action.gapQuestionIds.some((questionId) => gapIds.has(questionId))).length
-    : 0;
-  const preEditSearches = actions.filter((event) => beforeFirstEdit(event) && event.action.kind === "search");
-  const preEditSearchBatchCount = new Set(preEditSearches.map((event) =>
-    event.observationBatchId ?? `sequence:${event.sequence}`)).size;
-  const preEditBroadSearchCount = preEditSearches.filter((event) => event.action.broad).length;
-  const postEditSearchCount = actions.filter((event) => !beforeFirstEdit(event) && event.action.kind === "search").length;
+  if (new Set(actions.map(({ sequence }) => sequence)).size !== actions.length) {
+    throw new Error(`Duplicate parent-action sequence for callId ${context.callId}.`);
+  }
+  const first = actions[0];
+  const firstRepositoryBatch = first === undefined ? [] : actions.filter((event) => batchKey(event) === batchKey(first));
+  const consumedEvidenceCount = result.evidence.filter((evidence) =>
+    firstRepositoryBatch.some(({ action }) => hitsEvidenceItem(action, evidence))).length;
+  const firstRepositoryBatchReadOnly = firstRepositoryBatch.length > 0 &&
+    firstRepositoryBatch.every(({ action }) => action.kind === "read");
+  const firstRepositoryBatchEvidenceOnly = firstRepositoryBatchReadOnly &&
+    firstRepositoryBatch.every(({ action }) => hitsAnyEvidence(action, result));
+  const allEvidenceConsumed = result.evidence.length > 0 && consumedEvidenceCount === result.evidence.length;
+  const searches = actions.filter(({ action }) => action.kind === "search");
+  const broadSearchCount = searches.filter(({ action }) => action.broad).length;
+  const edits = actions.filter(({ action }) => action.kind === "edit");
+  const editedPaths = new Set(edits.flatMap(({ action }) => action.path === null ? [] : [normalizePath(action.path)]));
+  const distinctNonEvidenceReadPaths = new Set(actions.flatMap(({ action }) =>
+    action.kind === "read" && action.path !== null && !hitsAnyEvidence(action, result) &&
+      !editedPaths.has(normalizePath(action.path))
+      ? [normalizePath(action.path)]
+      : [])).size;
+  const escaped = [...(context.windowFailureReasons ?? [])];
+  const addReason = (reason: string): void => {
+    if (!escaped.includes(reason)) escaped.push(reason);
+  };
+  if (!context.windowObserved) addReason("unobserved_window");
+  if (context.exactDuplicate) addReason("exact_request_replay");
+  const searchBatchCount = new Set(searches.map(batchKey)).size;
+  if (context.windowObserved) {
+    if ((result.status === "ready" || result.status === "partial") && !firstRepositoryBatchEvidenceOnly) {
+      addReason("first_batch_not_evidence_only");
+    }
+    if ((result.status === "ready" || result.status === "partial") && !allEvidenceConsumed) {
+      addReason("evidence_not_consumed_in_first_batch");
+    }
+    if (broadSearchCount > 0) addReason("broad_search");
+    if (searchBatchCount > 1) addReason("second_search_batch");
+    if (distinctNonEvidenceReadPaths >= 3) addReason("third_non_evidence_read_path");
+    if (context.followedByGapFollowup && actions.length > firstRepositoryBatch.length) {
+      addReason("action_before_gap_followup");
+    }
+  }
   return Object.freeze({
-    schemaVersion: "freecontext-consumption-audit-v2",
-    observationSource,
-    taskId: first.taskId,
-    callId: first.callId,
-    repetition: first.repetition,
+    schemaVersion: "freecontext-consumption-audit-v3",
+    observationSource: context.observationSource,
+    taskId: context.taskId,
+    callId: context.callId,
+    repetition: context.repetition,
+    episodeIndex: context.episodeIndex,
+    invocationKind: context.invocationKind,
+    windowStartedAfter: context.windowStartedAfter,
+    windowEndedBefore: context.windowEndedBefore,
+    windowObserved: context.windowObserved,
     actionCount: actions.length,
-    firstRepositoryAction: first.action,
     firstRepositoryBatchSize: firstRepositoryBatch.length,
     firstRepositoryBatchConcurrent: firstRepositoryBatch.some((event) => event.observationBatchConcurrent),
-    firstActionEvidenceHit: firstRepositoryBatch.every((event) => hitsEvidence(event.action, result)),
-    evidenceConsumed: firstEvidenceHit !== null,
-    firstEvidenceHitSequence: firstEvidenceHit?.sequence ?? null,
-    firstEditSequence: firstEdit?.sequence ?? null,
+    firstRepositoryBatchReadOnly,
+    firstRepositoryBatchEvidenceOnly,
+    allEvidenceConsumed,
+    consumedEvidenceCount,
+    searchCount: searches.length,
+    searchBatchCount,
     broadSearchCount,
-    repeatedBroadSearch: broadSearchCount > 1,
-    partialGapSearchCount,
-    preEditSearchCount: preEditSearches.length,
-    preEditSearchBatchCount,
-    preEditBroadSearchCount,
-    postEditSearchCount,
+    distinctNonEvidenceReadPaths,
+    editCount: edits.length,
+    exactDuplicate: context.exactDuplicate,
+    escapedExplorationReasons: Object.freeze(escaped),
   });
 }

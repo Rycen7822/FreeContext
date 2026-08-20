@@ -24,6 +24,8 @@ function facts(overrides: Partial<FreeContextEligibilityFacts> = {}): FreeContex
     crossDocumentSynthesis: false,
     longDocumentMultiFact: false,
     sourceBoundPurpose: null,
+    nativeSearchBatchCount: 0,
+    distinctNonEvidenceReadPathCount: 0,
     boundedReadSufficient: false,
     exactCandidateCount: null,
     forbiddenActions: [],
@@ -32,7 +34,8 @@ function facts(overrides: Partial<FreeContextEligibilityFacts> = {}): FreeContex
 }
 
 test("one immutable policy owns gate order, tool text, and host route metadata", () => {
-  assert.deepEqual(FREECONTEXT_ELIGIBILITY_POLICY.gates.map(({ order }) => order), [1, 2, 3, 4]);
+  assert.equal(FREECONTEXT_ELIGIBILITY_POLICY.id, "freecontext-eligibility-v3");
+  assert.deepEqual(FREECONTEXT_ELIGIBILITY_POLICY.gates.map(({ order }) => order), [1, 2, 3, 4, 5]);
   assert.equal(FREECONTEXT_HOST_ROUTE_METADATA.gates, FREECONTEXT_ELIGIBILITY_POLICY.gates);
   assert.equal(FREECONTEXT_HOST_ROUTE_METADATA.invariants, FREECONTEXT_ELIGIBILITY_POLICY.invariants);
   for (const gate of FREECONTEXT_ELIGIBILITY_POLICY.gates) {
@@ -66,8 +69,9 @@ test("complex scopes call FreeContext before any repository probe", () => {
   }
 });
 
-test("a known single implementation target skips only when one bounded read is sufficient", () => {
+test("one precise location stays direct only before native exploration escalates", () => {
   for (const knownRef of [
+    { kind: "path" as const, path: "src/index.ts" },
     { kind: "stack" as const, path: "src/index.ts", line: 10 },
     { kind: "symbol" as const, symbol: "run", path: "src/index.ts" },
   ]) {
@@ -76,7 +80,7 @@ test("a known single implementation target skips only when one bounded read is s
       boundedReadSufficient: true,
     }));
     assert.equal(decision.outcome, "direct_read");
-    assert.equal(decision.gate, 2);
+    assert.equal(decision.gate, 4);
   }
   assert.equal(decideFreeContextEligibility(facts({
     knownRefs: [{ kind: "stack", path: "src/index.ts", line: 10 }],
@@ -84,16 +88,40 @@ test("a known single implementation target skips only when one bounded read is s
   })).outcome, "exact_probe");
 });
 
+test("a second search batch or third non-evidence path escalates before direct-read exceptions", () => {
+  for (const selected of [
+    { nativeSearchBatchCount: 1 },
+    { distinctNonEvidenceReadPathCount: 2 },
+  ]) {
+    const decision = decideFreeContextEligibility(facts({
+      knownRefs: [{ kind: "stack", path: "src/index.ts", line: 10 }],
+      boundedReadSufficient: true,
+      ...selected,
+    }));
+    assert.equal(decision.outcome, "call");
+    assert.equal(decision.gate, 2);
+  }
+});
+
 test("one exact probe routes zero or three-to-six candidates and directly reads one or two", () => {
-  assert.equal(decideFreeContextEligibility(facts()).outcome, "exact_probe");
+  const probe = decideFreeContextEligibility(facts());
+  assert.deepEqual({ outcome: probe.outcome, gate: probe.gate }, { outcome: "exact_probe", gate: 5 });
   for (const count of [0, 1, 2, 3, 6]) {
-    const decision = decideFreeContextEligibility(facts({ exactCandidateCount: count }));
+    const decision = decideFreeContextEligibility(facts({
+      exactCandidateCount: count,
+      knownRefs: [{ kind: "path", path: "src/index.ts" }],
+      boundedReadSufficient: true,
+    }));
     assert.equal(decision.outcome, count === 0 || count >= 3 ? "call" : "direct_read");
-    assert.equal(decision.gate, 4);
+    assert.equal(decision.gate, 3);
   }
   assert.throws(
     () => decideFreeContextEligibility(facts({ exactCandidateCount: 7 })),
     /zero through six/u,
+  );
+  assert.throws(
+    () => decideFreeContextEligibility(facts({ nativeSearchBatchCount: -1 })),
+    /non-negative integers/u,
   );
 });
 

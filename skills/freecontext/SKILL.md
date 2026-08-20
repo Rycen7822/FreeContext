@@ -1,20 +1,17 @@
 ---
 name: freecontext
-description: For complex multi-file, multi-document, cross-module, long-document, or source-bound reads, the first tool cell must only read this SKILL.md—no pwd/rg/fd/Git/plan/catalog. The next cell directly calls tools.mcp__freecontext__gather_context.
+description: For complex multi-file/document, cross-module, long-document, or source-bound exploration, first read only this skill, then call gather_context. Reenter before a second search batch or third unrelated path; do not reread the skill.
 ---
 
 # FreeContext routing
 
-- Use before native reads/searches for multi-file/document evidence, cross-module chains, joint config, long-document extraction, or source-bound work.
-- Direct-read only for one known bounded implementation or 1–2 exact post-probe candidates.
-- First tool cell: read only this file—never append pwd, rg, fd, Git, plan, catalog, or repo actions. Next cell directly calls `tools.mcp__freecontext__gather_context`; never inspect a tool catalog first.
-- Args: `knownRefs` (`[]` when none) accepts 0–12 path, symbol, or stack refs. Initial code calls use four required outcome questions—implementation, caller, contract, tests—with `minimumSpans` 2/2/1/1, not six shallow questions. Other initial calls use 2–6 questions; a gap follow-up uses only its 1–6 unresolved questions. Contract role requires a named API/schema/spec/compatibility rule. No identities, secrets, dumps, or query refs.
+- Initial call: before native exploration for multi-file/document evidence, cross-module chains, joint config, long documents, or source-bound work.
+- Reenter for a new multi-role/module or cross-document issue, before a second search batch or third distinct non-evidence/non-edited path, or when one exact read cannot explain a test failure.
+- Direct only: changed hunk, Git diff/status, tests/checks, one failure location, 1–2 exact candidates, or one no-source path/symbol probe. Results of 0 or 3–6 require FreeContext.
+- First tool cell reads only this file—no pwd/rg/fd/Git/plan/catalog/repo action. Next call `tools.mcp__freecontext__gather_context`. Episodes call it directly.
+- Args: 0–12 path/symbol/stack `knownRefs`; no secrets/dumps/identities/query refs. Initial code uses required implementation/caller/contract/test questions with `minimumSpans` 2/2/1/1, not six shallow questions; other initial calls use 2–6. Reentrant calls use 1–4 new questions plus edited/failure/confirmed paths. Gap follow-up uses exactly its unresolved questions and returned paths. Contract asks for a named API/schema/spec.
 
-```json
-{"taskText":"Trace the change.","knownRefs":[],"evidenceQuestions":[{"id":"implementation","role":"implementation","question":"Entry and state owners?","required":true,"minimumSpans":2},{"id":"application","role":"caller","question":"Consumers and behavior?","required":true,"minimumSpans":2},{"id":"contract","role":"contract","question":"Compatibility contract?","required":true},{"id":"tests","role":"test","question":"Focused tests?","required":true}]}
-```
-
-- Summaries are not reads. Next repository cell reads every Evidence range in one `Promise.all` of literal `tools.exec_command({cmd:"..."})` calls—no arrays/maps, widening, or other action. Ready then edits. After an initial partial, call FreeContext once with only its unresolved questions and returned paths as `knownRefs`; read the new Evidence, then edit. Never native-search before edit or make a third call.
+- Summaries are not reads. After each result, the next repository cell reads every exact Evidence range in one `Promise.all` of literal `tools.exec_command({cmd:"..."})` calls and nothing else. Each episode has one main call; only `partial` permits one gap-only follow-up, with no third invocation in that episode. `ready` covers only its invocation. Later triggers start new episodes. After `not_found`/`failed`, make one exact probe at most, then reapply eligibility.
 - If unavailable, use native read-only tools and say so.
 
 Use this exact caller after constructing `args`:
@@ -38,4 +35,4 @@ try {
 }
 ```
 
-If `functions.exec` yields a cell ID, call `functions.wait({ cell_id, yield_time_ms: 300000, max_tokens: 10000 })` exactly once next. While pending, never replay it, wait twice, inspect private sessions, or stringify results. A slow call emits one timer notice at most. FreeContext installs no waiting Hook.
+If `functions.exec` yields a cell ID, next call `functions.wait({ cell_id, yield_time_ms: 300000, max_tokens: 10000 })` once. While pending, never replay, wait twice, or inspect sessions. FreeContext installs no waiting Hook.

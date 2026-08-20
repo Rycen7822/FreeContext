@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
-import { FREECONTEXT_ELIGIBILITY_POLICY, FreeContextRequestSchema } from "../src/mcp/contracts.js";
+import { FREECONTEXT_ELIGIBILITY_POLICY } from "../src/mcp/contracts.js";
 
 test("implicit discovery routes complex reads to one MCP tool without copying eligibility policy", async () => {
   const [skill, metadata] = await Promise.all([
@@ -17,20 +17,19 @@ test("implicit discovery routes complex reads to one MCP tool without copying el
   assert.ok([...description].length <= 420);
   assert.equal(
     description,
-    "For complex multi-file, multi-document, cross-module, long-document, or source-bound reads, the first tool cell must only read this SKILL.md—no pwd/rg/fd/Git/plan/catalog. The next cell directly calls tools.mcp__freecontext__gather_context.",
+    "For complex multi-file/document, cross-module, long-document, or source-bound exploration, first read only this skill, then call gather_context. Reenter before a second search batch or third unrelated path; do not reread the skill.",
   );
   for (const gate of FREECONTEXT_ELIGIBILITY_POLICY.gates) assert.equal(skill.includes(gate.instruction), false);
-  assert.match(skill, /First tool cell: read only this file/iu);
-  assert.match(skill, /never append pwd, rg, fd, Git, plan, catalog, or repo actions/iu);
-  for (const trigger of ["multi-file", "multi-document", "cross-module", "long-document", "source-bound"]) {
+  assert.match(skill, /First tool cell reads only this file—no pwd\/rg\/fd\/Git\/plan\/catalog\/repo action/iu);
+  for (const trigger of ["multi-file/document", "cross-module", "long-document", "source-bound"]) {
     assert.ok(description.includes(trigger));
   }
-  assert.match(description, /first tool cell must only read this SKILL\.md—no pwd\/rg\/fd\/Git\/plan\/catalog/iu);
-  assert.match(description, /next cell directly calls tools\.mcp__freecontext__gather_context/iu);
+  assert.match(description, /Reenter before a second search batch or third unrelated path/iu);
+  assert.match(description, /do not reread the skill/iu);
+  assert.match(skill, /third distinct non-evidence\/non-edited path/iu);
   assert.doesNotMatch(skill, /never auto-trigger|only (?:after )?an explicit user request/iu);
   assert.match(skill, /typeof tools\.mcp__freecontext__gather_context !== "function"/u);
   assert.doesNotMatch(skill, /ALL_TOOLS/u);
-  assert.match(skill, /never inspect a tool catalog first/iu);
   assert.equal(skill.match(/await tools\.mcp__freecontext__gather_context\(args\)/gu)?.length, 1);
   assert.equal(skill.match(/\bnotify\(/gu)?.length, 1);
   assert.equal(skill.match(/functions\.wait/gu)?.length, 1);
@@ -38,48 +37,19 @@ test("implicit discovery routes complex reads to one MCP tool without copying el
   assert.match(skill, /terminalTexts\.length !== 1/u);
   assert.doesNotMatch(skill, /JSON\.stringify/u);
   assert.match(skill, /FreeContext installs no waiting Hook/u);
-  const requestExample = skill.match(/```json\n(?<json>\{[^\n]+\})\n```/u)?.groups?.json;
-  assert.ok(requestExample);
-  const exampleRequest = FreeContextRequestSchema.parse(JSON.parse(requestExample));
-  assert.deepEqual(exampleRequest.evidenceQuestions.map(({ id, role, minimumSpans }) => ({ id, role, minimumSpans: minimumSpans ?? 1 })), [
-    { id: "implementation", role: "implementation", minimumSpans: 2 },
-    { id: "application", role: "caller", minimumSpans: 2 },
-    { id: "contract", role: "contract", minimumSpans: 1 },
-    { id: "tests", role: "test", minimumSpans: 1 },
-  ]);
-  assert.match(skill, /`knownRefs` \(`\[\]` when none\) accepts 0–12 path, symbol, or stack refs/u);
-  assert.match(skill, /No identities, secrets, dumps, or query refs/u);
-  assert.match(skill, /Initial code calls use four required outcome questions/iu);
+  assert.match(skill, /0–12 path\/symbol\/stack `knownRefs`/u);
+  assert.match(skill, /Initial code uses required implementation\/caller\/contract\/test questions/iu);
   assert.match(skill, /`minimumSpans` 2\/2\/1\/1/u);
-  assert.match(skill, /not six shallow questions/iu);
-  assert.match(skill, /Other initial calls use 2–6 questions/iu);
-  assert.match(skill, /gap follow-up uses only its 1–6 unresolved questions/iu);
-  assert.match(skill, /Contract role requires a named API\/schema\/spec\/compatibility rule/iu);
+  assert.match(skill, /other initial calls use 2–6/iu);
+  assert.match(skill, /Reentrant calls use 1–4 new questions/iu);
+  assert.match(skill, /Gap follow-up uses exactly its unresolved questions and returned paths/iu);
   assert.doesNotMatch(skill, /\bworkspace_root\b/u);
-  assert.throws(() => FreeContextRequestSchema.parse({
-    ...exampleRequest,
-    knownRefs: [{ kind: "query", query: "nosec" }],
-  }));
   assert.match(skill, /Summaries are not reads/u);
-  const sixQuestions = Array.from({ length: 6 }, (_, index) => ({
-    id: `facet-${index}`,
-    role: "implementation" as const,
-    question: `Where is facet ${index}?`,
-    required: true,
-  }));
-  assert.equal(FreeContextRequestSchema.safeParse({
-    ...exampleRequest,
-    evidenceQuestions: sixQuestions,
-  }).success, true);
-  assert.equal(FreeContextRequestSchema.safeParse({
-    ...exampleRequest,
-    evidenceQuestions: [...sixQuestions, { ...sixQuestions[0], id: "facet-6" }],
-  }).success, false);
-  assert.match(skill, /Next repository cell reads every Evidence range in one `Promise\.all` of literal `tools\.exec_command/iu);
-  assert.match(skill, /no arrays\/maps, widening, or other action/iu);
-  assert.match(skill, /Ready then edits/iu);
-  assert.match(skill, /initial partial, call FreeContext once with only its unresolved questions/iu);
-  assert.match(skill, /Never native-search before edit or make a third call/iu);
+  assert.match(skill, /next repository cell reads every exact Evidence range in one `Promise\.all` of literal `tools\.exec_command/iu);
+  assert.match(skill, /Each episode has one main call/iu);
+  assert.match(skill, /only `partial` permits one gap-only follow-up/iu);
+  assert.match(skill, /no third invocation in that episode/iu);
+  assert.match(skill, /`ready` covers only its invocation/iu);
 
   assert.match(metadata, /^  allow_implicit_invocation: true$/mu);
   assert.equal(metadata.match(/^    - type:/gmu)?.length, 1);
