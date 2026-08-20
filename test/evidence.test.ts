@@ -95,6 +95,41 @@ test("compiler validates observed spans, crops, orders, and emits a ready result
   assert.match(serialized, /First repository cell: read exactly all Evidence ranges above; no range widening, search, status, plan, or branch\./u);
 }));
 
+test("compiler rejects production helpers as test evidence and accepts inline test blocks", async () => withWorkspace(async (root) => {
+  await writeFile(path.join(root, "src/tester.py"), "def run_tests():\n    return []\n");
+  await writeFile(path.join(root, "src/router.rs"), "#[cfg(test)]\nmod tests {\n    #[test]\n    fn routes() {}\n}\n");
+  const implementation: ExplorerEvidenceCandidate = {
+    role: "implementation", questionId: "implementation", path: "src/router.ts",
+    startLine: 1, endLine: 10, focusLine: 5, why: "Defines routing.",
+  };
+  const productionResult = await compileFreeContextResult(
+    request(),
+    invocation(root),
+    candidate("Production helper was proposed as test evidence.", [
+      implementation,
+      { role: "test", questionId: "tests", path: "src/tester.py", startLine: 1, endLine: 2, focusLine: 1, why: "Runs checks." },
+    ]),
+    { errorCode: null },
+    [observed("src/router.ts", 1, 10), observed("src/tester.py", 1, 2)],
+  );
+  assert.equal(productionResult.status, "partial");
+  assert.equal(productionResult.gaps.find((gap) => gap.questionId === "tests")?.reason,
+    "Evidence range was not an actual test/spec or inline test block.");
+
+  const inlineResult = await compileFreeContextResult(
+    request(),
+    invocation(root),
+    candidate("Routing and inline tests are verified.", [
+      implementation,
+      { role: "test", questionId: "tests", path: "src/router.rs", startLine: 1, endLine: 5, focusLine: 3, why: "Defines inline tests." },
+    ]),
+    { errorCode: null },
+    [observed("src/router.ts", 1, 10), observed("src/router.rs", 1, 5)],
+  );
+  assert.equal(inlineResult.status, "ready");
+  assert.equal(inlineResult.evidence.find((item) => item.questionId === "tests")?.path, "src/router.rs");
+}));
+
 test("compiler budgets six broad facet ranges before evidence selection", async () => withWorkspace(async (root) => {
   const evidenceQuestions = Array.from({ length: 6 }, (_, index) => ({
     id: `facet-${index + 1}`,

@@ -32,6 +32,21 @@ export interface FreeContextTerminal {
   readonly reason?: string;
 }
 
+const TEST_DIRECTORY_NAMES = new Set(["__tests__", "spec", "specs", "test", "tests"]);
+const INLINE_TEST_DECLARATION = /(?:#\s*\[\s*(?:cfg\s*\(\s*test\s*\)|test)\s*\]|(?:^|\n)\s*(?:(?:async\s+)?def\s+test_|class\s+Test\w*|@Test\b|(?:describe|it|test)\s*\(|TEST(?:_F|_P)?\s*\())/mu;
+
+function supportsTestRole(pathValue: string, content: string): boolean {
+  const segments = pathValue.split("/");
+  if (segments.slice(0, -1).some((segment) => TEST_DIRECTORY_NAMES.has(segment.toLowerCase()))) return true;
+  const file = segments.at(-1) ?? "";
+  const stem = file.replace(/\.[^.]+$/u, "");
+  const conventionalName = /^(?:test|tests|spec|specs)$/iu.test(stem)
+    || /^(?:test|spec)[_.-]/iu.test(stem)
+    || /[_.-](?:test|tests|spec|specs)$/iu.test(stem)
+    || /[a-z0-9](?:Test|Tests|Spec|Specs)$/u.test(stem);
+  return conventionalName || INLINE_TEST_DECLARATION.test(content);
+}
+
 export async function compileFreeContextResult(
   rawRequest: Readonly<FreeContextRequest>,
   rawInvocation: Readonly<FreeContextInvocationContext>,
@@ -92,6 +107,10 @@ export async function compileFreeContextResult(
       }
       const cropped = cropAroundFocus(item.startLine, item.endLine, item.focusLine, spanTargetLines);
       const content = lines.slice(cropped.startLine - 1, cropped.endLine).join("\n");
+      if (question.role === "test" && !supportsTestRole(normalizedPath, content)) {
+        validationReasons.set(item.questionId, "Evidence range was not an actual test/spec or inline test block.");
+        continue;
+      }
       const contentHash = createHash("sha256").update(content).digest("hex");
       const duplicateKey = `${question.id}\0${question.role}\0${contentHash}`;
       if (contentHashes.has(duplicateKey)) continue;

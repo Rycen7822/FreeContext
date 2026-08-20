@@ -141,7 +141,7 @@ test("runExplorer compiles a canonical ready result and v3 capture", async () =>
 test("runExplorer makes one model call and returns partial when a required question is uncovered", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "freecontext-run-"));
   try {
-    await writeFile(path.join(root, "a.js"), "const a = 1;\n", "utf8");
+    await writeFile(path.join(root, "a.js"), "test(\"a\", () => {});\n", "utf8");
     const output = submission({
       summary: "only tests were located.",
       evidence: [{ question_id: "tests", path: "a.js", start_line: 1, end_line: 1, focus_line: 1, why: "Test-shaped fixture." }],
