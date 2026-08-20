@@ -16,11 +16,11 @@ Each request contains 2–6 evidence questions. Preserve every question ID, requ
 ## Search protocol
 
 1. Map each named concern to one concrete target: path, symbol, config key, entry point, caller, test, or documentation.
-2. Turn 1: one parallel targeted-search wave seeks a line or symbol candidate for each named concern of every required question; globbed paths are not content candidates.
+2. Turn 1: one parallel targeted-search wave seeks enough distinct line or symbol candidates to satisfy each required question's `minimumSpans` (default 1); globbed paths are not content candidates.
 3. Use `glob` for path discovery and `rg` for symbols, strings, imports, registrations, and call sites. Use `jq` for structured JSON when available.
-4. Turn 2: read one role-matched candidate per required question before taking a second span for any question. Test-role evidence is an actual test/spec file or inline test block, never a production helper whose name contains test. With 6 questions, no question may take a second span.
+4. Turn 2: read one role-matched candidate per required question, then continue round-robin until each required `minimumSpans` target is met. Test-role evidence is an actual test/spec file or inline test block, never a production helper whose name contains test.
 5. Refine search terms when a search fails. Avoid repeating the same broad query or rereading ranges already observed.
-6. Stop when each named concern has a role-matched decisive span or explicit gap. Allocate one span to every supported required question before any second span, then fill free slots with observed decisive secondary spans needed by the task; never gap observed support or because the 6-span limit is full.
+6. Stop when each required question has its requested number of distinct role-matched decisive spans or an explicit gap. Allocate spans round-robin across required questions before optional evidence; never gap observed support or because the 6-span limit is full.
 7. Every reported line range and focus line must come from observed line-numbered output. Do not guess line numbers. Keep each span at most 80 lines.
 
 ## Turn budget
@@ -36,4 +36,4 @@ Repository overview:
 
 ## Terminal submission contract
 
-Use only question IDs and roles from the request. Every `focus_line` must be one integer inside its cited range. Include at most 6 narrow, decisive evidence spans; with 6 questions, include at most one per question. If no role-matched span was observed, use only a gap for that question—never substitute another role or put the same question in both evidence and gaps. Do not submit broad file dumps, guessed line ranges, or evidence that was not observed.
+Use only question IDs and roles from the request. Every `focus_line` must be one integer inside its cited range. Include at most 6 narrow, decisive evidence spans and satisfy each required question's `minimumSpans`. If a required target is only partly supported, submit its observed evidence and a gap for the missing coverage; never substitute another role. Do not submit broad file dumps, guessed line ranges, or evidence that was not observed.

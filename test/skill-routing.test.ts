@@ -41,22 +41,19 @@ test("implicit discovery routes complex reads to one MCP tool without copying el
   const requestExample = skill.match(/```json\n(?<json>\{[^\n]+\})\n```/u)?.groups?.json;
   assert.ok(requestExample);
   const exampleRequest = FreeContextRequestSchema.parse(JSON.parse(requestExample));
-  assert.deepEqual(exampleRequest.evidenceQuestions.map(({ id, role }) => ({ id, role })), [
-    { id: "parser", role: "implementation" },
-    { id: "application", role: "caller" },
-    { id: "tests", role: "test" },
+  assert.deepEqual(exampleRequest.evidenceQuestions.map(({ id, role, minimumSpans }) => ({ id, role, minimumSpans: minimumSpans ?? 1 })), [
+    { id: "implementation", role: "implementation", minimumSpans: 2 },
+    { id: "application", role: "caller", minimumSpans: 2 },
+    { id: "contract", role: "contract", minimumSpans: 1 },
+    { id: "tests", role: "test", minimumSpans: 1 },
   ]);
-  assert.match(skill, /Include `knownRefs` \(`\[\]` when none\): 0–12/u);
-  for (const shape of ['{kind:"path",path}', '{kind:"symbol",symbol,path?}', '{kind:"stack",path,line}']) {
-    assert.ok(skill.includes(shape));
-  }
-  assert.match(skill, /no query refs/u);
-  assert.match(skill, /Code changes: 3–4 outcome questions/iu);
-  assert.match(skill, /free slots hold secondary spans/iu);
-  assert.match(skill, /never force six parse\/catalog\/span\/metric buckets/iu);
-  assert.match(skill, /Other: 2–6/iu);
-  assert.match(skill, /Roles: `implementation`, `caller`, `test`, `contract`/u);
-  assert.match(skill, /contract only for named API\/schema\/spec\/compat/iu);
+  assert.match(skill, /`knownRefs` \(`\[\]` when none\) accepts 0–12 path, symbol, or stack refs/u);
+  assert.match(skill, /No identities, secrets, dumps, or query refs/u);
+  assert.match(skill, /Code tasks use four required outcome questions/iu);
+  assert.match(skill, /`minimumSpans` 2\/2\/1\/1/u);
+  assert.match(skill, /not six shallow questions/iu);
+  assert.match(skill, /Other tasks use 2–6 questions/iu);
+  assert.match(skill, /Contract role requires a named API\/schema\/spec\/compatibility rule/iu);
   assert.doesNotMatch(skill, /\bworkspace_root\b/u);
   assert.throws(() => FreeContextRequestSchema.parse({
     ...exampleRequest,
@@ -78,10 +75,10 @@ test("implicit discovery routes complex reads to one MCP tool without copying el
     evidenceQuestions: [...sixQuestions, { ...sixQuestions[0], id: "facet-6" }],
   }).success, false);
   assert.match(skill, /Next repository cell reads every Evidence range in one `Promise\.all` of literal `tools\.exec_command/iu);
-  assert.match(skill, /no command arrays\/maps, widening, or other action/iu);
-  assert.match(skill, /ready edits directly/u);
-  assert.match(skill, /partial permits one targeted named-gap search batch/u);
-  assert.match(skill, /Never broad-discover or replay/u);
+  assert.match(skill, /no arrays\/maps, widening, or other action/iu);
+  assert.match(skill, /Ready then edits directly/u);
+  assert.match(skill, /For partial, call FreeContext once more for only the named gaps/iu);
+  assert.match(skill, /never replay completed questions or broad-discover/iu);
 
   assert.match(metadata, /^  allow_implicit_invocation: true$/mu);
   assert.equal(metadata.match(/^    - type:/gmu)?.length, 1);

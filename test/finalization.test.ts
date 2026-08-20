@@ -84,7 +84,9 @@ test("submit_evidence exposes only portable shape constraints to the provider", 
     isFinalizing: () => false,
   });
   const schema = JSON.stringify(tool.parameters);
-  assert.match(tool.description, /with six questions use at most one per question/iu);
+  assert.match(tool.description, /up to six observed spans/iu);
+  assert.match(tool.description, /1 total when fully supported/iu);
+  assert.match(tool.description, /minimumSpans/iu);
   assert.equal(schema.includes('"role"'), false);
   for (const unsupported of ["anyOf", "oneOf", "allOf", "const", "pattern", "minLength", "maxLength", "minimum", "maximum", "maxItems"]) {
     assert.equal(schema.includes(`\"${unsupported}\"`), false, unsupported);
@@ -115,6 +117,45 @@ test("local submission validation records exact limits removed from the provider
   }
 });
 
+test("finalizer requires each requested minimum or an explicit partial-coverage gap", async () => {
+  const request = {
+    ...baseRequest(),
+    evidenceQuestions: baseRequest().evidenceQuestions.map((question) => (
+      question.id === "impl" ? { ...question, minimumSpans: 2 } : question
+    )),
+  };
+  const wideRead = { ...observedRead, endLine: 12 };
+  const createTool = (state: ReturnType<typeof createTerminalSubmissionState>) => createSubmitEvidenceTool({
+    Type,
+    request,
+    observedReads: () => [wideRead],
+    state,
+    isFinalizing: () => true,
+  });
+
+  const missing = createTerminalSubmissionState();
+  await assert.rejects(createTool(missing).execute("missing-secondary", validArguments), /local semantic/u);
+  assert.deepEqual(missing.failureDetails, ["required_coverage_missing"]);
+
+  const partial = createTerminalSubmissionState();
+  await createTool(partial).execute("partial-secondary", {
+    ...validArguments,
+    gaps: [...validArguments.gaps, { question_id: "impl", reason: "A second owner span was not observed." }],
+  });
+  assert.deepEqual(partial.candidate?.gaps.map((gap) => gap.questionId), ["tests", "impl"]);
+
+  const complete = createTerminalSubmissionState();
+  await createTool(complete).execute("complete-secondary", {
+    ...validArguments,
+    evidence: [
+      ...validArguments.evidence,
+      { ...validArguments.evidence[0], start_line: 9, end_line: 12, focus_line: 10 },
+    ],
+  });
+  assert.equal(complete.candidate?.evidence.length, 2);
+  assert.deepEqual(complete.candidate?.gaps.map((gap) => gap.questionId), ["tests"]);
+});
+
 test("finalizer rejects full duplicate allocation ahead of a required gap", async () => {
   const state = createTerminalSubmissionState();
   const requiredRequest = {
@@ -132,7 +173,7 @@ test("finalizer rejects full duplicate allocation ahead of a required gap", asyn
     ...validArguments,
     evidence: Array.from({ length: 6 }, () => validArguments.evidence[0]),
   }), /local semantic/u);
-  assert.deepEqual(state.failureDetails, ["required_gap_after_duplicate_evidence"]);
+  assert.deepEqual(state.failureDetails, ["required_gap_after_surplus_evidence"]);
 });
 
 test("finalizer removes a redundant gap after validating evidence for the same question", async () => {
@@ -211,9 +252,10 @@ test("isolated packet marks exploration complete and omits repository tool origi
   assert.equal(parsed.workingSummary, "latest summary");
   assert.deepEqual(parsed.submissionRules, {
     maxItems: { evidence: 6, gaps: 6 },
+    requiredMinimumSpans: 1,
     question_id: "exact questions[].id; omit role because the harness derives it",
     citation: "non-empty repository-relative path; integer 1 <= start_line <= focus_line <= end_line <= 10000000; range within one matching repositoryObservation",
-    coverage: "Allocate one role-matched observed span per supported required question before any second span, then fill free slots with observed decisive secondary spans needed by the task. Test role requires an actual test/spec file or inline test block, never a production helper whose name contains test. When questions.length equals maxItems.evidence, use at most one span per question. Evidence and gaps must use disjoint question IDs. If role-matched support is absent, use a gap only; never substitute another role or claim a present observation is absent.",
+    coverage: "For every required question, allocate its minimumSpans distinct role-matched observed spans (default one) before optional evidence. If any required minimum cannot be met, include that exact question ID in gaps; a partially covered question may have both evidence and a gap. Test role requires an actual test/spec file or inline test block, never a production helper whose name contains test. Never substitute another role or claim a present observation is absent.",
   });
   const { tool: _tool, ...modelObservation } = observedRead;
   assert.equal(_tool, "read");

@@ -44,7 +44,10 @@ EXPLICIT_FC_FIRST_POLICY = (
     "The first tool cell must read only that SKILL.md; the next tool cell must call "
     "gather_context exactly once and wait for its terminal result. FreeContext must "
     "be the first repository exploration action. Do not use native repository reads "
-    "or searches before it."
+    "or searches before it. Use four required outcome questions with implementation, "
+    "caller, contract, and test minimumSpans of 2, 2, 1, and 1; do not split them into "
+    "six shallow questions. For a partial result, read its evidence and call FreeContext "
+    "once for the named gaps before any native search."
 )
 EXPLICIT_NATIVE_ONLY_POLICY = (
     "[Benchmark arm policy: explicit_native_only]\n"

@@ -1,7 +1,6 @@
 import type { AgentMessage, AgentTool } from "@earendil-works/pi-agent-core";
 import type { Type } from "@earendil-works/pi-ai";
-import { RESULT_LIMITS } from "../mcp/contracts.js";
-import type { FreeContextRequest } from "../mcp/contracts.js";
+import { minimumEvidenceSpans, RESULT_LIMITS, type FreeContextRequest } from "../mcp/contracts.js";
 import {
   clipSingleLine,
   type ExplorerCandidate,
@@ -36,7 +35,8 @@ export type TerminalFailureDetail =
   | "focus_outside_range"
   | "unobserved_range"
   | "unknown_gap_question"
-  | "required_gap_after_duplicate_evidence";
+  | "required_coverage_missing"
+  | "required_gap_after_surplus_evidence";
 
 export interface ObservedRead {
   readonly tool: "read" | "bat";
@@ -135,6 +135,12 @@ function localShapeFailures(candidate: Readonly<ExplorerCandidate>): readonly Te
   return failures;
 }
 
+function requiredMinimumSpans(request: Readonly<FreeContextRequest>): number {
+  return request.evidenceQuestions
+    .filter((question) => question.required)
+    .reduce((total, question) => total + minimumEvidenceSpans(question), 0);
+}
+
 export function createSubmitEvidenceTool({
   Type: TypeBox,
   request,
@@ -166,11 +172,12 @@ export function createSubmitEvidenceTool({
     gaps: TypeBox.Array(gapItem),
   }, { additionalProperties: false });
   const questions = new Map(request.evidenceQuestions.map((question) => [question.id, question]));
+  const requiredMinimum = requiredMinimumSpans(request);
 
   const tool: AgentTool<typeof parameters, SubmitEvidenceDetails> = {
     name: SUBMIT_EVIDENCE_TOOL_NAME,
     label: "Submit verified evidence",
-    description: "Submit once with at most six observed spans; with six questions use at most one per question, and use a gap only when role-matched evidence is absent.",
+    description: `Submit up to six observed spans; satisfy each required question's minimumSpans (${requiredMinimum} total when fully supported), or include its gap.`,
     parameters,
     executionMode: "sequential",
     execute: async (_toolCallId, params) => {
@@ -203,19 +210,29 @@ export function createSubmitEvidenceTool({
         if (!isObserved(item, reads)) failureDetails.push("unobserved_range");
       }
       if (gaps.some((gap) => !questions.has(gap.questionId))) failureDetails.push("unknown_gap_question");
-      const coveredQuestions = new Set(evidence.map((item) => item.questionId));
+      const counts = new Map<string, number>();
+      for (const item of evidence) counts.set(item.questionId, (counts.get(item.questionId) ?? 0) + 1);
+      const gapQuestions = new Set(gaps.map((gap) => gap.questionId));
+      if (failureDetails.length === 0) {
+        for (const question of request.evidenceQuestions.filter((item) => item.required)) {
+          if ((counts.get(question.id) ?? 0) < minimumEvidenceSpans(question) && !gapQuestions.has(question.id)) {
+            failureDetails.push("required_coverage_missing");
+          }
+        }
+      }
       const normalizedGaps = failureDetails.length === 0
-        ? gaps.filter((gap) => !coveredQuestions.has(gap.questionId))
+        ? gaps.filter((gap) => (counts.get(gap.questionId) ?? 0) < minimumEvidenceSpans(questions.get(gap.questionId)!))
         : gaps;
       const candidate = normalizedGaps === gaps
         ? rawCandidate
         : freezeCandidate(rawCandidate.summary, evidence, normalizedGaps);
       const hasRequiredGap = candidate.gaps.some((gap) => questions.get(gap.questionId)?.required);
       if (failureDetails.length === 0 && hasRequiredGap && evidence.length === RESULT_LIMITS.evidence) {
-        const counts = new Map<string, number>();
-        for (const item of evidence) counts.set(item.questionId, (counts.get(item.questionId) ?? 0) + 1);
-        if ([...counts.values()].some((count) => count > 1)) {
-          failureDetails.push("required_gap_after_duplicate_evidence");
+        if ([...counts].some(([questionId, count]) => {
+          const question = questions.get(questionId);
+          return count > (question?.required ? minimumEvidenceSpans(question) : 0);
+        })) {
+          failureDetails.push("required_gap_after_surplus_evidence");
         }
       }
       if (failureDetails.length > 0) {
@@ -301,9 +318,10 @@ export function buildFinalizationPacket(
     workingSummary: compactionSummary,
     submissionRules: {
       maxItems: { evidence: RESULT_LIMITS.evidence, gaps: GAP_LIMIT },
+      requiredMinimumSpans: requiredMinimumSpans(request),
       question_id: "exact questions[].id; omit role because the harness derives it",
       citation: `non-empty repository-relative path; integer 1 <= start_line <= focus_line <= end_line <= ${LINE_NUMBER_LIMIT}; range within one matching repositoryObservation`,
-      coverage: "Allocate one role-matched observed span per supported required question before any second span, then fill free slots with observed decisive secondary spans needed by the task. Test role requires an actual test/spec file or inline test block, never a production helper whose name contains test. When questions.length equals maxItems.evidence, use at most one span per question. Evidence and gaps must use disjoint question IDs. If role-matched support is absent, use a gap only; never substitute another role or claim a present observation is absent.",
+      coverage: "For every required question, allocate its minimumSpans distinct role-matched observed spans (default one) before optional evidence. If any required minimum cannot be met, include that exact question ID in gaps; a partially covered question may have both evidence and a gap. Test role requires an actual test/spec file or inline test block, never a production helper whose name contains test. Never substitute another role or claim a present observation is absent.",
     },
     repositoryObservations,
   });

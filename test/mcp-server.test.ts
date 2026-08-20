@@ -135,6 +135,11 @@ test("no-network MCP loopback awaits one terminal Promise and never emits an int
       openWorldHint: true,
     });
     assert.deepEqual(tool?.inputSchema.required, ["taskText", "evidenceQuestions"]);
+    const questionItem = (tool?.inputSchema.properties?.evidenceQuestions as {
+      readonly items?: { readonly properties?: Record<string, { readonly type?: string }>; readonly required?: readonly string[] };
+    } | undefined)?.items;
+    assert.equal(questionItem?.properties?.minimumSpans?.type, "integer");
+    assert.equal(questionItem?.required?.includes("minimumSpans"), false);
     assert.ok(tool?.outputSchema?.properties?.status);
 
     let firstSettled = false;

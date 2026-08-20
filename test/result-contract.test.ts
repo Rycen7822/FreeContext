@@ -45,7 +45,7 @@ test("request normalization deduplicates refs and keeps the documented priority"
       { kind: "path", path: "../outside.ts" },
     ],
     evidenceQuestions: [
-      { id: "implementation", role: "implementation", question: "Where is routing implemented?", required: true },
+      { id: "implementation", role: "implementation", question: "Where is routing implemented?", required: true, minimumSpans: 2 },
       { id: "tests", role: "test", question: "Which tests cover it?", required: true },
     ],
   });
@@ -56,6 +56,7 @@ test("request normalization deduplicates refs and keeps the documented priority"
     { kind: "path", path: "src/router.ts" },
   ]);
   assert.equal(normalized.knownRefs.length, 12);
+  assert.equal(normalized.evidenceQuestions[0]?.minimumSpans, 2);
 });
 
 test("canonical request separates model intent from host invocation facts", () => {
@@ -75,6 +76,14 @@ test("canonical request separates model intent from host invocation facts", () =
     ...request,
     evidenceQuestions: [request.evidenceQuestions[0], request.evidenceQuestions[0]],
   }), /question id must be unique/u);
+  assert.throws(() => FreeContextRequestSchema.parse({
+    ...request,
+    evidenceQuestions: request.evidenceQuestions.map((question) => ({ ...question, minimumSpans: 4 })),
+  }), /required minimum spans cannot exceed 6/u);
+  assert.throws(() => FreeContextRequestSchema.parse({
+    ...request,
+    evidenceQuestions: request.evidenceQuestions.map((question) => ({ ...question, required: false, minimumSpans: 2 })),
+  }), /optional questions cannot require multiple spans/u);
 });
 
 test("serializeForModel is text-first and contains every canonical evidence field", () => {

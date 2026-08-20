@@ -60,7 +60,7 @@ export function buildUserPrompt(request: Readonly<FreeContextRequest>): string {
     ...(request.knownRefs.length > 0 ? request.knownRefs.map(renderKnownReference) : ["-"]),
     "Evidence questions:",
     ...request.evidenceQuestions.map((question) => (
-      `- [${question.role}][${question.id}][${question.required ? "required" : "optional"}] ${question.question}`
+      `- [${question.role}][${question.id}][${question.required ? "required" : "optional"}]${question.minimumSpans === undefined ? "" : `[minimum-spans=${question.minimumSpans}]`} ${question.question}`
     )),
     "Locate and verify evidence for these exact question IDs and roles. Submit verified evidence with submit_evidence when coverage is complete or the best supported partial result is known.",
   ].join("\n");

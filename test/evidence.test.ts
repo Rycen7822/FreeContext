@@ -95,6 +95,60 @@ test("compiler validates observed spans, crops, orders, and emits a ready result
   assert.match(serialized, /First repository cell: read exactly all Evidence ranges above; no range widening, search, status, plan, or branch\./u);
 }));
 
+test("compiler cannot mark a required multi-span question ready after one narrow item", async () => withWorkspace(async (root) => {
+  const adequacyRequest: FreeContextRequest = {
+    ...request(),
+    evidenceQuestions: request().evidenceQuestions.map((question) => (
+      question.id === "implementation" ? { ...question, minimumSpans: 2 } : question
+    )),
+  };
+  const implementation = {
+    role: "implementation" as const,
+    questionId: "implementation",
+    path: "src/router.ts",
+    startLine: 1,
+    endLine: 20,
+    focusLine: 10,
+    why: "Defines the routing entry point.",
+  };
+  const tests = {
+    role: "test" as const,
+    questionId: "tests",
+    path: "test/router.test.ts",
+    startLine: 1,
+    endLine: 1,
+    focusLine: 1,
+    why: "Covers routing behavior.",
+  };
+  const partial = await compileFreeContextResult(
+    adequacyRequest,
+    invocation(root),
+    candidate("One implementation stage is still missing.", [implementation, tests]),
+    { errorCode: null },
+    [observed("src/router.ts", 1, 20), observed("test/router.test.ts", 1, 1)],
+  );
+  assert.equal(partial.status, "partial");
+  assert.equal(partial.gaps.find((gap) => gap.questionId === "implementation")?.reason,
+    "Only 1 of 2 required spans were validated.");
+  assert.equal(partial.nextAction.reason,
+    "After this exact-read cell, call FreeContext once for the named evidence gaps before editing.");
+
+  const complete = await compileFreeContextResult(
+    adequacyRequest,
+    invocation(root),
+    candidate("Both implementation stages and tests are verified.", [
+      implementation,
+      { ...implementation, startLine: 100, endLine: 120, focusLine: 110, why: "Defines the downstream routing stage." },
+      tests,
+    ]),
+    { errorCode: null },
+    [observed("src/router.ts", 1, 20), observed("src/router.ts", 100, 120), observed("test/router.test.ts", 1, 1)],
+  );
+  assert.equal(complete.status, "ready");
+  assert.deepEqual(complete.evidence.map((item) => item.questionId), ["implementation", "implementation", "tests"]);
+  assert.deepEqual(complete.gaps, []);
+}));
+
 test("compiler rejects production helpers as test evidence and accepts inline test blocks", async () => withWorkspace(async (root) => {
   await writeFile(path.join(root, "src/tester.py"), "def run_tests():\n    return []\n");
   await writeFile(path.join(root, "src/router.rs"), "#[cfg(test)]\nmod tests {\n    #[test]\n    fn routes() {}\n}\n");
@@ -130,32 +184,32 @@ test("compiler rejects production helpers as test evidence and accepts inline te
   assert.equal(inlineResult.evidence.find((item) => item.questionId === "tests")?.path, "src/router.rs");
 }));
 
-test("compiler budgets six broad facet ranges before evidence selection", async () => withWorkspace(async (root) => {
-  const evidenceQuestions = Array.from({ length: 6 }, (_, index) => ({
-    id: `facet-${index + 1}`,
-    role: "implementation" as const,
-    question: `Where is facet ${index + 1} implemented?`,
-    required: true,
-  }));
-  const evidence = evidenceQuestions.map((question, index) => ({
-    role: question.role,
-    questionId: question.id,
-    path: "src/router.ts",
-    startLine: 1,
-    endLine: 120,
-    focusLine: 10 + (index * 20),
-    why: `Defines facet ${index + 1}.`,
-  }));
+test("compiler allocates six spans across four outcome questions without starving later roles", async () => withWorkspace(async (root) => {
+  const evidenceQuestions = [
+    { id: "implementation", role: "implementation" as const, question: "Where are both implementation stages?", required: true, minimumSpans: 2 },
+    { id: "application", role: "caller" as const, question: "Where are both application stages?", required: true, minimumSpans: 2 },
+    { id: "contract", role: "contract" as const, question: "What contract applies?", required: true },
+    { id: "tests", role: "test" as const, question: "What tests apply?", required: true },
+  ];
+  const evidence = [
+    { role: "implementation" as const, questionId: "implementation", path: "src/router.ts", startLine: 1, endLine: 20, focusLine: 10, why: "Defines the entry stage." },
+    { role: "implementation" as const, questionId: "implementation", path: "src/router.ts", startLine: 40, endLine: 60, focusLine: 50, why: "Defines the state stage." },
+    { role: "caller" as const, questionId: "application", path: "src/router.ts", startLine: 70, endLine: 90, focusLine: 80, why: "Calls the entry stage." },
+    { role: "caller" as const, questionId: "application", path: "src/router.ts", startLine: 110, endLine: 130, focusLine: 120, why: "Consumes the state stage." },
+    { role: "contract" as const, questionId: "contract", path: "src/router.ts", startLine: 140, endLine: 150, focusLine: 145, why: "Defines the contract." },
+    { role: "test" as const, questionId: "tests", path: "test/router.test.ts", startLine: 1, endLine: 1, focusLine: 1, why: "Tests the route." },
+  ];
   const result = await compileFreeContextResult(
     { ...request(), evidenceQuestions },
     invocation(root),
-    candidate("All six independently editable facets were observed.", evidence),
+    candidate("Both implementation and application stages, the contract, and tests were observed.", evidence),
     { errorCode: null },
-    [observed("src/router.ts", 1, 120)],
+    [observed("src/router.ts", 1, 150), observed("test/router.test.ts", 1, 1)],
   );
   assert.equal(result.status, "ready");
   assert.equal(result.evidence.length, 6);
-  assert.ok(result.evidence.every((item) => item.endLine - item.startLine + 1 <= 53));
+  assert.deepEqual(result.evidence.map((item) => item.questionId),
+    ["implementation", "implementation", "application", "application", "contract", "tests"]);
   assert.ok(result.evidence.reduce((total, item) => total + item.endLine - item.startLine + 1, 0) <= 320);
 }));
 
@@ -176,7 +230,7 @@ test("compiler turns role mismatch and rejected generated paths into explicit ga
   assert.equal(result.errorCode, null);
   assert.deepEqual(result.evidence.map((item) => item.questionId), ["implementation"]);
   assert.deepEqual(result.gaps, [{ questionId: "tests", reason: "Test evidence remains unresolved." }]);
-  assert.equal(result.nextAction.reason, "After this exact-read cell, use one separate targeted named-gap search batch at most, then edit.");
+  assert.equal(result.nextAction.reason, "After this exact-read cell, call FreeContext once for the named evidence gaps before editing.");
 }));
 
 test("compiler does not treat a trailing newline as an extra citable line", async () => withWorkspace(async (root) => {

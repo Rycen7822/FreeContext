@@ -1,5 +1,5 @@
 import path from "node:path";
-import { RESULT_LIMITS } from "../mcp/contracts.js";
+import { minimumEvidenceSpans, RESULT_LIMITS } from "../mcp/contracts.js";
 import type { EvidenceRole, FreeContextEvidence, FreeContextRequest } from "../mcp/contracts.js";
 
 const GENERATED_OR_VENDOR_SEGMENTS = new Set([
@@ -104,8 +104,8 @@ export function selectEvidence(
     totalLines += lines;
   };
   for (const question of request.evidenceQuestions.filter((item) => item.required)) {
-    const item = ranked.find((candidate) => candidate.questionId === question.id);
-    if (item) trySelect(item);
+    for (const item of ranked.filter((candidate) => candidate.questionId === question.id)
+      .slice(0, minimumEvidenceSpans(question))) trySelect(item);
   }
   for (const question of request.evidenceQuestions) {
     if (selected.some((item) => item.questionId === question.id)) continue;

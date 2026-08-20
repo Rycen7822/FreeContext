@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import {
   FreeContextInvocationContextSchema,
+  minimumEvidenceSpans,
   FreeContextRequestSchema,
   FreeContextResultSchema,
   RESULT_LIMITS,
@@ -135,23 +136,26 @@ export async function compileFreeContextResult(
   }
 
   const evidence = selectEvidence(validated, request);
-  const covered = new Set(evidence.map((item) => item.questionId));
+  const evidenceCounts = new Map<string, number>();
+  for (const item of evidence) evidenceCounts.set(item.questionId, (evidenceCounts.get(item.questionId) ?? 0) + 1);
   const candidateGaps = new Map(
     candidate.gaps
       .filter((gap) => questions.has(gap.questionId))
       .map((gap) => [gap.questionId, clipSingleLine(gap.reason, RESULT_LIMITS.detailCodePoints)]),
   );
   const gaps: FreeContextGap[] = request.evidenceQuestions
-    .filter((question) => !covered.has(question.id))
+    .filter((question) => (evidenceCounts.get(question.id) ?? 0) < minimumEvidenceSpans(question))
     .map((question) => Object.freeze({
       questionId: question.id,
       reason: candidateGaps.get(question.id)
         || validationReasons.get(question.id)
-        || "No validated evidence was returned for this question.",
+        || ((evidenceCounts.get(question.id) ?? 0) === 0
+          ? "No validated evidence was returned for this question."
+          : `Only ${evidenceCounts.get(question.id)} of ${minimumEvidenceSpans(question)} required spans were validated.`),
     }));
   const requiredCovered = request.evidenceQuestions
     .filter((question) => question.required)
-    .every((question) => covered.has(question.id));
+    .every((question) => (evidenceCounts.get(question.id) ?? 0) >= minimumEvidenceSpans(question));
   const effectiveError = terminal.errorCode;
   const status = evidence.length === 0
     ? (effectiveError ? "failed" : "not_found")
@@ -170,7 +174,7 @@ export async function compileFreeContextResult(
           endLine: first.endLine,
           reason: status === "ready"
             ? "After this exact-read cell, edit directly with no intervening search."
-            : "After this exact-read cell, use one separate targeted named-gap search batch at most, then edit.",
+            : "After this exact-read cell, call FreeContext once for the named evidence gaps before editing.",
         }
       : {
           kind: "direct_search",

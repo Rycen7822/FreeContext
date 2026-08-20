@@ -61,7 +61,7 @@ function renderEligibilityPolicy(): string {
 }
 
 export const TOOL_DESCRIPTION = renderEligibilityPolicy();
-export const SERVER_INSTRUCTIONS = `FreeContext exposes one read-only ${FREECONTEXT_ELIGIBILITY_POLICY.toolName} tool governed by ${FREECONTEXT_ELIGIBILITY_POLICY.id} in its tool description. FreeContext binds each invocation to the public MCP request id and either an operator-configured absolute workspace root or exactly one public MCP file root; the caller supplies only the complete task and evidence questions. Invoke once per task, await the same outer cell while pending, and never replay before the terminal result. Never send credentials or source dumps, or retry unless the prior result names a material gap.`;
+export const SERVER_INSTRUCTIONS = `FreeContext exposes one read-only ${FREECONTEXT_ELIGIBILITY_POLICY.toolName} tool governed by ${FREECONTEXT_ELIGIBILITY_POLICY.id} in its tool description. FreeContext binds each invocation to the public MCP request id and either an operator-configured absolute workspace root or exactly one public MCP file root; the caller supplies only the complete task and evidence questions. Make one initial call, await the same outer cell while pending, and never replay before the terminal result. A follow-up call is allowed only for exact material gaps named by a prior partial result. Never send credentials or source dumps.`;
 
 export const MODEL_RESULT_MAX_BYTES = 8_192;
 export const RESULT_LIMITS = Object.freeze({
@@ -93,6 +93,8 @@ export const EvidenceQuestionSchema = z.object({
   role: EvidenceRoleSchema,
   question: z.string().trim().min(1).refine((value) => codePointLength(value) <= 2_000, "question is too long"),
   required: z.boolean(),
+  minimumSpans: z.number().int().min(1).max(RESULT_LIMITS.evidence).optional()
+    .describe("Minimum distinct evidence spans required for this question; omit for one."),
 }).strict();
 
 const requestFields = {
@@ -101,25 +103,35 @@ const requestFields = {
     .refine((value) => codePointLength(value) <= 16_000, "taskText is too long"),
   evidenceQuestions: z.array(EvidenceQuestionSchema).min(2).max(RESULT_LIMITS.evidence),
 };
-const uniqueQuestions = ({ evidenceQuestions }: { evidenceQuestions: readonly { id: string }[] }, context: z.core.$RefinementCtx): void => {
+const validateQuestions = ({ evidenceQuestions }: {
+  evidenceQuestions: readonly { id: string; required: boolean; minimumSpans?: number | undefined }[];
+}, context: z.core.$RefinementCtx): void => {
   const seen = new Set<string>();
+  let requiredSpans = 0;
   for (const [index, question] of evidenceQuestions.entries()) {
     if (seen.has(question.id)) {
       context.addIssue({ code: "custom", path: ["evidenceQuestions", index, "id"], message: "question id must be unique" });
     }
     seen.add(question.id);
+    if (question.required) requiredSpans += question.minimumSpans ?? 1;
+    if (!question.required && question.minimumSpans !== undefined && question.minimumSpans !== 1) {
+      context.addIssue({ code: "custom", path: ["evidenceQuestions", index, "minimumSpans"], message: "optional questions cannot require multiple spans" });
+    }
+  }
+  if (requiredSpans > RESULT_LIMITS.evidence) {
+    context.addIssue({ code: "custom", path: ["evidenceQuestions"], message: `required minimum spans cannot exceed ${RESULT_LIMITS.evidence}` });
   }
 };
 
 const RawFreeContextRequestSchema = z.object({
   ...requestFields,
   knownRefs: z.array(KnownReferenceSchema).max(256).default([]),
-}).strict().superRefine(uniqueQuestions);
+}).strict().superRefine(validateQuestions);
 
 export const FreeContextRequestSchema = z.object({
   ...requestFields,
   knownRefs: z.array(KnownReferenceSchema).max(12).default([]),
-}).strict().superRefine(uniqueQuestions);
+}).strict().superRefine(validateQuestions);
 
 export const FreeContextInvocationContextSchema = z.object({
   invocationId: identifier,
@@ -217,6 +229,10 @@ export type FreeContextEvidence = z.infer<typeof FreeContextEvidenceSchema>;
 export type FreeContextGap = z.infer<typeof FreeContextGapSchema>;
 export type FreeContextErrorCode = z.infer<typeof FreeContextErrorCodeSchema>;
 export type FreeContextResult = z.infer<typeof FreeContextResultSchema>;
+
+export function minimumEvidenceSpans(question: Readonly<EvidenceQuestion>): number {
+  return question.minimumSpans ?? 1;
+}
 
 function normalizeKnownPath(value: string): string | null {
   const slashes = value.trim().replace(/\\/gu, "/").replace(/^\.\//u, "");
