@@ -75,10 +75,10 @@ test("implicit discovery routes complex reads to one MCP tool without copying el
     ...exampleRequest,
     evidenceQuestions: [...sixQuestions, { ...sixQuestions[0], id: "facet-6" }],
   }).success, false);
-  assert.match(skill, /Next repository cell reads exactly every Evidence range/u);
-  assert.match(skill, /no widening or other action/u);
+  assert.match(skill, /Next repository cell reads every Evidence range in one `Promise\.all` of literal `tools\.exec_command/iu);
+  assert.match(skill, /no command arrays\/maps, widening, or other action/iu);
   assert.match(skill, /ready edits directly/u);
-  assert.match(skill, /partial permits one separate targeted named-gap search batch/u);
+  assert.match(skill, /partial permits one targeted named-gap search batch/u);
   assert.match(skill, /Never broad-discover or replay/u);
 
   assert.match(metadata, /^  allow_implicit_invocation: true$/mu);
