@@ -48,6 +48,8 @@ export async function compileFreeContextResult(
   const validationReasons = new Map<string, string>();
   const validated: ValidatedEvidenceCandidate[] = [];
   const contentHashes = new Set<string>();
+  const spanTargetLines = Math.floor(RESULT_LIMITS.totalLines
+    / Math.max(1, Math.min(candidate.evidence.length, RESULT_LIMITS.evidence)));
 
   for (const item of candidate.evidence) {
     const question = questions.get(item.questionId);
@@ -88,7 +90,7 @@ export async function compileFreeContextResult(
         validationReasons.set(item.questionId, "Evidence range exceeded the file length.");
         continue;
       }
-      const cropped = cropAroundFocus(item.startLine, item.endLine, item.focusLine);
+      const cropped = cropAroundFocus(item.startLine, item.endLine, item.focusLine, spanTargetLines);
       const content = lines.slice(cropped.startLine - 1, cropped.endLine).join("\n");
       const contentHash = createHash("sha256").update(content).digest("hex");
       const duplicateKey = `${question.id}\0${question.role}\0${contentHash}`;

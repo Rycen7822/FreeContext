@@ -35,11 +35,13 @@ export function cropAroundFocus(
   startLine: number,
   endLine: number,
   focusLine: number,
+  targetLines: number = RESULT_LIMITS.spanLines,
 ): Readonly<{ startLine: number; endLine: number }> {
-  if (endLine - startLine + 1 <= RESULT_LIMITS.spanLines) return { startLine, endLine };
-  let start = Math.max(startLine, focusLine - Math.floor((RESULT_LIMITS.spanLines - 1) / 2));
-  let end = Math.min(endLine, start + RESULT_LIMITS.spanLines - 1);
-  start = Math.max(startLine, end - RESULT_LIMITS.spanLines + 1);
+  const limit = Math.max(1, Math.min(RESULT_LIMITS.spanLines, Math.floor(targetLines)));
+  if (endLine - startLine + 1 <= limit) return { startLine, endLine };
+  let start = Math.max(startLine, focusLine - Math.floor((limit - 1) / 2));
+  let end = Math.min(endLine, start + limit - 1);
+  start = Math.max(startLine, end - limit + 1);
   return { startLine: start, endLine: end };
 }
 

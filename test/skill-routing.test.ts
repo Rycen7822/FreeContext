@@ -50,8 +50,8 @@ test("implicit discovery routes complex reads to one MCP tool without copying el
     assert.ok(skill.includes(shape));
   }
   assert.match(skill, /no query refs/u);
-  assert.match(skill, /2–6 unique ids, one per independent code decision that could trigger another search/iu);
-  assert.match(skill, /split clauses needing different symbols\/files \(parse, catalog, apply, span, metric, test\)/iu);
+  assert.match(skill, /Code changes use all 6 ids—parse, catalog, apply, span, metric, test—one independent decision each/iu);
+  assert.match(skill, /never combine clauses or role buckets\. Other work uses 2–6/iu);
   assert.match(skill, /Roles: `implementation`, `caller`, `test`, `contract`/u);
   assert.match(skill, /contract only for a task\/knownRefs-named API\/schema\/spec\/compatibility source/iu);
   assert.doesNotMatch(skill, /\bworkspace_root\b/u);

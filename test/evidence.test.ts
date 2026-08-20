@@ -95,6 +95,35 @@ test("compiler validates observed spans, crops, orders, and emits a ready result
   assert.match(serialized, /First repository cell: read exactly all Evidence ranges above; no range widening, search, status, plan, or branch\./u);
 }));
 
+test("compiler budgets six broad facet ranges before evidence selection", async () => withWorkspace(async (root) => {
+  const evidenceQuestions = Array.from({ length: 6 }, (_, index) => ({
+    id: `facet-${index + 1}`,
+    role: "implementation" as const,
+    question: `Where is facet ${index + 1} implemented?`,
+    required: true,
+  }));
+  const evidence = evidenceQuestions.map((question, index) => ({
+    role: question.role,
+    questionId: question.id,
+    path: "src/router.ts",
+    startLine: 1,
+    endLine: 120,
+    focusLine: 10 + (index * 20),
+    why: `Defines facet ${index + 1}.`,
+  }));
+  const result = await compileFreeContextResult(
+    { ...request(), evidenceQuestions },
+    invocation(root),
+    candidate("All six independently editable facets were observed.", evidence),
+    { errorCode: null },
+    [observed("src/router.ts", 1, 120)],
+  );
+  assert.equal(result.status, "ready");
+  assert.equal(result.evidence.length, 6);
+  assert.ok(result.evidence.every((item) => item.endLine - item.startLine + 1 <= 53));
+  assert.ok(result.evidence.reduce((total, item) => total + item.endLine - item.startLine + 1, 0) <= 320);
+}));
+
 test("compiler turns role mismatch and rejected generated paths into explicit gaps", async () => withWorkspace(async (root) => {
   const evidence: ExplorerEvidenceCandidate[] = [
     { role: "implementation", questionId: "implementation", path: "src/router.ts", startLine: 10, endLine: 20, focusLine: 15, why: "Defines routing." },
