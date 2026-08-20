@@ -1,14 +1,13 @@
 ---
 name: freecontext
-description: Route complex multi-file, multi-document, cross-module, long-document, or source-bound reads through FreeContext. Open alone; call gather_context next, before plan, Git, catalog, or repo action.
+description: For complex multi-file, multi-document, cross-module, long-document, or source-bound reads, the first tool cell must only read this SKILL.md—no pwd/rg/fd/Git/plan/catalog. The next cell directly calls tools.mcp__freecontext__gather_context.
 ---
 
 # FreeContext routing
 
-- Select before native repository/document read/search for multi-file evidence, multi-document synthesis, cross-module call chains, jointly constraining config, long-document multi-fact extraction, or source-bound planning, review, or diagnosis.
+- Select before native reads/searches for multi-file/document evidence, cross-module chains, jointly constraining config, long-document extraction, or source-bound planning/review/diagnosis.
 - Direct-read only when one known bounded implementation suffices, or 1–2 exact candidates after the probe.
-- Read this file alone. Next turn uses exact caller; never query catalogs, plan, Git, or act on repo first.
-- Tool description sets eligibility; do not repeat its gates.
+- First tool cell: read only this file—never append pwd, rg, fd, Git, plan, catalog, or repo actions. Next cell directly calls `tools.mcp__freecontext__gather_context`; never inspect a tool catalog first.
 - Include `knownRefs` (`[]` when none): 0–12 `{kind:"path",path}`, `{kind:"symbol",symbol,path?}`, or `{kind:"stack",path,line}`; no query refs. Code changes use all 6 ids—parse, catalog, apply, span, metric, test—one independent decision each; never combine clauses or role buckets. Other work uses 2–6. Roles: `implementation`, `caller`, `test`, `contract`; contract only for a task/knownRefs-named API/schema/spec/compatibility source. No identity/secrets/dumps.
 
 ```json

@@ -17,19 +17,20 @@ test("implicit discovery routes complex reads to one MCP tool without copying el
   assert.ok([...description].length <= 420);
   assert.equal(
     description,
-    "Route complex multi-file, multi-document, cross-module, long-document, or source-bound reads through FreeContext. Open alone; call gather_context next, before plan, Git, catalog, or repo action.",
+    "For complex multi-file, multi-document, cross-module, long-document, or source-bound reads, the first tool cell must only read this SKILL.md—no pwd/rg/fd/Git/plan/catalog. The next cell directly calls tools.mcp__freecontext__gather_context.",
   );
   for (const gate of FREECONTEXT_ELIGIBILITY_POLICY.gates) assert.equal(skill.includes(gate.instruction), false);
-  assert.match(skill, /Read this file alone\. Next turn uses exact caller/u);
-  assert.match(skill, /never query catalogs, plan, Git, or act on repo first/u);
+  assert.match(skill, /First tool cell: read only this file/iu);
+  assert.match(skill, /never append pwd, rg, fd, Git, plan, catalog, or repo actions/iu);
   for (const trigger of ["multi-file", "multi-document", "cross-module", "long-document", "source-bound"]) {
     assert.ok(description.includes(trigger));
   }
-  assert.match(description, /Open alone; call gather_context next, before plan, Git, catalog, or repo action/u);
+  assert.match(description, /first tool cell must only read this SKILL\.md—no pwd\/rg\/fd\/Git\/plan\/catalog/iu);
+  assert.match(description, /next cell directly calls tools\.mcp__freecontext__gather_context/iu);
   assert.doesNotMatch(skill, /never auto-trigger|only (?:after )?an explicit user request/iu);
   assert.match(skill, /typeof tools\.mcp__freecontext__gather_context !== "function"/u);
   assert.doesNotMatch(skill, /ALL_TOOLS/u);
-  assert.match(skill, /never query catalogs/u);
+  assert.match(skill, /never inspect a tool catalog first/iu);
   assert.equal(skill.match(/await tools\.mcp__freecontext__gather_context\(args\)/gu)?.length, 1);
   assert.equal(skill.match(/\bnotify\(/gu)?.length, 1);
   assert.equal(skill.match(/functions\.wait/gu)?.length, 1);
@@ -85,7 +86,7 @@ test("implicit discovery routes complex reads to one MCP tool without copying el
   assert.match(metadata, /^    - type: "mcp"$/mu);
   assert.equal(metadata.match(/^      value: "freecontext"$/gmu)?.length, 1);
   const shortDescription = metadata.match(/^  short_description: "([^"]+)"$/mu)?.[1];
-  assert.equal(shortDescription, "Open alone, then call FreeContext next");
+  assert.equal(shortDescription, "First cell reads skill only; next calls gather_context");
 
   const routingSurface = `${skill}\n${metadata}`;
   for (const forbidden of [
