@@ -38,6 +38,24 @@ _REMOTE_AGENT_DIR = PurePosixPath("/logs/agent")
 _REMOTE_SESSION_DIR = _REMOTE_AGENT_DIR / "freecontext-sessions"
 _REMOTE_WORKSPACE_ROOT = PurePosixPath("/app")
 
+EXPLICIT_FC_FIRST_POLICY = (
+    "[Benchmark arm policy: explicit_fc_first]\n"
+    "Before any repository exploration, use the installed FreeContext skill. "
+    "The first tool cell must read only that SKILL.md; the next tool cell must call "
+    "gather_context exactly once and wait for its terminal result. FreeContext must "
+    "be the first repository exploration action. Do not use native repository reads "
+    "or searches before it."
+)
+EXPLICIT_NATIVE_ONLY_POLICY = (
+    "[Benchmark arm policy: explicit_native_only]\n"
+    "FreeContext is disabled for this arm. Use native repository tools for exploration "
+    "and do not invoke FreeContext."
+)
+
+
+def compose_benchmark_instruction(policy: str, instruction: str) -> str:
+    return f"{policy}\n\n[Upstream task instruction]\n{instruction}"
+
 
 def _runtime_archive() -> Path:
     if _ARCHIVE_VALUE:
@@ -117,7 +135,11 @@ approval_mode = "approve"
                 else mcp_config
             )
             run_started = True
-            await super().run(instruction, environment, context)
+            await super().run(
+                compose_benchmark_instruction(EXPLICIT_FC_FIRST_POLICY, instruction),
+                environment,
+                context,
+            )
         except BaseException:
             run_failed = True
             raise
@@ -246,7 +268,12 @@ class PierCodexControl(PierCodexFreeContext):
     ) -> None:
         await self._upload_control_runtime(environment)
         try:
-            await PierCodexBase.run(self, instruction, environment, context)
+            await PierCodexBase.run(
+                self,
+                compose_benchmark_instruction(EXPLICIT_NATIVE_ONLY_POLICY, instruction),
+                environment,
+                context,
+            )
         finally:
             await self._cleanup_control_runtime(environment)
 

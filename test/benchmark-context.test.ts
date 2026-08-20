@@ -695,6 +695,20 @@ test("historical benchmark sessions retain only an observation that actually app
 test("canonical Pier adapter registers direct MCP without legacy CLI wrappers", async () => {
   const source = await readFile(new URL("../benchmarks/deepswe/pier_codex_freecontext_agent.py", import.meta.url), "utf8");
   const freeContextConfig = await readFile(new URL("../benchmarks/deepswe/freecontext.toml", import.meta.url), "utf8");
+  const explicitPolicies = `EXPLICIT_FC_FIRST_POLICY = (
+    "[Benchmark arm policy: explicit_fc_first]\\n"
+    "Before any repository exploration, use the installed FreeContext skill. "
+    "The first tool cell must read only that SKILL.md; the next tool cell must call "
+    "gather_context exactly once and wait for its terminal result. FreeContext must "
+    "be the first repository exploration action. Do not use native repository reads "
+    "or searches before it."
+)
+EXPLICIT_NATIVE_ONLY_POLICY = (
+    "[Benchmark arm policy: explicit_native_only]\\n"
+    "FreeContext is disabled for this arm. Use native repository tools for exploration "
+    "and do not invoke FreeContext."
+)`;
+  assert.equal(source.includes(explicitPolicies), true, "explicit arm policy text drifted");
   for (const pattern of [
     /\[mcp_servers\.freecontext\]/u,
     /enabled_tools = \["gather_context"\]/u,
@@ -706,6 +720,9 @@ test("canonical Pier adapter registers direct MCP without legacy CLI wrappers", 
     /--session-dir \{_REMOTE_SESSION_DIR\.as_posix\(\)\} \\"\$@\\"/u,
     /freecontext-benchmark-context\.mjs/u,
     /FREECONTEXT_PROVIDER_BOOTSTRAP_PROFILE/u,
+    /return f"\{policy\}\\n\\n\[Upstream task instruction\]\\n\{instruction\}"/u,
+    /compose_benchmark_instruction\(EXPLICIT_FC_FIRST_POLICY, instruction\)/u,
+    /compose_benchmark_instruction\(EXPLICIT_NATIVE_ONLY_POLICY, instruction\)/u,
   ]) assert.match(source, pattern);
   for (const legacy of ["_GUIDANCE", "freecontext explore", "_REMOTE_WRAPPER", "write_stdin"]) {
     assert.equal(source.includes(legacy), false, `legacy adapter surface remains: ${legacy}`);
