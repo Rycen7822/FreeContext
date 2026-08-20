@@ -17,14 +17,15 @@ test("implicit discovery routes complex reads to one MCP tool without copying el
   assert.ok([...description].length <= 420);
   assert.equal(
     description,
-    "Route complex reads through FreeContext. For multi-file, multi-document, cross-module, long-document, or source-bound work, open this skill alone before repository read/search, then call gather_context first.",
+    "Route complex multi-file, multi-document, cross-module, long-document, or source-bound reads through FreeContext. Open alone; call gather_context next, before plan, Git, catalog, or repo action.",
   );
   for (const gate of FREECONTEXT_ELIGIBILITY_POLICY.gates) assert.equal(skill.includes(gate.instruction), false);
-  assert.match(skill, /first and only `functions\.exec`/u);
+  assert.match(skill, /Read this file alone\. Next turn uses exact caller/u);
+  assert.match(skill, /never query catalogs, plan, Git, or act on repo first/u);
   for (const trigger of ["multi-file", "multi-document", "cross-module", "long-document", "source-bound"]) {
     assert.ok(description.includes(trigger));
   }
-  assert.match(description, /open this skill alone before repository read\/search, then call gather_context first/u);
+  assert.match(description, /Open alone; call gather_context next, before plan, Git, catalog, or repo action/u);
   assert.doesNotMatch(skill, /never auto-trigger|only (?:after )?an explicit user request/iu);
   assert.match(skill, /typeof tools\.mcp__freecontext__gather_context !== "function"/u);
   assert.doesNotMatch(skill, /ALL_TOOLS/u);
@@ -84,8 +85,7 @@ test("implicit discovery routes complex reads to one MCP tool without copying el
   assert.match(metadata, /^    - type: "mcp"$/mu);
   assert.equal(metadata.match(/^      value: "freecontext"$/gmu)?.length, 1);
   const shortDescription = metadata.match(/^  short_description: "([^"]+)"$/mu)?.[1];
-  assert.equal(shortDescription, "Open FreeContext before complex reads");
-  assert.doesNotMatch(skill, /After loading, call FreeContext next/u);
+  assert.equal(shortDescription, "Open alone, then call FreeContext next");
 
   const routingSurface = `${skill}\n${metadata}`;
   for (const forbidden of [

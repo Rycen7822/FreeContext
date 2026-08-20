@@ -1,13 +1,13 @@
 ---
 name: freecontext
-description: Route complex reads through FreeContext. For multi-file, multi-document, cross-module, long-document, or source-bound work, open this skill alone before repository read/search, then call gather_context first.
+description: Route complex multi-file, multi-document, cross-module, long-document, or source-bound reads through FreeContext. Open alone; call gather_context next, before plan, Git, catalog, or repo action.
 ---
 
 # FreeContext routing
 
 - Select before native repository/document read/search for multi-file evidence, multi-document synthesis, cross-module call chains, jointly constraining config, long-document multi-fact extraction, or source-bound planning, review, or diagnosis.
 - Direct-read only when one known bounded implementation suffices, or 1–2 exact candidates after the probe.
-- Use this caller as first and only `functions.exec`; never query catalogs or print metadata.
+- Read this file alone. Next turn uses exact caller; never query catalogs, plan, Git, or act on repo first.
 - Tool description sets eligibility; do not repeat its gates.
 - Include `knownRefs` (`[]` when none): 0–12 `{kind:"path",path}`, `{kind:"symbol",symbol,path?}`, or `{kind:"stack",path,line}`; no query refs. Use 2–6 unique ids, one per independent code decision that could trigger another search; split clauses needing different symbols/files (parse, catalog, apply, span, metric, test), never role buckets. Roles: `implementation`, `caller`, `test`, `contract`; contract only for a task/knownRefs-named API/schema/spec/compatibility source. No identity/secrets/dumps.
 
