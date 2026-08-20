@@ -170,7 +170,7 @@ export function createSubmitEvidenceTool({
   const tool: AgentTool<typeof parameters, SubmitEvidenceDetails> = {
     name: SUBMIT_EVIDENCE_TOOL_NAME,
     label: "Submit verified evidence",
-    description: "Submit once using exact question IDs and observed ranges; cover required questions before extras.",
+    description: "Submit once with at most six observed spans; with six questions use at most one per question, and use a gap only when role-matched evidence is absent.",
     parameters,
     executionMode: "sequential",
     execute: async (_toolCallId, params) => {
@@ -303,7 +303,7 @@ export function buildFinalizationPacket(
       maxItems: { evidence: RESULT_LIMITS.evidence, gaps: GAP_LIMIT },
       question_id: "exact questions[].id; omit role because the harness derives it",
       citation: `non-empty repository-relative path; integer 1 <= start_line <= focus_line <= end_line <= ${LINE_NUMBER_LIMIT}; range within one matching repositoryObservation`,
-      coverage: "Allocate one observed span per supported required question before any second span. Evidence and gaps must use disjoint question IDs. Gap only when no observation covers every named concern, never because the evidence limit is full.",
+      coverage: "Allocate one role-matched observed span per supported required question before any second span. When questions.length equals maxItems.evidence, use at most one span per question. Evidence and gaps must use disjoint question IDs. If role-matched support is absent, use a gap only; never substitute another role or claim a present observation is absent.",
     },
     repositoryObservations,
   });

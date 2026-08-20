@@ -84,6 +84,7 @@ test("submit_evidence exposes only portable shape constraints to the provider", 
     isFinalizing: () => false,
   });
   const schema = JSON.stringify(tool.parameters);
+  assert.match(tool.description, /with six questions use at most one per question/iu);
   assert.equal(schema.includes('"role"'), false);
   for (const unsupported of ["anyOf", "oneOf", "allOf", "const", "pattern", "minLength", "maxLength", "minimum", "maximum", "maxItems"]) {
     assert.equal(schema.includes(`\"${unsupported}\"`), false, unsupported);
@@ -212,7 +213,7 @@ test("isolated packet marks exploration complete and omits repository tool origi
     maxItems: { evidence: 6, gaps: 6 },
     question_id: "exact questions[].id; omit role because the harness derives it",
     citation: "non-empty repository-relative path; integer 1 <= start_line <= focus_line <= end_line <= 10000000; range within one matching repositoryObservation",
-    coverage: "Allocate one observed span per supported required question before any second span. Evidence and gaps must use disjoint question IDs. Gap only when no observation covers every named concern, never because the evidence limit is full.",
+    coverage: "Allocate one role-matched observed span per supported required question before any second span. When questions.length equals maxItems.evidence, use at most one span per question. Evidence and gaps must use disjoint question IDs. If role-matched support is absent, use a gap only; never substitute another role or claim a present observation is absent.",
   });
   const { tool: _tool, ...modelObservation } = observedRead;
   assert.equal(_tool, "read");
