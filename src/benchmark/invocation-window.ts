@@ -36,6 +36,24 @@ function questionIds(request: Readonly<FreeContextRequest>): Set<string> {
   return new Set(request.evidenceQuestions.map(({ id }) => id));
 }
 
+function sameQuestion(
+  current: Readonly<FreeContextRequest>["evidenceQuestions"][number],
+  previous: Readonly<FreeContextRequest>["evidenceQuestions"][number],
+): boolean {
+  return current.id === previous.id && current.role === previous.role &&
+    current.question === previous.question && current.required === previous.required &&
+    (current.minimumSpans ?? 1) === (previous.minimumSpans ?? 1);
+}
+
+function sameRequest(current: Readonly<FreeContextRequest>, previous: Readonly<FreeContextRequest>): boolean {
+  return current.taskText === previous.taskText && isDeepStrictEqual(current.knownRefs, previous.knownRefs) &&
+    current.evidenceQuestions.length === previous.evidenceQuestions.length &&
+    current.evidenceQuestions.every((question, index) => {
+      const prior = previous.evidenceQuestions[index];
+      return prior !== undefined && sameQuestion(question, prior);
+    });
+}
+
 function matchesGapQuestions(
   current: Readonly<FreeContextRequest>,
   previous: Readonly<FreeContextRequest>,
@@ -43,8 +61,10 @@ function matchesGapQuestions(
 ): boolean {
   if (current.evidenceQuestions.length !== gapIds.size) return false;
   const previousQuestions = new Map(previous.evidenceQuestions.map((question) => [question.id, question]));
-  return current.evidenceQuestions.every((question) => gapIds.has(question.id) &&
-    isDeepStrictEqual(question, previousQuestions.get(question.id)));
+  return current.evidenceQuestions.every((question) => {
+    const prior = previousQuestions.get(question.id);
+    return gapIds.has(question.id) && prior !== undefined && sameQuestion(question, prior);
+  });
 }
 
 function normalizedReferencePaths(request: Readonly<FreeContextRequest>): Set<string> {
@@ -76,7 +96,7 @@ function invalidWindows(
     windowEndedBefore: null,
     windowObserved: false,
     exactDuplicate: inputs.some((candidate, candidateIndex) =>
-      candidateIndex !== inputIndex && isDeepStrictEqual(candidate.request, input.request)),
+      candidateIndex !== inputIndex && sameRequest(candidate.request, input.request)),
     failureReasons: Object.freeze([...reasons]),
   })));
 }
@@ -143,7 +163,7 @@ export function buildFreeContextInvocationWindows(
   for (const [index, invocation] of correlated.entries()) {
     const previous = correlated[index - 1];
     const currentIds = questionIds(invocation.input.request);
-    const exactDuplicate = priorRequests.some((request) => isDeepStrictEqual(request, invocation.input.request));
+    const exactDuplicate = priorRequests.some((request) => sameRequest(request, invocation.input.request));
     let invocationKind: FreeContextInvocationKind = index === 0 ? "initial" : "invalid";
     const failureReasons: string[] = [];
 

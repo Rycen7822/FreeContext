@@ -110,7 +110,7 @@ test("an exact partial gap set with prior evidence refs stays in one episode", (
     ...request("implementation"),
     evidenceQuestions: [
       ...request("implementation").evidenceQuestions,
-      ...request("tests").evidenceQuestions,
+      { ...request("tests").evidenceQuestions[0]!, minimumSpans: 1 },
     ],
   };
   const initialResult = result("implementation", "partial", ["tests"]);
@@ -130,7 +130,10 @@ test("exact replay and malformed gap follow-up are invalid without hiding their 
   const replay = request("implementation");
   const replayWindows = buildFreeContextInvocationWindows([
     input("call-1", replay, result("implementation")),
-    input("call-2", replay, result("implementation")),
+    input("call-2", {
+      ...replay,
+      evidenceQuestions: replay.evidenceQuestions.map((question) => ({ ...question, minimumSpans: 1 })),
+    }, result("implementation")),
   ], [
     transport("hash-call-1", "2026-08-21T00:00:00.000Z", "2026-08-21T00:00:10.000Z"),
     transport("hash-call-2", "2026-08-21T00:00:20.000Z", "2026-08-21T00:00:30.000Z"),

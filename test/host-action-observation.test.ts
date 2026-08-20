@@ -245,6 +245,21 @@ test("search option values do not masquerade as repository paths", () => {
   assert.deepEqual(extracted.actions.map(({ broad }) => broad), [false, true]);
 });
 
+test("completed path-only probes use their bounded output without hiding broad results", () => {
+  const code = 'await tools.exec_command({cmd:"rg --files tests | rg \'(manager|utils|tester|nosec)\'"});';
+  const onePath = collectCompletedHostRepositoryActions(
+    completedCell(code, "Script completed\nOutput:\n\ntests/unit/core/test_manager.py\n"),
+    BOUNDARY,
+  );
+  assert.deepEqual(onePath.actions.map(({ action }) => action.broad), [false, false]);
+
+  const sevenPaths = collectCompletedHostRepositoryActions(
+    completedCell(code, `Script completed\nOutput:\n\n${Array.from({ length: 7 }, (_, index) => `tests/test_${index}.py`).join("\n")}\n`),
+    BOUNDARY,
+  );
+  assert.deepEqual(sevenPaths.actions.map(({ action }) => action.broad), [true, true]);
+});
+
 test("unsupported shell redirection fails closed", () => {
   const extracted = extractRepositoryActionsFromCode(
     'await tools.exec_command({cmd:"head -n 10 src/input.ts > /tmp/output"});',

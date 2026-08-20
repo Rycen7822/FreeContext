@@ -34,6 +34,15 @@ function renderedOutput(value: unknown): string {
   return value.flatMap((item) => isRecord(item) && typeof item.text === "string" ? [item.text] : []).join("\n");
 }
 
+function boundedPathProbeOutput(value: string): boolean {
+  const marker = "\nOutput:\n";
+  const body = value.includes(marker) ? value.slice(value.lastIndexOf(marker) + marker.length) : value;
+  const lines = body.split(/\r?\n/u).map((line) => line.trim()).filter(Boolean);
+  return lines.length <= 6 && lines.every((line) =>
+    !line.startsWith("/") && !line.split("/").includes("..") &&
+    /^[A-Za-z0-9._@+~/-]+$/u.test(line) && (line.includes("/") || line.includes(".")));
+}
+
 export function collectCompletedHostRepositoryActions(
   rawJsonl: string,
   boundary: Readonly<HostActionBoundary>,
@@ -116,12 +125,16 @@ export function collectCompletedHostRepositoryActions(
       if (extracted.actions.every(({ kind }) => kind === "edit")) continue;
       return Object.freeze({ complete: false, actions: Object.freeze([]) });
     }
-    observed.push(...extracted.actions.map((repositoryAction) => ({
-      repositoryAction,
-      batchId: id,
-      batchConcurrent: extracted.concurrent,
-      batchOrder,
-    })));
+    const boundedPathProbe = boundedPathProbeOutput(output);
+    observed.push(...extracted.actions.map((repositoryAction) => {
+      const { pathOnlyProbe, ...publicAction } = repositoryAction;
+      return {
+        repositoryAction: pathOnlyProbe && boundedPathProbe ? { ...publicAction, broad: false } : publicAction,
+        batchId: id,
+        batchConcurrent: extracted.concurrent,
+        batchOrder,
+      };
+    }));
   }
   if (pending.size > 0) return Object.freeze({ complete: false, actions: Object.freeze([]) });
   observed.sort((left, right) => left.batchOrder - right.batchOrder);

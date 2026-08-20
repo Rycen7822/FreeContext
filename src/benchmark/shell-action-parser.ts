@@ -16,6 +16,7 @@ export interface RepositoryAction {
   readonly endLine: number | null;
   readonly broad: boolean;
   readonly gapQuestionIds: readonly string[];
+  readonly pathOnlyProbe?: true;
 }
 
 export interface ExtractedRepositoryActions {
@@ -139,8 +140,10 @@ function normalizedPath(value: string | undefined): string | null {
 }
 
 function action(kind: RepositoryAction["kind"], path: string | null, startLine: number | null,
-  endLine: number | null, broad = false, gapQuestionIds: readonly string[] = []): RepositoryAction {
-  return { kind, path, startLine, endLine, broad, gapQuestionIds };
+  endLine: number | null, broad = false, gapQuestionIds: readonly string[] = [],
+  pathOnlyProbe = false): RepositoryAction {
+  const value = { kind, path, startLine, endLine, broad, gapQuestionIds };
+  return pathOnlyProbe ? { ...value, pathOnlyProbe: true } : value;
 }
 
 function searchPositionals(name: string, args: readonly string[]): {
@@ -185,8 +188,30 @@ function searchIsBroad(name: string, args: readonly string[]): boolean {
   return paths.length === 0 || paths.some((item) => item === "." || item === "./");
 }
 
+function pathOnlySearch(command: string): boolean {
+  if (/\n|;|&&|\|\|/u.test(command)) return false;
+  const commands = splitShell(command).map((segment) => {
+    const tokens = shellTokens(segment);
+    let name = tokens[0]?.split("/").at(-1) ?? "";
+    let args = tokens.slice(1);
+    if (name === "rtk" && args[0]) {
+      name = args[0];
+      args = args.slice(1);
+    }
+    return { name, args };
+  });
+  const first = commands[0];
+  if (!first || first.name !== "rg" || !first.args.includes("--files")) return false;
+  return commands.slice(1).every(({ name, args }) => {
+    if (name !== "rg" && name !== "grep") return false;
+    const { values, patternFromOption } = searchPositionals(name, args);
+    return (patternFromOption ? values : values.slice(1)).length === 0;
+  });
+}
+
 function commandActions(command: string, gapQuestionIds: readonly string[]): RepositoryAction[] | null {
   const actions: RepositoryAction[] = [];
+  const pathOnlyProbe = pathOnlySearch(command);
   for (const segment of splitShell(command)) {
     const tokens = shellTokens(segment);
     if (tokens.length === 0) continue;
@@ -199,7 +224,7 @@ function commandActions(command: string, gapQuestionIds: readonly string[]): Rep
     const recognized = ["rg", "fd", "grep", "find", "sed", "bat", "read", "head", "cat"].includes(name);
     if (recognized && tokens.some((item) => item !== "2>/dev/null" && /^(?:\d*)?[<>]/u.test(item))) return null;
     if (["rg", "fd", "grep", "find"].includes(name)) {
-      actions.push(action("search", null, null, null, searchIsBroad(name, args), gapQuestionIds));
+      actions.push(action("search", null, null, null, searchIsBroad(name, args), gapQuestionIds, pathOnlyProbe));
       continue;
     }
     if (name === "sed") {
