@@ -30,6 +30,8 @@ test("default explorer reserves the fourth turn for terminal submission", async 
   assert.match(prompt, /targeted-search wave seeks a line or symbol candidate for each named concern of every required question/u);
   assert.match(prompt, /globbed paths are not content candidates/u);
   assert.match(prompt, /Turn 2: read one role-matched candidate per required question/u);
+  assert.match(prompt, /Test-role evidence is an actual test\/spec file or inline test block/iu);
+  assert.match(prompt, /never a production helper whose name contains test/iu);
   assert.match(prompt, /With 6 questions, no question may take a second span/u);
   assert.match(prompt, /Stop when each named concern has a role-matched decisive span/u);
   assert.match(prompt, /Turn 3 only reads located spans with `read`\/`bat` or submits/u);
