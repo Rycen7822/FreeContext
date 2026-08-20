@@ -51,10 +51,12 @@ test("implicit discovery routes complex reads to one MCP tool without copying el
     assert.ok(skill.includes(shape));
   }
   assert.match(skill, /no query refs/u);
-  assert.match(skill, /Code changes use all 6 ids—parse, catalog, apply, span, metric, test—one independent decision each/iu);
-  assert.match(skill, /never combine clauses or role buckets\. Other work uses 2–6/iu);
+  assert.match(skill, /Code changes: 3–4 outcome questions/iu);
+  assert.match(skill, /free slots hold secondary spans/iu);
+  assert.match(skill, /never force six parse\/catalog\/span\/metric buckets/iu);
+  assert.match(skill, /Other: 2–6/iu);
   assert.match(skill, /Roles: `implementation`, `caller`, `test`, `contract`/u);
-  assert.match(skill, /contract only for a task\/knownRefs-named API\/schema\/spec\/compatibility source/iu);
+  assert.match(skill, /contract only for named API\/schema\/spec\/compat/iu);
   assert.doesNotMatch(skill, /\bworkspace_root\b/u);
   assert.throws(() => FreeContextRequestSchema.parse({
     ...exampleRequest,
