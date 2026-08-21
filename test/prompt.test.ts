@@ -37,6 +37,7 @@ test("default explorer reserves the fourth turn for terminal submission", async 
   assert.match(prompt, /a late search cannot be cited/u);
   assert.match(prompt, /On turn 4, submit the best supported result alone/u);
   assert.match(prompt, /there is no repair turn/u);
+  assert.match(prompt, /every citation must stay within one repository-tool observation even when adjacent observations touch/iu);
   assert.match(prompt, /If a required target is only partly supported, submit its observed evidence and a gap/iu);
   assert.doesNotMatch(prompt, /Turn 5/u);
 });

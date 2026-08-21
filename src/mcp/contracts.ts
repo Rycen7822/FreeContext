@@ -50,8 +50,8 @@ export const FREECONTEXT_ELIGIBILITY_POLICY = Object.freeze({
     "FreeContext is read-only: no edits, tests, Git, packages, web, or credentials.",
     "Read the skill once at task start; later episodes call gather_context directly without catalog discovery.",
     "Reentrant episodes use one to four new questions and edited, failure, or confirmed paths as knownRefs.",
-    "Each episode is one main call plus one immediate gap-only follow-up only for partial; ready is invocation-scoped and pending is never replayed.",
-    "After every result, the next repository cell reads all exact evidence ranges and nothing else.",
+    "Each episode is one main call; only partial allows one gap follow-up after its Evidence: copy unresolved question objects and every evidence path; never replay pending.",
+    "After every result, the next repository cell is one Promise.all of literal exact evidence reads; no generated calls or commands.",
   ]),
 });
 
@@ -70,7 +70,7 @@ function renderEligibilityPolicy(): string {
 }
 
 export const TOOL_DESCRIPTION = renderEligibilityPolicy();
-export const SERVER_INSTRUCTIONS = `FreeContext exposes one read-only ${FREECONTEXT_ELIGIBILITY_POLICY.toolName} tool governed by ${FREECONTEXT_ELIGIBILITY_POLICY.id}. Each invocation binds to the public MCP request id and either an operator-configured absolute workspace root or one public MCP file root; the caller sends only the current issue and evidence questions. Each initial or reentrant episode makes one main call and awaits the same outer cell; never replay a pending or terminal invocation. After exact evidence reads, only partial permits one immediate follow-up with exactly its unresolved questions and returned paths. Ready is invocation-scoped; a later trigger starts a new episode. Never send credentials or source dumps.`;
+export const SERVER_INSTRUCTIONS = `FreeContext exposes one read-only ${FREECONTEXT_ELIGIBILITY_POLICY.toolName} tool governed by ${FREECONTEXT_ELIGIBILITY_POLICY.id}. Each invocation binds to the public MCP request id and either an operator-configured absolute workspace root or one public MCP file root; the caller sends only the current issue and evidence questions. Each initial or reentrant episode makes one main call and awaits the same outer cell; never replay a pending or terminal invocation. Only partial permits one follow-up after its exact evidence: copy unresolved question objects without rewriting and include every returned evidence path. Ready is invocation-scoped; a later trigger starts a new episode. Never send credentials or source dumps.`;
 
 export const MODEL_RESULT_MAX_BYTES = 8_192;
 export const RESULT_LIMITS = Object.freeze({

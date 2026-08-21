@@ -36,4 +36,4 @@ Repository overview:
 
 ## Terminal submission contract
 
-Use only question IDs and roles from the request. Every `focus_line` must be one integer inside its cited range. Include at most 6 narrow, decisive evidence spans and satisfy each required question's `minimumSpans`. If a required target is only partly supported, submit its observed evidence and a gap for the missing coverage; never substitute another role. Do not submit broad file dumps, guessed line ranges, or evidence that was not observed.
+Use only question IDs and roles from the request. Every `focus_line` must be one integer inside its cited range, and every citation must stay within one repository-tool observation even when adjacent observations touch. Include at most 6 narrow, decisive evidence spans and satisfy each required question's `minimumSpans`. If a required target is only partly supported, submit its observed evidence and a gap for the missing coverage; never substitute another role. Do not submit broad file dumps, guessed line ranges, or evidence that was not observed.

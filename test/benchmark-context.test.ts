@@ -175,6 +175,7 @@ async function createFixture(
   includeTransport = false,
   includeDirectObservation = true,
   includeParentAction = true,
+  includeRejectedTransport = false,
 ): Promise<Readonly<{ agentDir: string; masterRaw: string; sessionRaw: string }>> {
   const agentDir = path.join(root, "agent");
   const sessionDir = path.join(agentDir, "sessions", "2026", "08", "09");
@@ -185,6 +186,28 @@ async function createFixture(
       (observedText !== null || startedOnly)) {
     if (includeTransport) {
       const metadata = { turn_id: "turn-001" };
+      if (includeRejectedTransport) {
+        events.push({
+          timestamp: "2026-08-08T23:59:58.000Z",
+          type: "response_item",
+          payload: {
+            type: "custom_tool_call",
+            name: "exec",
+            call_id: "outer-rejected",
+            input: "const result = await tools.mcp__freecontext__gather_context({ questions: [] }); notify(\"slow\");",
+            internal_chat_message_metadata_passthrough: metadata,
+          },
+        }, {
+          timestamp: "2026-08-08T23:59:59.000Z",
+          type: "response_item",
+          payload: {
+            type: "custom_tool_call_output",
+            call_id: "outer-rejected",
+            output: [{ type: "input_text", text: "MCP error -32602: Input validation error" }],
+            internal_chat_message_metadata_passthrough: metadata,
+          },
+        });
+      }
       events.push({
         timestamp: "2026-08-09T00:00:00.000Z",
         type: "response_item",
@@ -428,6 +451,24 @@ test("same-cell code-await output is the actual observation without a direct MCP
     assert.equal(call?.recoverableResult, null);
     assert.equal(document.freeContextTransport[0]?.terminalOutputSeen, true);
     assert.deepEqual(document.duplicateSemanticCalls, []);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("rejected request transports do not invalidate a matched session window", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "freecontext-rejected-transport-"));
+  try {
+    const session = v3Session();
+    const actualText = serializeForModel(session.result);
+    const fixture = await createFixture(root, session, actualText, undefined, false, false, true, false, true, true);
+    const outputPath = await exportMasterAgentContext({ agentDir: fixture.agentDir, taskName: "rejected-transport" });
+    const document = JSON.parse(await readFile(outputPath, "utf8")) as BenchmarkMasterAgentContext;
+    assert.equal(document.freeContextTransport.length, 2);
+    assert.equal(document.freeContextTransport[0]?.terminalTextSha256, null);
+    assert.equal(document.freeContextCalls[0]?.invocationKind, "initial");
+    assert.equal(document.freeContextCalls[0]?.windowObserved, true);
+    assert.deepEqual(document.freeContextCalls[0]?.consumptionAudit?.escapedExplorationReasons, []);
   } finally {
     await rm(root, { recursive: true, force: true });
   }
@@ -865,9 +906,12 @@ test("canonical Pier adapter registers direct MCP without legacy CLI wrappers", 
     "Initial: the first cell reads only the installed FreeContext SKILL.md; the next calls "
     "gather_context and awaits its terminal result. Do no native exploration first and read "
     "the skill once. Use required implementation, caller, contract, and test questions with "
-    "minimumSpans 2, 2, 1, and 1. After each result, the next repository cell reads all exact "
-    "evidence ranges and nothing else. Each episode has one main call; only partial permits one "
-    "gap-only follow-up with exactly its unresolved questions and returned paths, with no third "
+    "minimumSpans 2, 2, 1, and 1. Use the installed skill's exact taskText, evidenceQuestions, "
+    "and knownRefs object schema; never guess keys or string refs. After each result, read every "
+    "Evidence range with literal concurrent calls only. Each episode has one main call; only "
+    "partial permits one gap-only follow-up after its Evidence: copy unresolved question objects "
+    "without rewriting and include every returned evidence "
+    "path, with no third "
     "invocation in that episode. Ready is invocation-scoped. During work, call gather_context "
     "directly before a new multi-role/module/document or long-document issue, a second native "
     "search batch, a third distinct non-evidence/non-edited path, or a test failure not explained "

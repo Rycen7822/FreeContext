@@ -242,6 +242,9 @@ export async function exportMasterAgentContext({
   const auditableSessions = loadedSessions.filter(
     (entry): entry is Readonly<LoadedAuditableMcpSession> => isAuditableMcpSession(entry.session),
   );
+  const auditableTerminalHashes = new Set(auditableSessions.map(({ session }) => session.serializedTextSha256));
+  const sessionTransports = freeContextTransport.filter(({ terminalTextSha256 }) =>
+    typeof terminalTextSha256 === "string" && auditableTerminalHashes.has(terminalTextSha256));
   const invocationWindows = buildFreeContextInvocationWindows(
     auditableSessions.map(({ session }) => ({
       callId: session.invocation.callId,
@@ -249,7 +252,7 @@ export async function exportMasterAgentContext({
       result: session.result,
       serializedTextSha256: session.serializedTextSha256,
     })),
-    freeContextTransport,
+    sessionTransports,
   );
   const windowContextByFile = new Map<string, Readonly<{
     window: Readonly<FreeContextInvocationWindow>;

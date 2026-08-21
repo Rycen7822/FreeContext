@@ -287,6 +287,7 @@ test("isolated packet marks exploration complete and omits repository tool origi
   assert.equal(FINALIZATION_SYSTEM_PROMPT.includes("completed repository exploration"), true);
   assert.equal(FINALIZATION_SYSTEM_PROMPT.includes("Repository tools are unavailable"), true);
   assert.equal(FINALIZATION_SYSTEM_PROMPT.includes("submissionRules.requiredAllocation"), true);
+  assert.equal(FINALIZATION_SYSTEM_PROMPT.includes("never merge adjacent observations"), true);
   assert.equal(FINALIZATION_SYSTEM_PROMPT.includes("never claim a present role-matched repository observation is absent"), true);
 
   const quotaRequest = {
