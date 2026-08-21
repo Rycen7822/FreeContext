@@ -52,6 +52,7 @@ export const FREECONTEXT_ELIGIBILITY_POLICY = Object.freeze({
     "Reentrant episodes use one to four new questions and edited, failure, or confirmed paths as knownRefs.",
     "Each episode is one main call; only partial allows one gap follow-up after its Evidence: copy unresolved question objects and every evidence path; never replay pending.",
     "After every result, the next repository cell is one Promise.all of literal exact evidence reads; no generated calls or commands.",
+    "Required minimumSpans total is at most six.",
   ]),
 });
 
@@ -297,7 +298,7 @@ export function serializeForModel(rawResult: Readonly<FreeContextResult>): strin
   if (result.nextAction.kind === "read") {
     lines.push(`First repository cell: read exactly all Evidence ranges above; no range widening, search, status, plan, or branch. ${result.nextAction.reason}`);
   } else {
-    lines.push(`Next action: direct_search — ${result.nextAction.reason}`);
+    lines.push(`Next action: make at most one exact path or symbol probe; never broad search. ${result.nextAction.reason}`);
   }
   lines.push("Gaps:");
   if (result.gaps.length === 0) lines.push("-");

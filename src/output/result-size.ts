@@ -31,7 +31,7 @@ function oversizeFailure(
       questionId: question.id,
       reason: "The compiled result exceeded the model-visible byte limit.",
     })),
-    nextAction: { kind: "direct_search", reason: "Search directly for the unresolved evidence questions." },
+    nextAction: { kind: "direct_search", reason: "The compiled result exceeded the model-visible byte limit." },
     errorCode: "RESULT_TOO_LARGE",
     sessionId: invocation.sessionId,
     sessionFile: null,

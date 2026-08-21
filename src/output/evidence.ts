@@ -173,13 +173,13 @@ export async function compileFreeContextResult(
           startLine: first.startLine,
           endLine: first.endLine,
           reason: status === "ready"
-            ? "After this exact-read cell, edit directly with no intervening search."
-            : "Read; call FreeContext once for gaps; read; edit. No search.",
+            ? "Then edit/test directly; if more context is needed, call FreeContext before any non-evidence read or search."
+            : "Then call FreeContext once with the exact unresolved questions and all Evidence paths before any other action.",
         }
       : {
           kind: "direct_search",
           reason: clipSingleLine(
-            terminal.reason ?? "Search directly for the unresolved evidence questions.",
+            terminal.reason ?? "No validated evidence was found for the unresolved questions.",
             RESULT_LIMITS.detailCodePoints,
           ),
         },

@@ -54,6 +54,28 @@ test("submit_evidence accepts one locally valid observed candidate", async () =>
   assert.equal((result.details as { readonly tool?: string }).tool, "submit_evidence");
 });
 
+test("submit_evidence clips an adjacent merged range to the focus observation", async () => {
+  const state = createTerminalSubmissionState();
+  const tool = createSubmitEvidenceTool({
+    Type,
+    request: baseRequest(),
+    observedReads: () => [
+      { ...observedRead, startLine: 1, endLine: 80 },
+      { ...observedRead, startLine: 80, endLine: 160 },
+    ],
+    state,
+    isFinalizing: () => true,
+  });
+  await tool.execute("submit-adjacent", {
+    ...validArguments,
+    evidence: [{ ...validArguments.evidence[0], start_line: 77, end_line: 106, focus_line: 94 }],
+  });
+  assert.deepEqual(
+    { startLine: state.candidate?.evidence[0]?.startLine, endLine: state.candidate?.evidence[0]?.endLine },
+    { startLine: 80, endLine: 106 },
+  );
+});
+
 test("submit_evidence canonicalizes descriptive text before storing the private candidate", async () => {
   const state = createTerminalSubmissionState();
   const tool = createSubmitEvidenceTool({
@@ -287,7 +309,7 @@ test("isolated packet marks exploration complete and omits repository tool origi
   assert.equal(FINALIZATION_SYSTEM_PROMPT.includes("completed repository exploration"), true);
   assert.equal(FINALIZATION_SYSTEM_PROMPT.includes("Repository tools are unavailable"), true);
   assert.equal(FINALIZATION_SYSTEM_PROMPT.includes("submissionRules.requiredAllocation"), true);
-  assert.equal(FINALIZATION_SYSTEM_PROMPT.includes("never merge adjacent observations"), true);
+  assert.equal(FINALIZATION_SYSTEM_PROMPT.includes("A wider adjacent range is clipped"), true);
   assert.equal(FINALIZATION_SYSTEM_PROMPT.includes("never claim a present role-matched repository observation is absent"), true);
 
   const quotaRequest = {

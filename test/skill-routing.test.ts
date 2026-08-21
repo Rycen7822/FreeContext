@@ -17,15 +17,15 @@ test("implicit discovery routes complex reads to one MCP tool without copying el
   assert.ok([...description].length <= 420);
   assert.equal(
     description,
-    "For complex multi-file/document, cross-module, long-document, or source-bound exploration, first read only this skill, then call gather_context. Reenter before a second search batch or third unrelated path; do not reread the skill.",
+    "Delegate complex multi-file/document, cross-module, long-document, or source-bound exploration to gather_context first. Reenter before a second search batch or third unrelated path; don't reread it.",
   );
   for (const gate of FREECONTEXT_ELIGIBILITY_POLICY.gates) assert.equal(skill.includes(gate.instruction), false);
-  assert.match(skill, /First tool cell reads only this file—no pwd\/rg\/fd\/Git\/plan\/catalog\/repo action/iu);
+  assert.match(skill, /First cell reads only this file; next call `tools\.mcp__freecontext__gather_context`/iu);
   for (const trigger of ["multi-file/document", "cross-module", "long-document", "source-bound"]) {
     assert.ok(description.includes(trigger));
   }
   assert.match(description, /Reenter before a second search batch or third unrelated path/iu);
-  assert.match(description, /do not reread the skill/iu);
+  assert.match(description, /don't reread it/iu);
   assert.match(skill, /third distinct non-evidence\/non-edited path/iu);
   assert.doesNotMatch(skill, /never auto-trigger|only (?:after )?an explicit user request/iu);
   assert.match(skill, /typeof tools\.mcp__freecontext__gather_context !== "function"/u);
@@ -40,6 +40,7 @@ test("implicit discovery routes complex reads to one MCP tool without copying el
   assert.match(skill, /Args \(0–12 refs\)/u);
   assert.match(skill, /\{taskText,evidenceQuestions:\[\{id,role,question,required,minimumSpans\}\],knownRefs:/u);
   assert.match(skill, /No `questions`, string refs, secrets, or dumps/iu);
+  assert.match(skill, /Required `minimumSpans` sum is at most 6/iu);
   assert.match(skill, /Initial uses required implementation\/caller\/contract\/test questions/iu);
   assert.match(skill, /`minimumSpans` 2\/2\/1\/1/u);
   assert.match(skill, /other initial uses 2–6/iu);

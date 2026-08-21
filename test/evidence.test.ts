@@ -89,7 +89,7 @@ test("compiler validates observed spans, crops, orders, and emits a ready result
   assert.equal(first.endLine - first.startLine + 1, 80);
   assert.equal(result.nextAction.kind, "read");
   assert.equal(result.nextAction.path, "src/router.ts");
-  assert.equal(result.nextAction.reason, "After this exact-read cell, edit directly with no intervening search.");
+  assert.equal(result.nextAction.reason, "Then edit/test directly; if more context is needed, call FreeContext before any non-evidence read or search.");
   const serialized = serializeForModel(result);
   assert.match(serialized, /\[implementation\]\[implementation\] src\/router\.ts:/u);
   assert.match(serialized, /First repository cell: read exactly all Evidence ranges above; no range widening, search, status, plan, or branch\./u);
@@ -131,7 +131,7 @@ test("compiler cannot mark a required multi-span question ready after one narrow
   assert.equal(partial.gaps.find((gap) => gap.questionId === "implementation")?.reason,
     "Only 1 of 2 required spans were validated.");
   assert.equal(partial.nextAction.reason,
-    "Read; call FreeContext once for gaps; read; edit. No search.");
+    "Then call FreeContext once with the exact unresolved questions and all Evidence paths before any other action.");
 
   const complete = await compileFreeContextResult(
     adequacyRequest,
@@ -230,7 +230,7 @@ test("compiler turns role mismatch and rejected generated paths into explicit ga
   assert.equal(result.errorCode, null);
   assert.deepEqual(result.evidence.map((item) => item.questionId), ["implementation"]);
   assert.deepEqual(result.gaps, [{ questionId: "tests", reason: "Test evidence remains unresolved." }]);
-  assert.equal(result.nextAction.reason, "Read; call FreeContext once for gaps; read; edit. No search.");
+  assert.equal(result.nextAction.reason, "Then call FreeContext once with the exact unresolved questions and all Evidence paths before any other action.");
 }));
 
 test("compiler does not treat a trailing newline as an extra citable line", async () => withWorkspace(async (root) => {
