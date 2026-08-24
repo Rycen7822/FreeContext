@@ -1,5 +1,5 @@
 import path from "node:path";
-import { minimumEvidenceSpans, RESULT_LIMITS } from "../mcp/contracts.js";
+import { minimumEvidenceSpans, questionCoverageTargets, RESULT_LIMITS } from "../mcp/contracts.js";
 import type { EvidenceRole, FreeContextEvidence, FreeContextRequest } from "../mcp/contracts.js";
 
 const GENERATED_OR_VENDOR_SEGMENTS = new Set([
@@ -19,7 +19,12 @@ const ROLE_ORDER: Readonly<Record<EvidenceRole, number>> = Object.freeze({
 });
 
 export interface ValidatedEvidenceCandidate extends FreeContextEvidence {
-  readonly contentHash: string;
+  readonly coverageBasis: boolean;
+  readonly contentKey: string;
+}
+
+export interface SelectedEvidenceCandidate extends FreeContextEvidence {
+  readonly coverageBasis: boolean;
 }
 
 export function normalizeCandidatePath(value: string): string | null {
@@ -48,6 +53,7 @@ export function cropAroundFocus(
 function mergeCandidates(values: readonly ValidatedEvidenceCandidate[]): readonly ValidatedEvidenceCandidate[] {
   const ordered = [...values].sort((left, right) => left.path.localeCompare(right.path)
     || left.questionId.localeCompare(right.questionId)
+    || (left.targetId ?? "").localeCompare(right.targetId ?? "")
     || ROLE_ORDER[left.role] - ROLE_ORDER[right.role]
     || left.startLine - right.startLine
     || left.endLine - right.endLine);
@@ -58,6 +64,7 @@ function mergeCandidates(values: readonly ValidatedEvidenceCandidate[]): readonl
     if (previous
       && previous.path === item.path
       && previous.questionId === item.questionId
+      && previous.targetId === item.targetId
       && previous.role === item.role
       && item.startLine <= previous.endLine + 10
       && mergedEnd - Math.min(previous.startLine, item.startLine) + 1 <= RESULT_LIMITS.spanLines) {
@@ -65,7 +72,8 @@ function mergeCandidates(values: readonly ValidatedEvidenceCandidate[]): readonl
         ...previous,
         startLine: Math.min(previous.startLine, item.startLine),
         endLine: mergedEnd,
-        contentHash: `${previous.contentHash}:${item.contentHash}`,
+        coverageBasis: previous.coverageBasis || item.coverageBasis,
+        contentKey: `${previous.contentKey}\0${item.contentKey}`,
       });
     } else {
       merged.push(item);
@@ -82,6 +90,7 @@ function rankCandidates(
   const required = new Set(request.evidenceQuestions.filter((question) => question.required).map((question) => question.id));
   return [...values].sort((left, right) => Number(required.has(right.questionId)) - Number(required.has(left.questionId))
     || (questionIndex.get(left.questionId) ?? Number.MAX_SAFE_INTEGER) - (questionIndex.get(right.questionId) ?? Number.MAX_SAFE_INTEGER)
+    || (left.targetId ?? "").localeCompare(right.targetId ?? "")
     || ROLE_ORDER[left.role] - ROLE_ORDER[right.role]
     || left.path.localeCompare(right.path)
     || left.startLine - right.startLine);
@@ -90,13 +99,13 @@ function rankCandidates(
 export function selectEvidence(
   values: readonly ValidatedEvidenceCandidate[],
   request: Readonly<FreeContextRequest>,
-): readonly FreeContextEvidence[] {
+): readonly SelectedEvidenceCandidate[] {
   const ranked = rankCandidates(mergeCandidates(values), request);
   const selected: ValidatedEvidenceCandidate[] = [];
   const selectedKeys = new Set<string>();
   let totalLines = 0;
   const trySelect = (item: ValidatedEvidenceCandidate): void => {
-    const key = `${item.path}\0${item.startLine}\0${item.endLine}\0${item.questionId}\0${item.role}`;
+    const key = `${item.path}\0${item.startLine}\0${item.endLine}\0${item.questionId}\0${item.targetId ?? ""}\0${item.role}`;
     const lines = item.endLine - item.startLine + 1;
     if (selectedKeys.has(key) || selected.length >= RESULT_LIMITS.evidence || totalLines + lines > RESULT_LIMITS.totalLines) return;
     selected.push(item);
@@ -104,6 +113,13 @@ export function selectEvidence(
     totalLines += lines;
   };
   for (const question of request.evidenceQuestions.filter((item) => item.required)) {
+    const targets = questionCoverageTargets(question);
+    const implicitTargetId = targets[0]?.id;
+    for (const target of targets) {
+      const targetCandidates = ranked.filter((candidate) => candidate.questionId === question.id
+        && (candidate.targetId ?? implicitTargetId) === target.id);
+      for (const item of targetCandidates.slice(0, 1)) trySelect(item);
+    }
     for (const item of ranked.filter((candidate) => candidate.questionId === question.id)
       .slice(0, minimumEvidenceSpans(question))) trySelect(item);
   }
@@ -113,5 +129,5 @@ export function selectEvidence(
     if (item) trySelect(item);
   }
   for (const item of ranked) trySelect(item);
-  return Object.freeze(selected.map(({ contentHash: _contentHash, ...item }) => Object.freeze(item)));
+  return Object.freeze(selected.map(({ contentKey: _contentKey, ...item }) => Object.freeze(item)));
 }

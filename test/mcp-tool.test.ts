@@ -15,6 +15,7 @@ import {
 } from "../src/mcp/contracts.js";
 import type {
   FreeContextCallContext,
+  FreeContextCallerRequest,
   FreeContextRequest,
   FreeContextResult,
 } from "../src/mcp/contracts.js";
@@ -28,12 +29,13 @@ const tokenCounter: ContextTokenCounter = {
   countBatch: async (texts) => texts.map(() => 0),
 };
 
-const request: FreeContextRequest = {
+const request: FreeContextCallerRequest = {
   taskText: "collect evidence",
+  workUnit: { outcome: "answer", goal: "Collect fixture evidence." },
   knownRefs: [{ kind: "path", path: "document.md" }],
   evidenceQuestions: [
-    { id: "impl", role: "implementation", question: "Where is it implemented?", required: true },
-    { id: "tests", role: "test", question: "How is it tested?", required: false },
+    { role: "implementation", question: "Where is it implemented?", required: true, target: { id: "implementation-owner", subject: { kind: "topic", topic: "implementation owner" }, factKind: "location", coverageMode: "single" } },
+    { role: "test", question: "How is it tested?", required: false, target: { id: "test-seam", subject: { kind: "topic", topic: "test seam" }, factKind: "verification", coverageMode: "single" } },
   ],
 };
 
@@ -51,21 +53,26 @@ function readyResult(options: RunExplorerOptions): Readonly<FreeContextResult> {
     status: "ready",
     summary: "Validated summary.",
     evidence: [{
+      id: "e1",
       role: "implementation",
       path: "document.md",
       startLine: 1,
       endLine: 2,
       focusLine: 1,
-      questionId: "impl",
+      questionId: "q1",
       why: "Defines the behavior.",
     }],
-    gaps: [{ questionId: "tests", reason: "No test was found." }],
+    gaps: [{ questionId: "q2", reason: "No test was found." }],
+    handoff: {
+      id: `handoff:${options.invocation.invocationId}`,
+      workUnit: options.request.workUnit,
+      evidenceIds: ["e1"],
+      outcome: { kind: options.request.workUnit.outcome, instruction: "Use the validated fixture evidence." },
+      blockingGaps: [],
+    },
     nextAction: {
-      kind: "read",
-      path: "document.md",
-      startLine: 1,
-      endLine: 2,
-      reason: "Read the first evidence span.",
+      kind: "consume_evidence",
+      reason: "Use the evidence.",
     },
     errorCode: null,
     sessionId: options.invocation.sessionId,
@@ -106,8 +113,8 @@ test("gather_context describes broad read delegation without claiming parent act
     SERVER_INSTRUCTIONS,
     /public MCP request id and either an operator-configured absolute workspace root or one public MCP file root/u,
   );
-  assert.match(SERVER_INSTRUCTIONS, /Each initial or reentrant episode makes one main call/u);
-  assert.match(SERVER_INSTRUCTIONS, /Only partial permits one follow-up after its exact evidence/u);
+  assert.match(SERVER_INSTRUCTIONS, /The invocation is atomic, awaits one terminal outer result/u);
+  assert.match(SERVER_INSTRUCTIONS, /Follow the returned nextAction; use supported partial Evidence immediately/u);
   assert.match(SERVER_INSTRUCTIONS, /Ready is invocation-scoped/u);
   assert.doesNotMatch(SERVER_INSTRUCTIONS, /never make a third call/u);
   assert.doesNotMatch(`${SERVER_INSTRUCTIONS}\n${TOOL_DESCRIPTION}`, /\b(?:commit|push|edit files)\b/u);
@@ -182,7 +189,7 @@ test("gather_context normalizes an omitted knownRefs field to an empty array", a
         observed = options.request;
         return readyResult(options);
       },
-    })({ taskText: request.taskText, evidenceQuestions: request.evidenceQuestions }, callContext(workspace));
+    })({ taskText: request.taskText, workUnit: request.workUnit, evidenceQuestions: request.evidenceQuestions }, callContext(workspace));
     assert.equal(outputOf(call).status, "ready");
     assert.deepEqual(observed?.knownRefs, []);
   } finally {
@@ -393,14 +400,14 @@ test("deadline compiles the latest candidate once and records a late worker resu
           summary: "candidate before deadline.",
           evidence: [{
             role: "implementation" as const,
-            questionId: "impl",
+            questionId: "q1",
             path: "document.md",
             startLine: 1,
             endLine: 2,
             focusLine: 1,
             why: "Defines the behavior.",
           }],
-          gaps: [{ questionId: "tests", reason: "No test was found." }],
+          gaps: [{ questionId: "q2", reason: "No test was found." }],
         };
         await options.onEvent?.(
           {

@@ -12,7 +12,7 @@ import type {
 import type { ExplorerDependencies, ExplorerSessionCapture } from "../src/runtime/run.js";
 import { runExplorer } from "../src/runtime/run.js";
 import { createWorkspace } from "../src/tools/workspace.js";
-import { assistantText, baseRouteConfig, fakeBindings } from "./helpers.js";
+import { assistantText, baseRouteConfig, fakeBindings, topicTarget } from "./helpers.js";
 
 const tokenCounter = {
   countBatch: async (texts: readonly string[]) => texts.map((text) => Math.ceil(text.length / 4)),
@@ -21,10 +21,11 @@ const tokenCounter = {
 function request(taskText = "find a"): FreeContextRequest {
   return {
     taskText,
+    workUnit: { outcome: "answer", goal: "Find a." },
     knownRefs: [{ kind: "path", path: "a.js" }],
     evidenceQuestions: [
-      { id: "impl", role: "implementation", question: "Where is a implemented?", required: true },
-      { id: "tests", role: "test", question: "How is a tested?", required: false },
+      { id: "impl", role: "implementation", question: "Where is a implemented?", required: true, coverageTargets: [topicTarget("a-implementation", "a implementation", "location")] },
+      { id: "tests", role: "test", question: "How is a tested?", required: false, coverageTargets: [topicTarget("a-tests", "a tests", "verification")] },
     ],
   };
 }
@@ -172,7 +173,7 @@ test("runExplorer converts malformed model output into a canonical failure witho
     });
     assert.equal(result.status, "failed");
     assert.equal(result.errorCode, "INTERNAL_ERROR");
-    assert.equal(result.nextAction.kind, "direct_search");
+    assert.equal(result.nextAction.kind, "exact_probe");
   } finally {
     await rm(root, { recursive: true, force: true });
   }

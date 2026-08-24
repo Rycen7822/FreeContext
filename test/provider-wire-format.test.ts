@@ -208,13 +208,13 @@ test("isolated finalization sends required submit_evidence without provider stri
   const originalFetch = globalThis.fetch;
   globalThis.fetch = (async () => {
     fetchCalls += 1;
-    if (fetchCalls === 2) {
+    if (fetchCalls === 3) {
       return new Response(JSON.stringify({ code: "SERVICE_BUSY", message: "busy", traceId: "offline" }), {
         status: 503,
         headers: { "content-type": "application/json" },
       });
     }
-    if (fetchCalls > 2) {
+    if (fetchCalls > 3) {
       return new Response(JSON.stringify({ error: { message: "offline finalizer stop" } }), {
         status: 400,
         headers: { "content-type": "application/json" },
@@ -248,20 +248,22 @@ test("isolated finalization sends required submit_evidence without provider stri
     globalThis.fetch = originalFetch;
   }
 
-  assert.equal(fetchCalls, 3);
-  assert.equal(payloads.length, 3);
+  assert.equal(fetchCalls, 4);
+  assert.equal(payloads.length, 4);
   assert.equal(Object.hasOwn(payloads[0] ?? {}, "tool_choice"), false);
   assert.deepEqual(payloads[0]?.thinking, { type: "disabled" });
-  assert.equal(payloads[1]?.tool_choice, "required");
+  assert.equal(Object.hasOwn(payloads[1] ?? {}, "tool_choice"), false);
   assert.deepEqual(payloads[1]?.thinking, { type: "disabled" });
   assert.equal(payloads[2]?.tool_choice, "required");
-  assert.deepEqual(payloads[2]?.messages, payloads[1]?.messages);
-  assert.deepEqual(payloads[2]?.tools, payloads[1]?.tools);
-  const finalTools = payloads[1]?.tools as Array<{ readonly function?: Record<string, unknown> }>;
+  assert.deepEqual(payloads[2]?.thinking, { type: "disabled" });
+  assert.equal(payloads[3]?.tool_choice, "required");
+  assert.deepEqual(payloads[3]?.messages, payloads[2]?.messages);
+  assert.deepEqual(payloads[3]?.tools, payloads[2]?.tools);
+  const finalTools = payloads[2]?.tools as Array<{ readonly function?: Record<string, unknown> }>;
   assert.equal(finalTools.length, 1);
   assert.equal(finalTools[0]?.function?.name, "submit_evidence");
   assert.equal(Object.hasOwn(finalTools[0]?.function ?? {}, "strict"), false);
-  const finalMessages = payloads[1]?.messages as Array<Record<string, unknown>>;
+  const finalMessages = payloads[2]?.messages as Array<Record<string, unknown>>;
   assert.deepEqual(finalMessages.map((message) => message.role), ["system", "user"]);
   assert.equal(String(finalMessages[0]?.content).includes("untrusted data"), true);
   assert.equal(JSON.stringify(finalMessages).includes("explored"), false);

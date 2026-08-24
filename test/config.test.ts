@@ -136,11 +136,11 @@ test("target and route overrides are deterministic", async () => {
   });
 });
 
-test("runtime exploration ceilings reject values above five turns or eighteen calls", async () => {
+test("runtime exploration ceilings reject values above eight turns or eighteen calls", async () => {
   await withConfig(baseToml(), async (configFile) => {
     await assert.rejects(
-      () => resolveConfig({ cli: { configFile, maxTurns: "6" }, processEnv: KEYS }),
-      /max_turns.*\[2, 5\]/u,
+      () => resolveConfig({ cli: { configFile, maxTurns: "9" }, processEnv: KEYS }),
+      /max_turns.*\[2, 8\]/u,
     );
     await assert.rejects(
       () => resolveConfig({ cli: { configFile, maxToolCalls: "19" }, processEnv: KEYS }),

@@ -5,6 +5,7 @@ import {
   serializeForModel,
 } from "./contracts.js";
 import type { FreeContextCallContext, FreeContextResult } from "./contracts.js";
+import { validateFreeContextReentry } from "./eligibility.js";
 import { errorReason, failedResult } from "./failure.js";
 import {
   createDeadlineClock,
@@ -109,6 +110,7 @@ export function createGatherContextHandler(
     let request;
     try {
       request = normalizeFreeContextRequest(rawInput);
+      if (!validateFreeContextReentry(request).accepted) throw new TypeError("Invalid FreeContext reentry contract.");
     } catch {
       return callResult(failedResult({
         code: "INVALID_REQUEST",

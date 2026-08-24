@@ -50,18 +50,28 @@ function renderKnownReference(reference: FreeContextRequest["knownRefs"][number]
   return `- [symbol] ${reference.symbol}${reference.path ? ` in ${reference.path}` : ""}`;
 }
 
+function renderTarget(target: FreeContextRequest["evidenceQuestions"][number]["coverageTargets"][number]): string {
+  const subject = target.subject.kind === "path"
+    ? target.subject.path
+    : target.subject.kind === "symbol"
+      ? `${target.subject.symbol}${target.subject.path ? ` in ${target.subject.path}` : ""}`
+      : target.subject.topic;
+  return `${target.id}:${target.subject.kind}:${subject}:${target.factKind}:${target.coverageMode}`;
+}
+
 export function buildUserPrompt(request: Readonly<FreeContextRequest>): string {
   return [
     "Repository exploration task (preserve all API, compatibility, test, error-handling, and boundary constraints):",
     "<task>",
     request.taskText,
     "</task>",
+    `Current work unit: [${request.workUnit.outcome}] ${request.workUnit.goal}`,
     "Known references:",
     ...(request.knownRefs.length > 0 ? request.knownRefs.map(renderKnownReference) : ["-"]),
     "Evidence questions:",
     ...request.evidenceQuestions.map((question) => (
-      `- [${question.role}][${question.id}][${question.required ? "required" : "optional"}]${question.minimumSpans === undefined ? "" : `[minimum-spans=${question.minimumSpans}]`} ${question.question}`
+      `- [${question.role}][${question.id}][${question.required ? "required" : "optional"}]${question.minimumSpans === undefined ? "" : `[minimum-spans=${question.minimumSpans}]`} [target=${question.coverageTargets.map(renderTarget).join(", ")}] ${question.question}`
     )),
-    "Locate and verify evidence for these exact question IDs and roles. Submit verified evidence with submit_evidence when coverage is complete or the best supported partial result is known.",
+    "Locate and verify evidence for these exact question IDs, roles, and structured targets. In submit_evidence, question_id must exactly match a listed evidence question; target_id is separate and must match that question's target. Never put a target ID in question_id. For exhaustive targets, report every discovered member, cite an observed enumeration boundary with coverage_basis=true, and preserve unresolved or omitted scope as coverage gaps; incomplete exhaustive coverage cannot be ready. Cite the smallest self-contained observed range that answers the declared fact; otherwise report its exact target-scoped gap.",
   ].join("\n");
 }

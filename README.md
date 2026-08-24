@@ -4,7 +4,7 @@
 
 ## English
 
-FreeContext is a read-only repository-exploration subagent for Codex. It offloads high-noise path discovery, symbol search, call-chain tracing, and narrow file reads to an external model session, while the main agent receives only locally validated `file:line-range` evidence blocks.
+FreeContext is a read-only repository-exploration subagent for Codex. It offloads high-noise path discovery, symbol search, call-chain tracing, and narrow file reads to an external model session, while the main agent receives only locally validated `file:line-range` evidence with the exact observed source excerpt.
 
 The project uses a **skill + headless CLI** design:
 
@@ -26,6 +26,8 @@ summary: One sentence describing the result and the key relationships.
 evidence:
 - src/example.ts:18-47 — This range defines the core behavior.
 - test/example.test.ts:60-91 — This range verifies the boundary conditions.
+excerpt:
+  export const behavior = "validated";
 gaps:
 - none
 </final_answer>
@@ -170,7 +172,7 @@ freecontext --route resilient --query 'Trace request routing.'
 freecontext --target gpt --query 'Trace request routing.'
 ```
 
-`--route` and `--target` are mutually exclusive. CLI selection overrides `FREECONTEXT_ROUTE` or `FREECONTEXT_TARGET`, which override `default_route`. Operational limits follow CLI > environment > `[runtime]` > built-in defaults. Repository exploration defaults to, and is hard-capped at, 5 model turns and 18 accepted tool calls. Turns 1–4 permit read-only exploration; turn 5 is finalization-only. A valid complete or partial candidate stops immediately, and two consecutive turns without new normalized read/search evidence also enter finalization. Configure the limits with `max_turns` and `max_tool_calls`, their `FREECONTEXT_MAX_TURNS` and `FREECONTEXT_MAX_TOOL_CALLS` environment variables, or the matching CLI options.
+`--route` and `--target` are mutually exclusive. CLI selection overrides `FREECONTEXT_ROUTE` or `FREECONTEXT_TARGET`, which override `default_route`. Operational limits follow CLI > environment > `[runtime]` > built-in defaults. Repository exploration uses soft budgets of 8 model turns and 18 accepted tool calls by default. A new observed read or canonical coverage progress may continue the same Pi session past those budgets; search output alone may not. Ready, typed failure, stagnation, deadline, context exhaustion, or the non-configurable emergency ceilings of 24 turns and 64 accepted tool calls end exploration. Configure the soft budgets with `max_turns` and `max_tool_calls`, their `FREECONTEXT_MAX_TURNS` and `FREECONTEXT_MAX_TOOL_CALLS` environment variables, or the matching CLI options.
 
 Transient failures identified by structured HTTP/provider/transport metadata, Pi's retry signal, or the exact TokenRhythm compatibility response retry only the failed assistant turn. The default retry-wait vector is 3/6/12 seconds with up to ±20% jitter. Completed repository tool results stay in context and are not executed again. Configure the full vector with `provider_retry_delays_ms = [3000, 6000, 12000]`, `FREECONTEXT_PROVIDER_RETRY_DELAYS_MS=3000,6000,12000`, or `--provider-retry-delays-ms 3000,6000,12000`; use an empty vector to disable retries.
 
@@ -284,7 +286,7 @@ freecontext-benchmark-context --agent-dir /logs/agent --task-name TaskNameXXX
 
 This writes `master-agent-context.json`, preserving the complete raw main-agent context and indexing every FreeContext prompt, compact output, and separate `freecontext-sessions/*.json` address. Export fails if the main-agent context does not contain the corresponding full-session reference. Consumption audit groups repository actions by completed outer Codex exec cell: a parallel first batch is accepted only when every provable repository action overlaps returned evidence, and searches in that same batch are not misclassified as later gap searches. The ready-to-use Pier integration is documented in [`benchmarks/deepswe/README.md`](benchmarks/deepswe/README.md).
 
-For accepted benchmark trials, `freecontext-benchmark-costs INPUT.json OUTPUT.json` uses one persistent Python Gigatoken worker with `o200k_base` and a single `encode_batch()` pass. Its input lists `{ "taskId", "success", "agentDir" }` records. The report keeps local main-visible counts, delivered FreeContext output, main provider-native usage, subagent provider-native usage, and additive provider-native system totals in explicitly separate domains, with per-call, per-task, and per-success rates. Reasoning tokens are excluded from comparison totals and visible completion counts; provider-reported totals and reasoning details remain separate billing and diagnostic fields.
+For accepted benchmark trials, `freecontext-benchmark-costs INPUT.json OUTPUT.json` uses one persistent Python Gigatoken worker with `o200k_base` and a single `encode_batch()` pass. Its input lists `{ "taskId", "success", "agentDir" }` records and may add matching `pairId`/`arm` fields for an explicit control/treatment ratio. The report keeps local main-visible counts, delivered FreeContext output, main provider-native usage, subagent provider-native usage, and additive provider-native system totals in explicitly separate domains, with per-call, per-task, and per-success rates. The primary main-agent metric is `uncachedInputTokens + visibleOutputTokens`, where `visibleOutputTokens` excludes reasoning; cached input, counted totals, provider-reported totals, and reasoning details remain separate historical, billing, or diagnostic fields, and complete pairs receive a treatment/control ratio.
 
 ### Tests
 
@@ -318,7 +320,7 @@ FreeContext does not reproduce the paper's training process, so it must not be a
 
 ## 简体中文
 
-FreeContext 是面向 Codex 的只读代码仓库探索子代理。它把高噪声的路径发现、符号搜索、调用链追踪和窄范围文件读取放到外置模型会话中，主代理最终仅接收经过本地校验的 `file:line-range` 证据块。
+FreeContext 是面向 Codex 的只读代码仓库探索子代理。它把高噪声的路径发现、符号搜索、调用链追踪和窄范围文件读取放到外置模型会话中，主代理最终仅接收经过本地校验的 `file:line-range` 证据及精确的已观测源码片段。
 
 项目采用 **skill + headless CLI** 形态：
 
@@ -340,6 +342,8 @@ summary: 一句话说明定位结果及关键关系。
 evidence:
 - src/example.ts:18-47 — 该范围定义核心行为。
 - test/example.test.ts:60-91 — 该范围验证边界条件。
+excerpt:
+  export const behavior = "validated";
 gaps:
 - none
 </final_answer>
@@ -484,7 +488,7 @@ freecontext --route resilient --query 'Trace request routing.'
 freecontext --target gpt --query 'Trace request routing.'
 ```
 
-`--route` 与 `--target` 互斥。CLI 选择覆盖 `FREECONTEXT_ROUTE` 或 `FREECONTEXT_TARGET`，后者再覆盖 `default_route`。运行限制遵循 CLI > 环境变量 > `[runtime]` > 内置默认值。仓库探索默认使用并硬性限制为 5 个模型回合和 18 次已接受工具调用：前 4 回合允许只读探索，第 5 回合仅生成最终结果；得到有效的完整或部分候选结果时立即停止，连续两个回合没有新增规范化读/搜证据时也会提前进入收敛。可通过 `max_turns`、`max_tool_calls`，对应的 `FREECONTEXT_MAX_TURNS`、`FREECONTEXT_MAX_TOOL_CALLS` 环境变量或 CLI 选项配置这些限制。
+`--route` 与 `--target` 互斥。CLI 选择覆盖 `FREECONTEXT_ROUTE` 或 `FREECONTEXT_TARGET`，后者再覆盖 `default_route`。运行限制遵循 CLI > 环境变量 > `[runtime]` > 内置默认值。仓库探索默认使用 8 个模型回合、18 次已接受工具调用作为软预算；新的 observed read 或规范 coverage 进展可以让同一 Pi 会话越过软预算继续，单纯搜索结果不能续期。ready、typed failure、停滞、deadline、上下文耗尽，或不可配置的 24 回合、64 次已接受工具调用紧急上限会结束探索。可通过 `max_turns`、`max_tool_calls`，对应的 `FREECONTEXT_MAX_TURNS`、`FREECONTEXT_MAX_TOOL_CALLS` 环境变量或 CLI 选项配置软预算。
 
 仅当结构化 HTTP/provider/transport 元数据、Pi 的重试信号或 TokenRhythm 的精确兼容响应判定为短暂故障时，FreeContext 才会重试失败的 assistant turn。默认等待向量为 3/6/12 秒，并带最多 ±20% 抖动；已经完成的仓库工具结果会保留在上下文中，不会重复执行。可通过 `provider_retry_delays_ms = [3000, 6000, 12000]`、`FREECONTEXT_PROVIDER_RETRY_DELAYS_MS=3000,6000,12000` 或 `--provider-retry-delays-ms 3000,6000,12000` 配置完整向量；使用空向量即可关闭重试。
 
@@ -598,7 +602,7 @@ freecontext-benchmark-context --agent-dir /logs/agent --task-name TaskNameXXX
 
 命令生成 `master-agent-context.json`：完整保留主 agent 原始上下文，并为每次 FreeContext 调用记录 prompt、返回给主 agent 的紧凑输出，以及独立 `freecontext-sessions/*.json` 文件地址。如果主 agent 上下文没有包含对应完整会话引用，导出会直接失败。消费审计按已完成的 Codex 外层 exec cell 归组仓库动作：并行首批只有在其中每个可证明的仓库动作都与返回证据重叠时才通过，同批搜索也不会被误记为后续 gap 搜索。可直接复用的 Pier 集成见 [`benchmarks/deepswe/README.md`](benchmarks/deepswe/README.md)。
 
-对于已接受的 benchmark trial，可运行 `freecontext-benchmark-costs INPUT.json OUTPUT.json`。输入列出 `{ "taskId", "success", "agentDir" }` 记录；命令只初始化一个 Python Gigatoken worker，以 `o200k_base` 对全部文本执行一次 `encode_batch()`。报告分别保留本地主 agent 可见文本、交付给主 agent 的 FreeContext 输出、主 agent provider-native usage、subagent provider-native usage 和可相加的 provider-native 系统总量，并给出 per-call、per-task、per-success 指标，绝不把本地 Gigatoken 计数与 provider-native usage 混为同一域。比较总量和可见 completion 明确排除 reasoning token；provider 原始总量和 reasoning 明细仅作为独立的账单与诊断字段保留。
+对于已接受的 benchmark trial，可运行 `freecontext-benchmark-costs INPUT.json OUTPUT.json`。输入列出 `{ "taskId", "success", "agentDir" }` 记录；需要明确 control/treatment 配对比值时可为两条记录增加相同的 `pairId` 和对应 `arm`。命令只初始化一个 Python Gigatoken worker，以 `o200k_base` 对全部文本执行一次 `encode_batch()`。报告分别保留本地主 agent 可见文本、交付给主 agent 的 FreeContext 输出、主 agent provider-native usage、subagent provider-native usage 和可相加的 provider-native 系统总量，并给出 per-call、per-task、per-success 指标，绝不把本地 Gigatoken 计数与 provider-native usage 混为同一域。新的主 agent 指标是 `uncachedInputTokens + visibleOutputTokens`，其中 `visibleOutputTokens` 排除 reasoning；cached input、旧 counted 总量、provider 原始总量和 reasoning 明细分别作为历史、账单或诊断字段保留，完整配对会输出 treatment/control 比值。
 
 ### 测试
 

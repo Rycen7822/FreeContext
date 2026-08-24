@@ -10,12 +10,12 @@ export { compileFreeContextResult } from "./output/evidence.js";
 export {
   FREECONTEXT_ELIGIBILITY_POLICY,
   FREECONTEXT_HOST_ROUTE_METADATA,
-  FreeContextRequestSchema,
+  FreeContextCallerRequestSchema,
   FreeContextResultSchema,
   normalizeFreeContextRequest,
   serializeForModel,
 } from "./mcp/contracts.js";
-export { decideFreeContextEligibility } from "./mcp/eligibility.js";
+export { decideFreeContextEligibility, validateFreeContextReentry } from "./mcp/eligibility.js";
 export {
   analyzeFreeContextConsumption,
   collectParentRepositoryActions,
@@ -24,8 +24,8 @@ export type {
   FreeContextEligibilityGate,
   FreeContextEligibilityOutcome,
   FreeContextCallContext,
+  FreeContextCallerRequest,
   FreeContextInvocationContext,
-  FreeContextRequest,
   FreeContextResult,
 } from "./mcp/contracts.js";
 export type {

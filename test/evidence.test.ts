@@ -6,15 +6,17 @@ import test from "node:test";
 import type { FreeContextInvocationContext, FreeContextRequest } from "../src/mcp/contracts.js";
 import { serializeForModel } from "../src/mcp/contracts.js";
 import { compileFreeContextResult } from "../src/output/evidence.js";
-import type { ExplorerCandidate, ExplorerEvidenceCandidate, ExplorerGapCandidate } from "../src/output/evidence.js";
+import type { ExplorerCandidate, ExplorerCoverageCandidate, ExplorerEvidenceCandidate, ExplorerGapCandidate } from "../src/output/evidence.js";
 import type { ObservedRead } from "../src/runtime/finalization.js";
+import { topicTarget } from "./helpers.js";
 
 const request = (): FreeContextRequest => ({
   taskText: "Trace the routing implementation and its tests.",
+  workUnit: { outcome: "answer", goal: "Trace routing implementation and tests." },
   knownRefs: [{ kind: "path", path: "src/router.ts" }],
   evidenceQuestions: [
-    { id: "implementation", role: "implementation", question: "Where is routing implemented?", required: true },
-    { id: "tests", role: "test", question: "Where is routing tested?", required: true },
+    { id: "implementation", role: "implementation", question: "Where is routing implemented?", required: true, coverageTargets: [topicTarget("implementation-target", "routing implementation", "location")] },
+    { id: "tests", role: "test", question: "Where is routing tested?", required: true, coverageTargets: [topicTarget("tests-target", "routing tests", "verification")] },
   ],
 });
 
@@ -44,7 +46,8 @@ const candidate = (
   summary: string,
   evidence: readonly ExplorerEvidenceCandidate[],
   gaps: readonly ExplorerGapCandidate[] = [],
-): Readonly<ExplorerCandidate> => ({ summary, evidence, gaps });
+  coverage: readonly ExplorerCoverageCandidate[] = [],
+): Readonly<ExplorerCandidate> => ({ summary, evidence, gaps, coverage });
 
 const observed = (
   pathValue: string,
@@ -87,12 +90,21 @@ test("compiler validates observed spans, crops, orders, and emits a ready result
   const first = result.evidence[0];
   assert.ok(first);
   assert.equal(first.endLine - first.startLine + 1, 80);
-  assert.equal(result.nextAction.kind, "read");
-  assert.equal(result.nextAction.path, "src/router.ts");
-  assert.equal(result.nextAction.reason, "Then edit/test directly; if more context is needed, call FreeContext before any non-evidence read or search.");
+  assert.equal(first.excerpt, Array.from({ length: 80 }, (_, index) => `export const line${index + 21} = ${index + 21};`).join("\n"));
+  assert.equal(result.nextAction.kind, "consume_evidence");
+  assert.equal(result.nextAction.reason,
+    "Use inline Evidence for the next edit/check; call FreeContext when edit/check exposes a new source-bound gap.");
+  assert.deepEqual(result.handoff, {
+    id: "handoff:invocation-1",
+    workUnit: request().workUnit,
+    evidenceIds: ["e1", "e2"],
+    outcome: { kind: "answer", instruction: "Proceed with answer: Trace routing implementation and tests." },
+    blockingGaps: [],
+  });
   const serialized = serializeForModel(result);
-  assert.match(serialized, /\[implementation\]\[implementation\] src\/router\.ts:/u);
-  assert.match(serialized, /First repository cell: read exactly all Evidence ranges above; no range widening, search, status, plan, or branch\./u);
+  assert.match(serialized, /\[implementation\]\[implementation\]\[target:implementation-target\] src\/router\.ts:/u);
+  assert.match(serialized, /Excerpt \(observed\):\nexport const line21 = 21;/u);
+  assert.match(serialized, /Follow nextAction: consume inline Evidence/iu);
 }));
 
 test("compiler cannot mark a required multi-span question ready after one narrow item", async () => withWorkspace(async (root) => {
@@ -129,9 +141,11 @@ test("compiler cannot mark a required multi-span question ready after one narrow
   );
   assert.equal(partial.status, "partial");
   assert.equal(partial.gaps.find((gap) => gap.questionId === "implementation")?.reason,
-    "Only 1 of 2 required spans were validated.");
+    "Only 1 of 2 required coverage slots were validated.");
   assert.equal(partial.nextAction.reason,
-    "Then call FreeContext once with the exact unresolved questions and all Evidence paths before any other action.");
+    "Use supported Evidence now; if a listed gap blocks the next edit/check, call FreeContext for that gap.");
+  assert.deepEqual(partial.handoff?.evidenceIds, ["e1", "e2"]);
+  assert.deepEqual(partial.handoff?.blockingGaps.map((gap) => gap.targetId), ["implementation-target"]);
 
   const complete = await compileFreeContextResult(
     adequacyRequest,
@@ -147,6 +161,161 @@ test("compiler cannot mark a required multi-span question ready after one narrow
   assert.equal(complete.status, "ready");
   assert.deepEqual(complete.evidence.map((item) => item.questionId), ["implementation", "implementation", "tests"]);
   assert.deepEqual(complete.gaps, []);
+}));
+
+test("compiler marks exhaustive coverage ready only with members and an observed boundary basis", async () => withWorkspace(async (root) => {
+  const exhaustiveRequest: FreeContextRequest = {
+    ...request(),
+    evidenceQuestions: [{
+      id: "dialects",
+      role: "implementation",
+      question: "Which dialect implementations exist?",
+      required: true,
+      coverageTargets: [topicTarget("dialects-target", "dialect implementations", "presence", "exhaustive")],
+    }],
+  };
+  const boundaryEvidence: ExplorerEvidenceCandidate = {
+    role: "implementation",
+    questionId: "dialects",
+    targetId: "dialects-target",
+    path: "src/router.ts",
+    startLine: 1,
+    endLine: 20,
+    focusLine: 10,
+    coverageBasis: true,
+    why: "Enumerates every registered dialect.",
+  };
+  const compile = async (members: readonly string[], coverageBasis: boolean) => compileFreeContextResult(
+    exhaustiveRequest,
+    invocation(root),
+    candidate("Dialect coverage.", [{ ...boundaryEvidence, coverageBasis }], [], [{ targetId: "dialects-target", members, gaps: [] }]),
+    { errorCode: null },
+    [observed("src/router.ts", 1, 20)],
+  );
+
+  const ready = await compile(["postgres", "mysql", "gel"], true);
+  assert.equal(ready.status, "ready");
+  assert.deepEqual(ready.coverage, [{
+    targetId: "dialects-target",
+    mode: "exhaustive",
+    members: ["postgres", "mysql", "gel"],
+    basisEvidenceIds: ["e1"],
+    gaps: [],
+    omittedMembers: 0,
+  }]);
+
+  const missingMembers = await compile([], true);
+  assert.equal(missingMembers.status, "partial");
+  assert.match(missingMembers.coverage?.[0]?.gaps[0] ?? "", /No discovered members/u);
+
+  const missingBasis = await compile(["postgres", "mysql", "gel"], false);
+  assert.equal(missingBasis.status, "partial");
+  assert.match(missingBasis.coverage?.[0]?.gaps[0] ?? "", /No returned Evidence/u);
+}));
+
+test("compiler preserves a required question gap alongside partial evidence", async () => withWorkspace(async (root) => {
+  const implementation = {
+    role: "implementation" as const,
+    questionId: "implementation",
+    path: "src/router.ts",
+    startLine: 1,
+    endLine: 20,
+    focusLine: 10,
+    why: "Defines one supported routing stage.",
+  };
+  const tests = {
+    role: "test" as const,
+    questionId: "tests",
+    path: "test/router.test.ts",
+    startLine: 1,
+    endLine: 1,
+    focusLine: 1,
+    why: "Covers routing behavior.",
+  };
+  const result = await compileFreeContextResult(
+    request(),
+    invocation(root),
+    candidate("One requested implementation clause remains unsupported.", [implementation, tests], [
+      { questionId: "implementation", reason: "The downstream routing stage remains unresolved." },
+    ]),
+    { errorCode: null },
+    [observed("src/router.ts", 1, 20), observed("test/router.test.ts", 1, 1)],
+  );
+  assert.equal(result.status, "partial");
+  assert.deepEqual(result.gaps, [{
+    questionId: "implementation",
+    targetId: "implementation-target",
+    reason: "The downstream routing stage remains unresolved.",
+  }]);
+}));
+
+test("compiler maps every explicit target to evidence or a target-scoped gap", async () => withWorkspace(async (root) => {
+  const targetedRequest: FreeContextRequest = {
+    ...request(),
+    evidenceQuestions: [
+      { id: "deps", role: "implementation", question: "Where is dependency expansion implemented?", required: true, coverageTargets: [topicTarget("deps", "dependency expansion", "behavior")] },
+      { id: "commands", role: "implementation", question: "Where is command expansion implemented?", required: true, coverageTargets: [topicTarget("commands", "command expansion", "behavior")] },
+      request().evidenceQuestions[1]!,
+    ],
+  };
+  const dependencyEvidence: ExplorerEvidenceCandidate = {
+    role: "implementation",
+    questionId: "deps",
+    targetId: "deps",
+    path: "src/router.ts",
+    startLine: 1,
+    endLine: 20,
+    focusLine: 10,
+    why: "Shows dependency expansion.",
+  };
+  const tests: ExplorerEvidenceCandidate = {
+    role: "test",
+    questionId: "tests",
+    path: "test/router.test.ts",
+    startLine: 1,
+    endLine: 1,
+    focusLine: 1,
+    why: "Covers routing behavior.",
+  };
+  const partial = await compileFreeContextResult(
+    targetedRequest,
+    invocation(root),
+    candidate("Only dependency expansion is verified.", [dependencyEvidence, tests]),
+    { errorCode: null },
+    [observed("src/router.ts", 1, 20), observed("test/router.test.ts", 1, 1)],
+  );
+  assert.equal(partial.status, "partial");
+  assert.deepEqual(partial.gaps.find((gap) => gap.questionId === "commands"), {
+    questionId: "commands",
+    targetId: "commands",
+    reason: "No validated evidence was returned for this question.",
+  });
+  const ready = await compileFreeContextResult(
+    targetedRequest,
+    invocation(root),
+    candidate("Both implementation targets are verified.", [
+      dependencyEvidence,
+      { ...dependencyEvidence, questionId: "commands", targetId: "commands", startLine: 100, endLine: 120, focusLine: 110, why: "Shows command expansion." },
+      tests,
+    ]),
+    { errorCode: null },
+    [observed("src/router.ts", 1, 20), observed("src/router.ts", 100, 120), observed("test/router.test.ts", 1, 1)],
+  );
+  assert.equal(ready.status, "ready");
+  assert.deepEqual(ready.evidence.filter((item) => item.role === "implementation").map((item) => item.targetId), ["deps", "commands"]);
+  const optional = await compileFreeContextResult(
+    {
+      ...targetedRequest,
+      evidenceQuestions: targetedRequest.evidenceQuestions.map((question) =>
+        question.role === "implementation" ? { ...question, required: false } : question),
+    },
+    invocation(root),
+    candidate("Only required test evidence is verified.", [tests]),
+    { errorCode: null },
+    [observed("test/router.test.ts", 1, 1)],
+  );
+  assert.equal(optional.status, "ready");
+  assert.deepEqual(optional.gaps.filter((gap) => gap.targetId === "deps" || gap.targetId === "commands").map((gap) => gap.targetId), ["deps", "commands"]);
 }));
 
 test("compiler rejects production helpers as test evidence and accepts inline test blocks", async () => withWorkspace(async (root) => {
@@ -186,10 +355,10 @@ test("compiler rejects production helpers as test evidence and accepts inline te
 
 test("compiler allocates six spans across four outcome questions without starving later roles", async () => withWorkspace(async (root) => {
   const evidenceQuestions = [
-    { id: "implementation", role: "implementation" as const, question: "Where are both implementation stages?", required: true, minimumSpans: 2 },
-    { id: "application", role: "caller" as const, question: "Where are both application stages?", required: true, minimumSpans: 2 },
-    { id: "contract", role: "contract" as const, question: "What contract applies?", required: true },
-    { id: "tests", role: "test" as const, question: "What tests apply?", required: true },
+    { id: "implementation", role: "implementation" as const, question: "Where are both implementation stages?", required: true, minimumSpans: 2, coverageTargets: [topicTarget("implementation-stages", "implementation stages", "behavior")] },
+    { id: "application", role: "caller" as const, question: "Where are both application stages?", required: true, minimumSpans: 2, coverageTargets: [topicTarget("application-stages", "application stages", "relationship")] },
+    { id: "contract", role: "contract" as const, question: "What contract applies?", required: true, coverageTargets: [topicTarget("contract-target", "routing contract", "contract")] },
+    { id: "tests", role: "test" as const, question: "What tests apply?", required: true, coverageTargets: [topicTarget("tests-target-2", "routing tests", "verification")] },
   ];
   const evidence = [
     { role: "implementation" as const, questionId: "implementation", path: "src/router.ts", startLine: 1, endLine: 20, focusLine: 10, why: "Defines the entry stage." },
@@ -229,8 +398,8 @@ test("compiler turns role mismatch and rejected generated paths into explicit ga
   assert.equal(result.status, "partial");
   assert.equal(result.errorCode, null);
   assert.deepEqual(result.evidence.map((item) => item.questionId), ["implementation"]);
-  assert.deepEqual(result.gaps, [{ questionId: "tests", reason: "Test evidence remains unresolved." }]);
-  assert.equal(result.nextAction.reason, "Then call FreeContext once with the exact unresolved questions and all Evidence paths before any other action.");
+  assert.deepEqual(result.gaps, [{ questionId: "tests", targetId: "tests-target", reason: "Test evidence remains unresolved." }]);
+  assert.equal(result.nextAction.reason, "Use supported Evidence now; if a listed gap blocks the next edit/check, call FreeContext for that gap.");
 }));
 
 test("compiler does not treat a trailing newline as an extra citable line", async () => withWorkspace(async (root) => {
@@ -246,6 +415,7 @@ test("compiler does not treat a trailing newline as an extra citable line", asyn
   assert.equal(result.status, "not_found");
   assert.deepEqual(result.gaps.find((gap) => gap.questionId === "tests"), {
     questionId: "tests",
+    targetId: "tests-target",
     reason: "Evidence range exceeded the file length.",
   });
 }));
@@ -261,7 +431,8 @@ test("normal empty evidence is not_found while malformed output is failed", asyn
   ));
   assert.equal(notFound.status, "not_found");
   assert.equal(notFound.errorCode, null);
-  assert.equal(notFound.nextAction.kind, "direct_search");
+  assert.equal(notFound.nextAction.kind, "exact_probe");
+  assert.match(serializeForModel(notFound), /one exact non-broad path or symbol probe and read at most one candidate path/iu);
 
   const failed = await compileFreeContextResult(
     request(),
@@ -279,31 +450,83 @@ test("compiler keeps the canonical text within 8 KiB", async () => withWorkspace
   const directory = path.join(root, ...segments);
   await mkdir(directory, { recursive: true });
   const relativeDirectory = path.relative(root, directory).split(path.sep).join("/");
+  const sizeRequest: FreeContextRequest = {
+    ...request(),
+    evidenceQuestions: Array.from({ length: 6 }, (_, index) => ({
+      id: `q${index + 1}`,
+      role: "implementation" as const,
+      question: `Where is routing stage ${index + 1} implemented?`,
+      required: true,
+      coverageTargets: [topicTarget(`q${index + 1}-target`, `routing stage ${index + 1}`, "location")],
+    })),
+  };
   const evidence: ExplorerEvidenceCandidate[] = [];
   const reads: ObservedRead[] = [];
   for (let index = 0; index < 6; index += 1) {
     const filename = `router-${index}.ts`;
-    await writeFile(path.join(directory, filename), `unique ${index}\n`);
+    const content = [
+      `class Router${index} {`,
+      ...Array.from({ length: 40 }, (_, line) => `  readonly segment${line} = "payload-${index}-${line}-${"x".repeat(24)}";`),
+      "}",
+    ].join("\n");
+    await writeFile(path.join(directory, filename), `${content}\n`);
     const relativePath = `${relativeDirectory}/${filename}`;
     evidence.push({
       role: "implementation",
-      questionId: "implementation",
+      questionId: `q${index + 1}`,
       path: relativePath,
       startLine: 1,
-      endLine: 1,
+      endLine: 42,
       focusLine: 1,
       why: `${"detail ".repeat(20)}${index}`,
     });
-    reads.push(observed(relativePath, 1, 1));
+    reads.push(observed(relativePath, 1, 42));
   }
   const result = await compileFreeContextResult(
-    request(),
+    sizeRequest,
     invocation(root),
-    candidate(`${"summary ".repeat(60)}`, evidence, [{ questionId: "tests", reason: "No test evidence." }]),
+    candidate(`${"summary ".repeat(60)}`, evidence),
     { errorCode: null },
     reads,
   );
   assert.equal(result.status, "partial");
-  assert.ok(result.evidence.length >= 1 && result.evidence.length <= 6);
+  assert.ok(result.evidence.length >= 1 && result.evidence.length < 6);
+  assert.ok(result.evidence.every((item) => item.startLine < item.endLine && item.excerpt?.endsWith("}")));
+  assert.ok(result.gaps.some((gap) => /omitted rather than truncated/u.test(gap.reason)));
+  assert.ok(Buffer.byteLength(serializeForModel(result), "utf8") <= 8_192);
+}));
+
+test("compiler downgrades exhaustive coverage when the full member list cannot fit", async () => withWorkspace(async (root) => {
+  const exhaustiveRequest: FreeContextRequest = {
+    ...request(),
+    evidenceQuestions: [{
+      id: "members",
+      role: "implementation",
+      question: "Which registered members exist?",
+      required: true,
+      coverageTargets: [topicTarget("members-target", "registered members", "presence", "exhaustive")],
+    }],
+  };
+  const members = Array.from({ length: 64 }, (_, index) => `member-${index.toString().padStart(2, "0")}-${"x".repeat(105)}`);
+  const result = await compileFreeContextResult(
+    exhaustiveRequest,
+    invocation(root),
+    candidate("Registered members.", [{
+      role: "implementation",
+      questionId: "members",
+      targetId: "members-target",
+      path: "src/router.ts",
+      startLine: 1,
+      endLine: 20,
+      focusLine: 10,
+      coverageBasis: true,
+      why: "Enumerates the complete registry.",
+    }], [], [{ targetId: "members-target", members, gaps: [] }]),
+    { errorCode: null },
+    [observed("src/router.ts", 1, 20)],
+  );
+  assert.equal(result.status, "partial");
+  assert.ok((result.coverage?.[0]?.omittedMembers ?? 0) > 0);
+  assert.match(result.coverage?.[0]?.gaps[0] ?? "", /omitted to fit/u);
   assert.ok(Buffer.byteLength(serializeForModel(result), "utf8") <= 8_192);
 }));

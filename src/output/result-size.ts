@@ -1,6 +1,9 @@
 import {
   FreeContextResultSchema,
+  handoffGapFor,
   MODEL_RESULT_MAX_BYTES,
+  questionCoverageTargets,
+  RESULT_LIMITS,
   serializeForModel,
 } from "../mcp/contracts.js";
 import type {
@@ -31,7 +34,7 @@ function oversizeFailure(
       questionId: question.id,
       reason: "The compiled result exceeded the model-visible byte limit.",
     })),
-    nextAction: { kind: "direct_search", reason: "The compiled result exceeded the model-visible byte limit." },
+    nextAction: { kind: "exact_probe", reason: "The compiled result exceeded the model-visible byte limit." },
     errorCode: "RESULT_TOO_LARGE",
     sessionId: invocation.sessionId,
     sessionFile: null,
@@ -46,35 +49,6 @@ export function fitCompiledResult(
   invocation: Readonly<FreeContextInvocationContext>,
 ): Readonly<FreeContextResult> {
   let result = initial;
-  const required = new Set(request.evidenceQuestions.filter((question) => question.required).map((question) => question.id));
-  while (!resultFits(result) && result.evidence.length > 1) {
-    const removeIndex = [...result.evidence].findLastIndex((item) => {
-      const sameQuestion = result.evidence.filter((candidate) => candidate.questionId === item.questionId).length;
-      return !required.has(item.questionId) || sameQuestion > 1;
-    });
-    if (removeIndex < 0) break;
-    const removed = result.evidence[removeIndex];
-    const evidence = result.evidence.filter((_item, index) => index !== removeIndex);
-    const stillCovered = removed ? evidence.some((item) => item.questionId === removed.questionId) : true;
-    const gaps = removed && !stillCovered && !result.gaps.some((gap) => gap.questionId === removed.questionId)
-      ? [...result.gaps, { questionId: removed.questionId, reason: "Lower-ranked evidence was omitted to fit the model-visible result." }]
-      : result.gaps;
-    const first = evidence[0];
-    result = FreeContextResultSchema.parse({
-      ...result,
-      evidence,
-      gaps,
-      nextAction: first
-        ? {
-            kind: "read",
-            path: first.path,
-            startLine: first.startLine,
-            endLine: first.endLine,
-            reason: result.nextAction.reason,
-          }
-        : result.nextAction,
-    });
-  }
   if (resultFits(result)) return Object.freeze(result);
 
   const questions = new Map(request.evidenceQuestions.map((question) => [question.id, question]));
@@ -93,8 +67,93 @@ export function fitCompiledResult(
     })),
     nextAction: {
       ...result.nextAction,
-      reason: clipSingleLine(result.nextAction.reason, 60) || "Read the first evidence span.",
+      reason: clipSingleLine(result.nextAction.reason, 60) || (result.nextAction.kind === "consume_evidence"
+        ? "Use inline Evidence for the next edit or check."
+        : "Make one exact non-broad probe."),
     },
   });
-  return resultFits(result) ? Object.freeze(result) : oversizeFailure(invocation, request);
+  if (resultFits(result)) return Object.freeze(result);
+
+  const required = new Set(request.evidenceQuestions.filter((question) => question.required).map((question) => question.id));
+  while (!resultFits(result) && result.evidence.length > 1) {
+    const preferredIndex = [...result.evidence].findLastIndex((item) => {
+      const sameQuestion = result.evidence.filter((candidate) => candidate.questionId === item.questionId).length;
+      const sameTarget = result.evidence.filter((candidate) => candidate.questionId === item.questionId
+        && candidate.targetId === item.targetId).length;
+      return !required.has(item.questionId) || (sameQuestion > 1 && sameTarget > 1);
+    });
+    const removeIndex = preferredIndex >= 0 ? preferredIndex : result.evidence.length - 1;
+    const removed = result.evidence[removeIndex];
+    const evidence = result.evidence.filter((_item, index) => index !== removeIndex);
+    const coverage = (result.coverage ?? []).map((item) => {
+      if (!removed?.id || !item.basisEvidenceIds.includes(removed.id)) return item;
+      const basisEvidenceIds = item.basisEvidenceIds.filter((id) => id !== removed.id);
+      return {
+        ...item,
+        basisEvidenceIds,
+        gaps: basisEvidenceIds.length > 0 || item.gaps.length > 0
+          ? item.gaps
+          : ["Enumeration-boundary Evidence was omitted to fit the model-visible result."],
+      };
+    });
+    const stillTargetCovered = removed ? evidence.some((item) => item.questionId === removed.questionId && item.targetId === removed.targetId) : true;
+    const question = removed ? request.evidenceQuestions.find((candidate) => candidate.id === removed.questionId) : undefined;
+    const targetId = removed && question ? removed.targetId ?? questionCoverageTargets(question)[0]?.id : undefined;
+    const target = question?.coverageTargets.find((candidate) => candidate.id === targetId);
+    if (removed && !targetId) return oversizeFailure(invocation, request);
+    const needsGap = Boolean(removed && !stillTargetCovered
+      && !result.gaps.some((gap) => gap.questionId === removed.questionId && gap.targetId === targetId));
+    if (needsGap && result.gaps.length >= RESULT_LIMITS.evidence) return oversizeFailure(invocation, request);
+    const gaps = needsGap && removed
+      ? [...result.gaps, { questionId: removed.questionId, targetId, reason: "Evidence was omitted rather than truncated to fit the model-visible result." }]
+      : result.gaps;
+    result = FreeContextResultSchema.parse({
+      ...result,
+      status: (needsGap || coverage.some((item) => item.gaps.length > 0)) && result.status === "ready" ? "partial" : result.status,
+      evidence,
+      gaps,
+      coverage,
+      handoff: result.handoff
+        ? {
+            ...result.handoff,
+            evidenceIds: result.handoff.evidenceIds.filter((id) => id !== removed?.id),
+            blockingGaps: needsGap && question && target && !result.handoff.blockingGaps.some((gap) => gap.targetId === target.id)
+              ? [...result.handoff.blockingGaps, handoffGapFor(question, target)]
+              : result.handoff.blockingGaps,
+          }
+        : result.handoff,
+      nextAction: evidence.length > 0
+        ? {
+            kind: "consume_evidence",
+            reason: result.nextAction.reason,
+          }
+        : result.nextAction,
+    });
+  }
+  if (resultFits(result)) return Object.freeze(result);
+  while (!resultFits(result) && (result.coverage ?? []).some((item) => item.members.length > 0)) {
+    const index = (result.coverage ?? []).findLastIndex((item) => item.members.length > 0);
+    const coverageTarget = result.coverage?.[index]?.targetId;
+    const question = request.evidenceQuestions.find((item) => item.coverageTargets.some((target) => target.id === coverageTarget));
+    const target = question?.coverageTargets.find((item) => item.id === coverageTarget);
+    result = FreeContextResultSchema.parse({
+      ...result,
+      status: result.status === "ready" ? "partial" : result.status,
+      coverage: (result.coverage ?? []).map((item, itemIndex) => itemIndex === index
+        ? {
+            ...item,
+            members: item.members.slice(0, -1),
+            omittedMembers: item.omittedMembers + 1,
+            gaps: item.gaps.length > 0
+              ? item.gaps
+              : ["Discovered members were omitted to fit the model-visible result."],
+          }
+        : item),
+      handoff: result.handoff && question && target && !result.handoff.blockingGaps.some((gap) => gap.targetId === target.id)
+        ? { ...result.handoff, blockingGaps: [...result.handoff.blockingGaps, handoffGapFor(question, target)] }
+        : result.handoff,
+    });
+  }
+  if (resultFits(result)) return Object.freeze(result);
+  return oversizeFailure(invocation, request);
 }

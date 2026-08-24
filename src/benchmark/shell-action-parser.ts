@@ -8,6 +8,8 @@ const SEARCH_VALUE_OPTIONS = new Map<string, ReadonlySet<string>>([
   ["fd", new Set(["-d", "--max-depth", "-E", "--exclude", "-e", "--extension", "-j", "--threads", "-t", "--type"])],
 ]);
 const SEARCH_PATTERN_OPTIONS = new Set(["-e", "--regexp", "-f", "--file"]);
+const DIRECT_CHECK_COMMANDS = new Set(["eslint", "jest", "mypy", "nox", "pytest", "ruff", "tox", "tsc", "vitest"]);
+const CHECK_SCRIPT_NAMES = new Set(["build", "check", "lint", "test", "typecheck"]);
 
 export interface RepositoryAction {
   readonly kind: ParentRepositoryActionEvent["action"]["kind"];
@@ -17,6 +19,7 @@ export interface RepositoryAction {
   readonly broad: boolean;
   readonly gapQuestionIds: readonly string[];
   readonly pathOnlyProbe?: true;
+  readonly externalSource?: true;
 }
 
 export interface ExtractedRepositoryActions {
@@ -51,6 +54,72 @@ function stringProperty(source: string, name: string): string | null {
   const match = source.match(new RegExp(`\\b${name}\\s*:\\s*\"`, "u"));
   if (!match || match.index === undefined) return null;
   return parseDoubleQuoted(source, match.index + match[0].length - 1);
+}
+
+function staticTupleMappedCommands(source: string): readonly string[] | null {
+  const declaration = source.match(
+    /\bconst\s+([A-Za-z_]\w*)\s*=\s*(\[[\s\S]*?\])\s*;/u,
+  );
+  if (!declaration?.[1] || !declaration[2]) return null;
+  const binding = source.match(new RegExp(
+    "\\b" + declaration[1] +
+      "\\.map\\(\\s*async\\s*\\(\\s*\\[\\s*([A-Za-z_]\\w*)\\s*,\\s*([A-Za-z_]\\w*)\\s*\\]",
+    "u",
+  ));
+  const commandProperty = source.match(
+    /tools\.exec_command\s*\(\s*\{\s*([A-Za-z_]\w*)\s*[,}]/u,
+  );
+  const commandIndex = binding && commandProperty
+    ? [binding[1], binding[2]].indexOf(commandProperty[1])
+    : -1;
+  if (commandIndex < 0) return null;
+  try {
+    const value: unknown = JSON.parse(declaration[2]);
+    if (!Array.isArray(value) || value.length === 0 ||
+        !value.every((entry) => Array.isArray(entry) && typeof entry[commandIndex] === "string")) return null;
+    return value.map((entry) => (entry as readonly unknown[])[commandIndex] as string);
+  } catch {
+    return null;
+  }
+}
+
+function staticTemplateMappedCommands(source: string): readonly string[] | null {
+  const mapping = source.match(
+    /\b([A-Za-z_]\w*)\.map\(\s*(?:async\s*)?(?:\(\s*)?([A-Za-z_]\w*)\s*(?:,\s*([A-Za-z_]\w*))?\s*\)?\s*=>[\s\S]*?tools\.exec_command/u,
+  );
+  const template = source.match(/tools\.exec_command\s*\(\s*\{[\s\S]*?\bcmd\s*:\s*`([^`]*)`/u)?.[1];
+  if (!mapping?.[1] || !mapping[2] || template === undefined) return null;
+
+  const arrays = new Map<string, readonly unknown[]>();
+  for (const declaration of source.matchAll(/\bconst\s+([A-Za-z_]\w*)\s*=\s*(\[[\s\S]*?\])\s*;/gu)) {
+    if (!declaration[1] || !declaration[2]) continue;
+    try {
+      const value: unknown = JSON.parse(declaration[2]);
+      if (Array.isArray(value)) arrays.set(declaration[1], value);
+    } catch { /* Non-JSON declarations remain dynamic and fail closed. */ }
+  }
+  const values = arrays.get(mapping[1]);
+  if (!values?.length || !values.every((value) => typeof value === "string")) return null;
+
+  const indexPattern = mapping[3]
+    ? new RegExp(`\\$\\{([A-Za-z_]\\w*)\\[${mapping[3]}\\]\\}`, "gu")
+    : null;
+  const commands = values.map((value, index) => {
+    let command = template.replaceAll(`\${${mapping[2]}}`, () => value as string);
+    if (indexPattern) {
+      command = command.replace(indexPattern, (placeholder, name: string) => {
+        const replacement = arrays.get(name)?.[index];
+        return typeof replacement === "string" ? replacement : placeholder;
+      });
+    }
+    return command;
+  });
+  return commands.every((command) => !command.includes("${")) ? commands : null;
+}
+
+function staticMappedCommands(source: string): readonly string[] | null {
+  if (!source.includes("Promise.all")) return null;
+  return staticTupleMappedCommands(source) ?? staticTemplateMappedCommands(source);
 }
 
 function firstStringArgument(source: string): string | null {
@@ -141,9 +210,19 @@ function normalizedPath(value: string | undefined): string | null {
 
 function action(kind: RepositoryAction["kind"], path: string | null, startLine: number | null,
   endLine: number | null, broad = false, gapQuestionIds: readonly string[] = [],
-  pathOnlyProbe = false): RepositoryAction {
+  pathOnlyProbe = false, externalSource = false): RepositoryAction {
   const value = { kind, path, startLine, endLine, broad, gapQuestionIds };
-  return pathOnlyProbe ? { ...value, pathOnlyProbe: true } : value;
+  return { ...value, ...(pathOnlyProbe ? { pathOnlyProbe: true as const } : {}), ...(externalSource ? { externalSource: true as const } : {}) };
+}
+
+function isTaskSolutionExternalSource(name: string, args: readonly string[]): boolean {
+  if (name === "curl" || name === "wget") return true;
+  if (name === "git" && ["clone", "fetch", "ls-remote"].includes(args[0] ?? "")) return true;
+  if (["npm", "pnpm", "yarn", "bun"].includes(name) && ["view", "info", "pack"].includes(args[0] ?? "")) return true;
+  if ((name === "pip" || /^pip\d+(?:\.\d+)?$/u.test(name)) && ["download", "index", "install"].includes(args[0] ?? "")) return true;
+  if (name === "cargo" && ["search", "info", "install"].includes(args[0] ?? "")) return true;
+  if (name === "go" && args[0] === "list" && args.includes("-m")) return true;
+  return name === "gh" && (args[0] === "api" || args[0] === "repo");
 }
 
 function searchPositionals(name: string, args: readonly string[]): {
@@ -209,10 +288,36 @@ function pathOnlySearch(command: string): boolean {
   });
 }
 
+function isCheckCommand(name: string, args: readonly string[]): boolean {
+  if (DIRECT_CHECK_COMMANDS.has(name)) return true;
+  if ((name === "python" || /^python\d+(?:\.\d+)?$/u.test(name)) && args[0] === "-m") {
+    return ["mypy", "pytest", "unittest"].includes(args[1] ?? "");
+  }
+  if (name === "node") return args.includes("--test");
+  if (name === "cargo") return ["check", "clippy", "test"].includes(args[0] ?? "");
+  if (name === "go") return args[0] === "test";
+  if (["npm", "pnpm", "yarn", "bun"].includes(name)) {
+    const script = args[0] === "run" ? args[1] : args[0];
+    return CHECK_SCRIPT_NAMES.has(script ?? "");
+  }
+  if (name === "make") return args.some((target) => CHECK_SCRIPT_NAMES.has(target));
+  if ((name === "uv" || name === "poetry") && args[0] === "run" && args[1]) {
+    return isCheckCommand(args[1].split("/").at(-1) ?? "", args.slice(2));
+  }
+  if (name === "test" && args[0]) {
+    return isCheckCommand(args[0].split("/").at(-1) ?? "", args.slice(1));
+  }
+  return false;
+}
+
 function commandActions(command: string, gapQuestionIds: readonly string[]): RepositoryAction[] | null {
   const actions: RepositoryAction[] = [];
-  const pathOnlyProbe = pathOnlySearch(command);
-  for (const segment of splitShell(command)) {
+  // Stderr suppression is read-only; remove it before token safety checks so
+  // substitutions such as `$(go env GOPATH 2>/dev/null)` are not mistaken for
+  // a write redirection. All other redirections remain fail-closed below.
+  const normalizedCommand = command.replace(/2>\s*\/dev\/null/gu, "");
+  const pathOnlyProbe = pathOnlySearch(normalizedCommand);
+  for (const segment of splitShell(normalizedCommand)) {
     const tokens = shellTokens(segment);
     if (tokens.length === 0) continue;
     let name = tokens[0]?.split("/").at(-1) ?? "";
@@ -220,6 +325,14 @@ function commandActions(command: string, gapQuestionIds: readonly string[]): Rep
     if (name === "rtk" && args[0]) {
       name = args[0];
       args = args.slice(1);
+    }
+    if (isTaskSolutionExternalSource(name, args)) {
+      actions.push(action("other", null, null, null, true, gapQuestionIds, false, true));
+      continue;
+    }
+    if (isCheckCommand(name, args)) {
+      actions.push(action("check", null, null, null));
+      continue;
     }
     const recognized = ["rg", "fd", "grep", "find", "sed", "bat", "read", "head", "cat"].includes(name);
     if (recognized && tokens.some((item) => item !== "2>/dev/null" && /^(?:\d*)?[<>]/u.test(item))) return null;
@@ -266,7 +379,9 @@ export function extractRepositoryActionsFromCode(
   gapQuestionIds: readonly string[],
 ): Readonly<ExtractedRepositoryActions> {
   const markers = [...source.matchAll(/tools\.(exec_command|apply_patch)\s*\(/gu)];
-  const concurrent = source.includes("Promise.all") && markers.length > 1;
+  const mappedCommands = markers.length === 1 ? staticMappedCommands(source) : null;
+  const concurrent = source.includes("Promise.all") &&
+    (markers.length > 1 || (mappedCommands?.length ?? 0) > 1);
   const actions: RepositoryAction[] = [];
   for (let index = 0; index < markers.length; index += 1) {
     const marker = markers[index];
@@ -274,10 +389,13 @@ export function extractRepositoryActionsFromCode(
     const block = source.slice(marker.index, markers[index + 1]?.index ?? source.length);
     if (marker[1] === "exec_command") {
       const command = stringProperty(block, "cmd");
-      if (command === null) return { complete: false, actions: [], concurrent };
-      const commandResult = commandActions(command, gapQuestionIds);
-      if (commandResult === null) return { complete: false, actions: [], concurrent };
-      actions.push(...commandResult);
+      const commands = command === null ? mappedCommands : [command];
+      if (commands === null) return { complete: false, actions: [], concurrent };
+      for (const current of commands) {
+        const commandResult = commandActions(current, gapQuestionIds);
+        if (commandResult === null) return { complete: false, actions: [], concurrent };
+        actions.push(...commandResult);
+      }
     } else {
       const patch = firstStringArgument(block);
       if (patch === null) {
@@ -291,4 +409,21 @@ export function extractRepositoryActionsFromCode(
     }
   }
   return { complete: true, actions, concurrent: concurrent && actions.length > 1 };
+}
+
+function unwrapCommandExecution(command: string): string {
+  const tokens = shellTokens(command);
+  const shell = tokens[0]?.split("/").at(-1);
+  if ((shell === "bash" || shell === "sh" || shell === "zsh") && tokens[1] === "-lc") {
+    return tokens.slice(2).join(" ");
+  }
+  return command;
+}
+
+export function extractRepositoryActionsFromShellCommand(
+  command: string,
+  gapQuestionIds: readonly string[],
+): Readonly<ExtractedRepositoryActions> {
+  const actions = commandActions(unwrapCommandExecution(command), gapQuestionIds);
+  return Object.freeze({ complete: actions !== null, actions: Object.freeze(actions ?? []), concurrent: false });
 }

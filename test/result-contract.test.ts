@@ -12,20 +12,26 @@ const readyResult = () => ({
   status: "ready" as const,
   summary: "The implementation and test locations are verified.",
   evidence: [{
+    id: "e1",
     role: "implementation" as const,
     path: "src/router.ts",
     startLine: 10,
     endLine: 24,
     focusLine: 17,
     questionId: "implementation",
+    excerpt: "export function routeProvider() {}",
     why: "Defines provider routing.",
   }],
   gaps: [],
+  handoff: {
+    id: "handoff:session-1",
+    workUnit: { outcome: "answer" as const, goal: "Use the verified routing evidence." },
+    evidenceIds: ["e1"],
+    outcome: { kind: "answer" as const, instruction: "Answer from the verified routing evidence." },
+    blockingGaps: [],
+  },
   nextAction: {
-    kind: "read" as const,
-    path: "src/router.ts",
-    startLine: 10,
-    endLine: 24,
+    kind: "consume_evidence" as const,
     reason: "Read the decisive implementation span.",
   },
   errorCode: null,
@@ -36,37 +42,69 @@ const readyResult = () => ({
 test("request normalization deduplicates refs and keeps the documented priority", () => {
   const normalized = normalizeFreeContextRequest({
     taskText: "Preserve this task exactly.\n",
+    workUnit: { outcome: "edit", goal: "Update routing without changing its public contract." },
     knownRefs: [
-      ...Array.from({ length: 12 }, (_, index) => ({ kind: "symbol" as const, symbol: `symbol${index}` })),
+      ...Array.from({ length: 8 }, (_, index) => ({ kind: "symbol" as const, symbol: `symbol${index}` })),
       { kind: "path", path: "./src/router.ts" },
-      { kind: "path", path: "src/router.ts" },
       { kind: "symbol", symbol: "route", path: "src/router.ts" },
       { kind: "stack", path: "src/router.ts", line: 42 },
       { kind: "path", path: "../outside.ts" },
     ],
     evidenceQuestions: [
-      { id: "implementation", role: "implementation", question: "Where is routing implemented?", required: true, minimumSpans: 2 },
-      { id: "tests", role: "test", question: "Which tests cover it?", required: true },
+      { role: "implementation", question: "Where is routing implemented?", required: true, target: { id: "routing-body", subject: { kind: "symbol", symbol: "route", path: "src/router.ts" }, factKind: "definition", coverageMode: "single" } },
+      { role: "test", question: "Which tests cover routing?", required: true, target: { id: "routing-tests", subject: { kind: "symbol", symbol: "route" }, factKind: "verification", coverageMode: "single" } },
     ],
   });
   assert.equal(normalized.taskText, "Preserve this task exactly.\n");
+  assert.deepEqual(normalized.workUnit, { outcome: "edit", goal: "Update routing without changing its public contract." });
   assert.deepEqual(normalized.knownRefs.slice(0, 3), [
     { kind: "stack", path: "src/router.ts", line: 42 },
     { kind: "symbol", symbol: "route", path: "src/router.ts" },
     { kind: "path", path: "src/router.ts" },
   ]);
-  assert.equal(normalized.knownRefs.length, 12);
-  assert.equal(normalized.evidenceQuestions[0]?.minimumSpans, 2);
+  assert.equal(normalized.knownRefs.length, 11);
+  assert.deepEqual(normalized.evidenceQuestions[0], {
+    id: "q1",
+    role: "implementation",
+    question: "Where is routing implemented?",
+    required: true,
+    coverageTargets: [{ id: "routing-body", subject: { kind: "symbol", symbol: "route", path: "src/router.ts" }, factKind: "definition", coverageMode: "single" }],
+  });
+  assert.deepEqual(normalized.evidenceQuestions[1], {
+    id: "q2",
+    role: "test",
+    question: "Which tests cover routing?",
+    required: true,
+    coverageTargets: [{ id: "routing-tests", subject: { kind: "symbol", symbol: "route" }, factKind: "verification", coverageMode: "single" }],
+  });
+  assert.throws(() => normalizeFreeContextRequest({
+    taskText: "Missing work unit.",
+    evidenceQuestions: [{ role: "implementation", question: "Where is routing implemented?", required: true, target: { id: "routing", subject: { kind: "topic", topic: "routing" }, factKind: "location", coverageMode: "single" } }],
+  }), /workUnit/iu);
+  assert.throws(() => normalizeFreeContextRequest({
+    taskText: "Old string-target shape.",
+    workUnit: { outcome: "answer", goal: "Locate routing." },
+    evidenceQuestions: [{ role: "implementation", question: "Where is routing implemented?", required: true, targets: ["routing"] }],
+  }), /target/iu);
+  assert.throws(() => normalizeFreeContextRequest({
+    taskText: "Duplicate target IDs.",
+    workUnit: { outcome: "answer", goal: "Locate routing." },
+    evidenceQuestions: [
+      { role: "implementation", question: "Where is routing implemented?", required: true, target: { id: "routing", subject: { kind: "topic", topic: "routing implementation" }, factKind: "location", coverageMode: "single" } },
+      { role: "test", question: "Where is routing tested?", required: false, target: { id: "routing", subject: { kind: "topic", topic: "routing tests" }, factKind: "verification", coverageMode: "single" } },
+    ],
+  }), /target id must be unique/iu);
 });
 
 test("canonical request separates model intent from host invocation facts", () => {
   const taskText = "  Trace the implementation, callers, tests, and configuration contract without losing API constraints.\n";
   const request = FreeContextRequestSchema.parse({
     taskText,
+    workUnit: { outcome: "decision", goal: "Identify the routing contract owners." },
     knownRefs: [{ kind: "path", path: "src/router.ts" }],
     evidenceQuestions: [
-      { id: "implementation", role: "implementation", question: "Where is routing implemented?", required: true },
-      { id: "tests", role: "test", question: "Which tests cover it?", required: true },
+      { id: "implementation", role: "implementation", question: "Where is routing implemented?", required: true, coverageTargets: [{ id: "routing-body", subject: { kind: "symbol", symbol: "route" }, factKind: "definition", coverageMode: "single" }] },
+      { id: "tests", role: "test", question: "Which tests cover it?", required: true, coverageTargets: [{ id: "routing-tests", subject: { kind: "symbol", symbol: "route" }, factKind: "verification", coverageMode: "single" }] },
     ],
   });
   assert.equal(request.taskText, taskText);
@@ -83,11 +121,18 @@ test("canonical request separates model intent from host invocation facts", () =
   assert.throws(() => FreeContextRequestSchema.parse({
     ...request,
     evidenceQuestions: request.evidenceQuestions.map((question) => ({ ...question, minimumSpans: 4 })),
-  }), /required minimum spans cannot exceed 6/u);
+  }), /required coverage slots cannot exceed 6/u);
   assert.throws(() => FreeContextRequestSchema.parse({
     ...request,
     evidenceQuestions: request.evidenceQuestions.map((question) => ({ ...question, required: false, minimumSpans: 2 })),
   }), /optional questions cannot require multiple spans/u);
+  assert.throws(() => FreeContextRequestSchema.parse({
+    ...request,
+    evidenceQuestions: request.evidenceQuestions.map((question) => ({
+      ...question,
+      coverageTargets: [{ ...question.coverageTargets[0]!, id: "same" }],
+    })),
+  }), /target id must be unique/u);
 });
 
 test("serializeForModel is text-first and contains every canonical evidence field", () => {
@@ -96,8 +141,14 @@ test("serializeForModel is text-first and contains every canonical evidence fiel
   assert.equal(text, [
     "Status: ready",
     "Evidence:",
-    "1. [implementation][implementation] src/router.ts:10-24 (focus 17) — Defines provider routing.",
-    "First repository cell: read exactly all Evidence ranges above; no range widening, search, status, plan, or branch. Read the decisive implementation span.",
+    "1. [e1][implementation][implementation] src/router.ts:10-24 (focus 17) — Defines provider routing.",
+    "Excerpt (observed):",
+    "export function routeProvider() {}",
+    "Exhaustive coverage:",
+    "-",
+    "Handoff:",
+    "- prior_handoff={\"id\":\"handoff:session-1\",\"workUnit\":{\"outcome\":\"answer\",\"goal\":\"Use the verified routing evidence.\"},\"evidenceIds\":[\"e1\"],\"outcome\":{\"kind\":\"answer\",\"instruction\":\"Answer from the verified routing evidence.\"},\"blockingGaps\":[]}",
+    "Follow nextAction: consume inline Evidence and proceed to edit/check. If change-critical context is omitted, one necessary adjacent read on an Evidence path is allowed; broader discovery calls FreeContext. Read the decisive implementation span.",
     "Gaps:",
     "-",
     "Summary: The implementation and test locations are verified.",
@@ -114,8 +165,20 @@ test("canonical result schema enforces terminal state and span invariants", () =
     status: "not_found",
     evidence: [],
     gaps: sixGaps,
-    nextAction: { kind: "direct_search", reason: "Search the unresolved questions." },
+    handoff: null,
+    nextAction: { kind: "exact_probe", reason: "Search the unresolved questions." },
   }).gaps.length, 6);
+  assert.throws(() => FreeContextResultSchema.parse({
+    ...readyResult(),
+    nextAction: { kind: "exact_probe", reason: "Probe despite complete Evidence." },
+  }), /ready requires consume_evidence/u);
+  assert.throws(() => FreeContextResultSchema.parse({
+    ...readyResult(),
+    status: "not_found",
+    evidence: [],
+    gaps: sixGaps,
+    nextAction: { kind: "consume_evidence", reason: "Consume absent Evidence." },
+  }), /not_found requires exact_probe/u);
   assert.throws(() => FreeContextResultSchema.parse({
     ...readyResult(),
     status: "failed",
@@ -136,6 +199,7 @@ test("serializer refuses an oversized result instead of silently dropping eviden
     ...readyResult(),
     evidence: Array.from({ length: 6 }, (_, index) => ({
       ...readyResult().evidence[0],
+      id: `e${index + 1}`,
       path: `${"deep/".repeat(350)}file-${index}.ts`,
       startLine: index * 10 + 1,
       endLine: index * 10 + 2,

@@ -19,12 +19,13 @@ function result(status: FreeContextResult["status"] = "ready"): FreeContextResul
       endLine: 20,
       focusLine: 15,
       questionId: "implementation",
+      excerpt: "export function route() {}",
       why: "Defines routing.",
     }],
     gaps: status === "partial" ? [{ questionId: "tests", reason: "Tests remain unresolved." }] : [],
     nextAction: status === "not_found" || status === "failed"
-      ? { kind: "direct_search", reason: "Search directly." }
-      : { kind: "read", path: "src/router.ts", startLine: 10, endLine: 20, reason: "Read the evidence." },
+      ? { kind: "exact_probe", reason: "Search directly." }
+      : { kind: "consume_evidence", reason: "Use the evidence." },
     errorCode: status === "failed" ? "INTERNAL_ERROR" : null,
     sessionId: "session-1",
     sessionFile: "/logs/agent/freecontext-sessions/session-1.json",
@@ -97,22 +98,67 @@ test("collector accepts only explicit host action events for the selected call",
   );
 });
 
-test("v3 audit requires the first batch to consume every evidence span", () => {
-  const audit = analyzeFreeContextConsumption(result(), [
-    action(1, {}, { observationBatchId: "cell-1", observationBatchConcurrent: true }),
-    action(2, {}, { observationBatchId: "cell-1", observationBatchConcurrent: true }),
-  ], context());
-  assert.equal(audit.schemaVersion, "freecontext-consumption-audit-v3");
-  assert.equal(audit.firstRepositoryBatchSize, 2);
-  assert.equal(audit.firstRepositoryBatchConcurrent, true);
-  assert.equal(audit.firstRepositoryBatchReadOnly, true);
-  assert.equal(audit.firstRepositoryBatchEvidenceOnly, true);
-  assert.equal(audit.consumedEvidenceCount, 1);
-  assert.equal(audit.allEvidenceConsumed, true);
-  assert.deepEqual(audit.escapedExplorationReasons, []);
+test("v6 audit accepts inline observed evidence without a native reread", () => {
+  const audit = analyzeFreeContextConsumption(result(), [], context());
+  assert.equal(audit.schemaVersion, "freecontext-consumption-audit-v6");
+  assert.equal(audit.inlineEvidenceCount, 1);
+  assert.equal(audit.inlineEvidenceProvenanceComplete, true);
+  assert.equal(audit.nativeEvidenceRereadCount, 0);
+  assert.equal(audit.firstRepositoryActionKind, null);
+  assert.deepEqual(audit.failureReasons, []);
+
+  const missingExcerpt = result();
+  delete missingExcerpt.evidence[0]?.excerpt;
+  const missingAudit = analyzeFreeContextConsumption(missingExcerpt, [], context());
+  assert.equal(missingAudit.inlineEvidenceProvenanceComplete, false);
+  assert.deepEqual(missingAudit.failureReasons, ["inline_evidence_provenance_missing"]);
 });
 
-test("v3 audit detects full-window broad, second-batch, and third-path escapes", () => {
+test("v6 audit rejects pre-edit search beyond a consume_evidence nextAction", () => {
+  const audit = analyzeFreeContextConsumption(result(), [
+    action(1, {}, { observationBatchId: "cell-1" }),
+    action(2, {}, { observationBatchId: "cell-2" }),
+    action(3, { kind: "search", path: null, startLine: null, endLine: null }, { observationBatchId: "search-1" }),
+  ], context());
+  assert.equal(audit.nativeEvidenceRereadCount, 2);
+  assert.equal(audit.firstRepositoryActionKind, "read");
+  assert.equal(audit.preEditNativeExplorationCount, 1);
+  assert.deepEqual(audit.failureReasons, ["pre_edit_handoff_scope_exceeded"]);
+});
+
+test("v6 audit applies pre-edit handoff and post-edit diagnostic boundaries", () => {
+  const adjacent = analyzeFreeContextConsumption(result(), [
+    action(1, { startLine: 21, endLine: 30 }),
+  ], context());
+  assert.deepEqual(adjacent.failureReasons, []);
+
+  const exactProbe = analyzeFreeContextConsumption(result("not_found"), [
+    action(1, { kind: "search", path: null, startLine: null, endLine: null }, { observationBatchId: "probe-1" }),
+    action(2, { path: "src/candidate.ts", startLine: 1, endLine: 5 }),
+  ], context());
+  assert.deepEqual(exactProbe.failureReasons, []);
+
+  const expandedProbe = analyzeFreeContextConsumption(result("not_found"), [
+    action(1, { kind: "search", path: null, startLine: null, endLine: null }, { observationBatchId: "probe-1" }),
+    action(2, { kind: "search", path: null, startLine: null, endLine: null }, { observationBatchId: "probe-2" }),
+  ], context());
+  assert.deepEqual(expandedProbe.failureReasons, ["pre_edit_handoff_scope_exceeded"]);
+
+  const repeatedAdjacent = analyzeFreeContextConsumption(result(), [
+    action(1, { startLine: 21, endLine: 30 }),
+    action(2, { startLine: 31, endLine: 40 }),
+  ], context());
+  assert.deepEqual(repeatedAdjacent.failureReasons, ["pre_edit_handoff_scope_exceeded"]);
+
+  const postEditExactDiagnostic = analyzeFreeContextConsumption(result(), [
+    action(1),
+    action(2, { kind: "edit", path: "src/router.ts", startLine: null, endLine: null }),
+    action(3, { kind: "check", path: null, startLine: null, endLine: null }),
+    action(4, { path: "test/exact-failure.test.ts", startLine: 40, endLine: 45 }),
+  ], context());
+  assert.deepEqual(postEditExactDiagnostic.failureReasons, []);
+  assert.deepEqual(postEditExactDiagnostic.phases.map(({ phase }) => phase), ["pre_edit_handoff", "post_edit_diagnostic"]);
+
   const audit = analyzeFreeContextConsumption(result(), [
     action(1),
     action(2, { kind: "edit", path: "src/edited.ts", startLine: null, endLine: null }),
@@ -128,19 +174,58 @@ test("v3 audit detects full-window broad, second-batch, and third-path escapes",
   assert.equal(audit.broadSearchCount, 1);
   assert.equal(audit.distinctNonEvidenceReadPaths, 3);
   assert.equal(audit.editCount, 1);
-  assert.deepEqual(audit.escapedExplorationReasons, [
-    "broad_search",
-    "second_search_batch",
-    "third_non_evidence_read_path",
+  assert.equal(audit.preEditNativeExplorationCount, 0);
+  assert.equal(audit.postEditNativeExplorationCount, 6);
+  assert.deepEqual(audit.phases.map(({ phase, actionCount }) => [phase, actionCount]), [
+    ["pre_edit_handoff", 1],
+    ["post_edit_diagnostic", 7],
   ]);
+  assert.deepEqual(audit.failureReasons, ["post_edit_cross_file_exploration_without_fc"]);
+
+  const mixed = analyzeFreeContextConsumption(result(), [
+    action(1, { path: "src/other.ts" }),
+    action(2),
+  ], context());
+  assert.equal(mixed.preEditNativeExplorationCount, 1);
+  assert.deepEqual(mixed.failureReasons, ["pre_edit_handoff_scope_exceeded"]);
+
+  const external = analyzeFreeContextConsumption(result(), [action(1, {
+    kind: "other",
+    path: null,
+    startLine: null,
+    endLine: null,
+    broad: true,
+    externalSource: true,
+  })], context());
+  assert.equal(external.externalSourceCommandCount, 1);
+  assert.deepEqual(external.failureReasons, ["task_solution_external_source"]);
 });
 
-test("gap handoff and unobserved windows fail closed", () => {
+test("typed reentry and unobserved windows fail closed", () => {
   const gapAudit = analyzeFreeContextConsumption(result("partial"), [
     action(1),
     action(2, { kind: "search", path: null, startLine: null, endLine: null }),
-  ], context({ followedByGapFollowup: true }));
-  assert.deepEqual(gapAudit.escapedExplorationReasons, ["action_before_gap_followup"]);
+  ], context());
+  assert.equal(gapAudit.preEditNativeExplorationCount, 1);
+  assert.deepEqual(gapAudit.failureReasons, ["pre_edit_handoff_scope_exceeded"]);
+
+  const prematureReentry = analyzeFreeContextConsumption(result(), [], context({ followedByReentrant: true }));
+  assert.equal(prematureReentry.followedByReentrant, true);
+  assert.equal(prematureReentry.editOrCheckObserved, false);
+  assert.deepEqual(prematureReentry.failureReasons, ["reentry_without_typed_origin"]);
+  assert.deepEqual(prematureReentry.phases.map(({ phase }) => phase), ["pre_edit_handoff", "reentry"]);
+  assert.deepEqual(analyzeFreeContextConsumption(result(), [], context({
+    followedByReentrant: true,
+    reentryOrigin: "evidence_consumption",
+  })).failureReasons, []);
+  for (const kind of ["edit", "check"] as const) {
+    const progressed = analyzeFreeContextConsumption(result(), [
+      action(1, { kind, path: kind === "edit" ? "src/router.ts" : null, startLine: null, endLine: null }),
+    ], context({ followedByReentrant: true }));
+    assert.equal(progressed.followedByReentrant, true);
+    assert.equal(progressed.editOrCheckObserved, true);
+    assert.deepEqual(progressed.failureReasons, []);
+  }
 
   const unobserved = analyzeFreeContextConsumption(result(), [], context({
     invocationKind: "invalid",
@@ -149,8 +234,8 @@ test("gap handoff and unobserved windows fail closed", () => {
     windowFailureReasons: ["transport_correlation"],
   }));
   assert.equal(unobserved.actionCount, 0);
-  assert.equal(unobserved.allEvidenceConsumed, false);
-  assert.deepEqual(unobserved.escapedExplorationReasons, [
+  assert.equal(unobserved.inlineEvidenceProvenanceComplete, true);
+  assert.deepEqual(unobserved.failureReasons, [
     "transport_correlation",
     "unobserved_window",
   ]);

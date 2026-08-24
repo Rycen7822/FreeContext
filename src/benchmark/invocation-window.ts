@@ -1,8 +1,9 @@
 import { isDeepStrictEqual } from "node:util";
 import type { FreeContextRequest, FreeContextResult } from "../mcp/contracts.js";
+import { validateFreeContextReentry } from "../mcp/eligibility.js";
 import type { FreeContextTransportObservation } from "./delivery-observation.js";
 
-export type FreeContextInvocationKind = "initial" | "gap_followup" | "reentrant" | "invalid";
+export type FreeContextInvocationKind = "initial" | "reentrant" | "invalid" | "unknown";
 
 export interface FreeContextInvocationWindowInput {
   readonly callId: string;
@@ -32,55 +33,29 @@ interface CorrelatedInvocation {
   readonly completedMs: number;
 }
 
-function questionIds(request: Readonly<FreeContextRequest>): Set<string> {
-  return new Set(request.evidenceQuestions.map(({ id }) => id));
-}
-
-function sameQuestion(
+function sameQuestionDefinition(
   current: Readonly<FreeContextRequest>["evidenceQuestions"][number],
   previous: Readonly<FreeContextRequest>["evidenceQuestions"][number],
 ): boolean {
-  return current.id === previous.id && current.role === previous.role &&
+  return current.role === previous.role &&
     current.question === previous.question && current.required === previous.required &&
-    (current.minimumSpans ?? 1) === (previous.minimumSpans ?? 1);
+    (current.minimumSpans ?? 1) === (previous.minimumSpans ?? 1) &&
+    isDeepStrictEqual(current.coverageTargets, previous.coverageTargets);
+}
+
+function sameWorkUnit(current: Readonly<FreeContextRequest>, previous: Readonly<FreeContextRequest>): boolean {
+  return isDeepStrictEqual(current.workUnit, previous.workUnit);
 }
 
 function sameRequest(current: Readonly<FreeContextRequest>, previous: Readonly<FreeContextRequest>): boolean {
-  return current.taskText === previous.taskText && isDeepStrictEqual(current.knownRefs, previous.knownRefs) &&
+  return current.taskText === previous.taskText && sameWorkUnit(current, previous) &&
+    isDeepStrictEqual(current.knownRefs, previous.knownRefs) &&
+    isDeepStrictEqual(current.reentry, previous.reentry) &&
     current.evidenceQuestions.length === previous.evidenceQuestions.length &&
     current.evidenceQuestions.every((question, index) => {
       const prior = previous.evidenceQuestions[index];
-      return prior !== undefined && sameQuestion(question, prior);
+      return prior !== undefined && question.id === prior.id && sameQuestionDefinition(question, prior);
     });
-}
-
-function matchesGapQuestions(
-  current: Readonly<FreeContextRequest>,
-  previous: Readonly<FreeContextRequest>,
-  gapIds: ReadonlySet<string>,
-): boolean {
-  if (current.evidenceQuestions.length !== gapIds.size) return false;
-  const previousQuestions = new Map(previous.evidenceQuestions.map((question) => [question.id, question]));
-  return current.evidenceQuestions.every((question) => {
-    const prior = previousQuestions.get(question.id);
-    return gapIds.has(question.id) && prior !== undefined && sameQuestion(question, prior);
-  });
-}
-
-function normalizedReferencePaths(request: Readonly<FreeContextRequest>): Set<string> {
-  return new Set(request.knownRefs.flatMap((reference) => {
-    if (reference.kind === "path" || reference.kind === "stack") return [reference.path];
-    return reference.path ? [reference.path] : [];
-  }).map((value) => value.replace(/\\/gu, "/").replace(/^\.\//u, "")));
-}
-
-function coversEvidencePaths(
-  request: Readonly<FreeContextRequest>,
-  result: Readonly<FreeContextResult>,
-): boolean {
-  const references = normalizedReferencePaths(request);
-  return result.evidence.every(({ path }) =>
-    references.has(path.replace(/\\/gu, "/").replace(/^\.\//u, "")));
 }
 
 function invalidWindows(
@@ -104,6 +79,7 @@ function invalidWindows(
 export function buildFreeContextInvocationWindows(
   inputs: readonly Readonly<FreeContextInvocationWindowInput>[],
   transports: readonly Readonly<FreeContextTransportObservation>[],
+  taskCompleteTimestamps: readonly (string | null)[] = [],
 ): readonly Readonly<FreeContextInvocationWindow>[] {
   if (inputs.length === 0) return Object.freeze([]);
   if (new Set(inputs.map(({ callId }) => callId)).size !== inputs.length) {
@@ -156,62 +132,61 @@ export function buildFreeContextInvocationWindows(
     }
   }
 
-  const seenQuestionIds = new Set<string>();
+  const finalInvocation = correlated.at(-1);
+  const taskCompletedAt = taskCompleteTimestamps.length === 1 &&
+      typeof taskCompleteTimestamps[0] === "string"
+    ? taskCompleteTimestamps[0]
+    : null;
+  const taskCompletedMs = taskCompletedAt === null ? Number.NaN : Date.parse(taskCompletedAt);
+  const finalBoundaryObserved = finalInvocation !== undefined && !Number.isNaN(taskCompletedMs) &&
+    taskCompletedMs > finalInvocation.completedMs;
+
   const priorRequests: Readonly<FreeContextRequest>[] = [];
   let episodeIndex = 1;
   const windows: FreeContextInvocationWindow[] = [];
   for (const [index, invocation] of correlated.entries()) {
     const previous = correlated[index - 1];
-    const currentIds = questionIds(invocation.input.request);
-    const exactDuplicate = priorRequests.some((request) => sameRequest(request, invocation.input.request));
+    const repeatedRequest = priorRequests.some((request) => sameRequest(request, invocation.input.request));
     let invocationKind: FreeContextInvocationKind = index === 0 ? "initial" : "invalid";
     const failureReasons: string[] = [];
 
-    if (exactDuplicate) {
+    if (!previous && invocation.input.request.reentry) {
       invocationKind = "invalid";
-      failureReasons.push("exact_request_replay");
+      failureReasons.push("unexpected_initial_reentry");
     } else if (previous) {
-      const previousGapIds = new Set(previous.input.result.gaps.map(({ questionId }) => questionId));
-      const previousQuestionIds = questionIds(previous.input.request);
-      const touchesPreviousGap = [...currentIds].some((questionId) => previousGapIds.has(questionId));
-      if (previous.input.result.status === "partial" && touchesPreviousGap) {
-        if ([...previousGapIds].every((questionId) => previousQuestionIds.has(questionId)) &&
-            matchesGapQuestions(invocation.input.request, previous.input.request, previousGapIds) &&
-            coversEvidencePaths(invocation.input.request, previous.input.result)) {
-          invocationKind = "gap_followup";
-        } else {
-          invocationKind = "invalid";
-          failureReasons.push("invalid_gap_followup");
-        }
-      } else if (currentIds.size >= 1 && currentIds.size <= 4 &&
-          [...currentIds].every((questionId) => !seenQuestionIds.has(questionId))) {
-        invocationKind = "reentrant";
-        episodeIndex += 1;
-      } else {
+      const previousKind = windows[index - 1]?.invocationKind;
+      if (previousKind === "invalid" || previousKind === "unknown") {
         invocationKind = "invalid";
-        if (currentIds.size < 1 || currentIds.size > 4) {
-          failureReasons.push("invalid_reentrant_question_count");
-        }
-        if ([...currentIds].some((questionId) => seenQuestionIds.has(questionId))) {
-          failureReasons.push("resolved_question_reuse");
+        failureReasons.push("prior_invocation_invalid");
+      } else {
+        const reentry = invocation.input.request.reentry;
+        const priorHandoffObserved = reentry !== undefined && correlated.slice(0, index)
+          .some((prior) => prior.input.result.handoff && isDeepStrictEqual(prior.input.result.handoff, reentry.priorHandoff));
+        const decision = validateFreeContextReentry(invocation.input.request);
+        if (!reentry) failureReasons.push("missing_reentry_contract");
+        else if (!priorHandoffObserved) failureReasons.push("unknown_prior_handoff");
+        else if (!decision.accepted) failureReasons.push("invalid_reentry_contract");
+        else {
+          invocationKind = "reentrant";
+          episodeIndex += 1;
         }
       }
     }
 
     const next = correlated[index + 1];
+    const exactDuplicate = repeatedRequest;
     windows.push(Object.freeze({
       inputIndex: invocation.inputIndex,
       callId: invocation.input.callId,
       episodeIndex,
       invocationKind,
       windowStartedAfter: invocation.completedAt,
-      windowEndedBefore: next?.startedAt ?? null,
-      windowObserved: true,
+      windowEndedBefore: next?.startedAt ?? (finalBoundaryObserved ? taskCompletedAt : null),
+      windowObserved: next !== undefined || finalBoundaryObserved,
       exactDuplicate,
       failureReasons: Object.freeze(failureReasons),
     }));
     priorRequests.push(invocation.input.request);
-    for (const questionId of currentIds) seenQuestionIds.add(questionId);
   }
   return Object.freeze(windows);
 }

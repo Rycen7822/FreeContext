@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import json
 import os
 import shlex
 import tempfile
@@ -38,30 +39,21 @@ _REMOTE_AGENT_DIR = PurePosixPath("/logs/agent")
 _REMOTE_SESSION_DIR = _REMOTE_AGENT_DIR / "freecontext-sessions"
 _REMOTE_WORKSPACE_ROOT = PurePosixPath("/app")
 
+COMMON_TASK_EFFECT_POLICY = (
+    "[Benchmark common task-effect policy]\n"
+    "Solve only from the workspace and existing local caches. Do not use web search, curl, wget, raw GitHub, remote git clone/ls-remote/fetch, npm view/pack, remote module or package queries, or any other upstream source discovery for the task solution or patch. Provider, Pier, and benchmark-controller network traffic is infrastructure and does not authorize task-solution network access."
+)
 EXPLICIT_FC_FIRST_POLICY = (
     "[Benchmark arm policy: explicit_fc_first]\n"
-    "Initial: the first cell reads only the installed FreeContext SKILL.md; the next calls "
-    "gather_context and awaits its terminal result. Do no native exploration first and read "
-    "the skill once. Use required implementation, caller, contract, and test questions with "
-    "minimumSpans 2, 2, 1, and 1. Use the installed skill's exact taskText, evidenceQuestions, "
-    "and knownRefs object schema; never guess keys or string refs; required minimumSpans sum is at most 6. After each result, read every "
-    "Evidence range with literal concurrent calls only. Each episode has one main call; only "
-    "partial permits one gap-only follow-up after its Evidence: copy unresolved question objects "
-    "without rewriting and include every returned evidence path, with no third invocation in that "
-    "episode. Ready is invocation-scoped. Then edit/test or call gather_context before any "
-    "non-evidence read/search, new multi-role/module/document issue, or test failure unexplained by "
-    "one exact read; use 1–4 new questions and edited/failure/confirmed refs. After not_found/failed, "
-    "use one exact path or symbol probe at most and never broad search."
+    "This treatment requires FreeContext. First read the installed skill; next call gather_context and await its terminal result with no native source exploration first. Preserve every upstream requirement and follow the skill, handoff, and nextAction for later exploration."
 )
 EXPLICIT_NATIVE_ONLY_POLICY = (
     "[Benchmark arm policy: explicit_native_only]\n"
     "FreeContext is disabled for this arm. Use native repository tools for exploration "
     "and do not invoke FreeContext."
 )
-
-
 def compose_benchmark_instruction(policy: str, instruction: str) -> str:
-    return f"{policy}\n\n[Upstream task instruction]\n{instruction}"
+    return f"{COMMON_TASK_EFFECT_POLICY}\n\n{policy}\n\n[Upstream task instruction]\n{instruction}"
 
 
 def _runtime_archive() -> Path:
@@ -111,6 +103,20 @@ class PierCodexFreeContext(PierCodexBase):
             ],
         )
 
+    async def _configure_benchmark_git_identity(
+        self, environment: BaseEnvironment
+    ) -> None:
+        await self.exec_as_agent(
+            environment,
+            command="git config --local user.name 'DeepSWE Benchmark Agent'",
+            cwd=_REMOTE_WORKSPACE_ROOT.as_posix(),
+        )
+        await self.exec_as_agent(
+            environment,
+            command="git config --local user.email 'benchmark-agent@local.invalid'",
+            cwd=_REMOTE_WORKSPACE_ROOT.as_posix(),
+        )
+
     def _freecontext_mcp_config_toml(self) -> str:
         return f'''[mcp_servers.freecontext]
 command = "{_REMOTE_LAUNCHER.as_posix()}"
@@ -125,6 +131,20 @@ enabled_tools = ["gather_context"]
 approval_mode = "approve"
 '''
 
+    def _freecontext_config_toml(self, base_config: str | None) -> str:
+        base_text = base_config or ""
+        parsed_base = tomllib.loads(base_text) if base_text.strip() else {}
+        if "developer_instructions" in parsed_base:
+            raise RuntimeError("base Codex config already owns developer_instructions")
+        layers = [
+            f"developer_instructions = {json.dumps(EXPLICIT_FC_FIRST_POLICY)}",
+            base_text.strip(),
+            self._freecontext_mcp_config_toml().strip(),
+        ]
+        combined = "\n\n".join(layer for layer in layers if layer)
+        tomllib.loads(combined)
+        return f"{combined}\n"
+
     async def run(
         self, instruction: str, environment: BaseEnvironment, context: AgentContext
     ) -> None:
@@ -134,16 +154,12 @@ approval_mode = "approve"
         run_failed = False
         try:
             await self._upload_freecontext(environment)
+            await self._configure_benchmark_git_identity(environment)
             self.skills_dir = _REMOTE_SKILLS_DIR.as_posix()
-            mcp_config = self._freecontext_mcp_config_toml()
-            self._config_toml = (
-                f"{original_config_toml.rstrip()}\n\n{mcp_config}"
-                if original_config_toml
-                else mcp_config
-            )
+            self._config_toml = self._freecontext_config_toml(original_config_toml)
             run_started = True
             await super().run(
-                compose_benchmark_instruction(EXPLICIT_FC_FIRST_POLICY, instruction),
+                instruction,
                 environment,
                 context,
             )
@@ -275,6 +291,7 @@ class PierCodexControl(PierCodexFreeContext):
     ) -> None:
         await self._upload_control_runtime(environment)
         try:
+            await self._configure_benchmark_git_identity(environment)
             await PierCodexBase.run(
                 self,
                 compose_benchmark_instruction(EXPLICIT_NATIVE_ONLY_POLICY, instruction),

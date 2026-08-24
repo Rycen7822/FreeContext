@@ -6,10 +6,12 @@ import type {
   AgentTool,
 } from "@earendil-works/pi-agent-core";
 import type { AssistantMessage, SimpleStreamOptions, Usage } from "@earendil-works/pi-ai";
+import { isDeepStrictEqual } from "node:util";
 import type { FreeContextConfig } from "../config.js";
 import { ContextBudgetError, FreeContextError, ProviderError } from "../errors.js";
-import type { FreeContextRequest } from "../mcp/contracts.js";
+import type { FreeContextRequest, FreeContextResult } from "../mcp/contracts.js";
 import type { ExplorerCandidate } from "../output/candidate.js";
+import { serializeExplorerFeedback } from "../output/evidence.js";
 import {
   assertInitialRequestFits,
   estimateEffectiveContextTokens,
@@ -41,10 +43,10 @@ import type { ProviderAttempt, ProviderRetryCallbacks } from "./provider-retry.j
 import type { PiBindings } from "./pi-bindings.js";
 import { addUsage, EMPTY_USAGE } from "./usage.js";
 
-export const EXPLORER_MAX_TURNS = 5;
-export const EXPLORER_MAX_TOOL_CALLS = 18;
-const EXPLORATION_TURNS_BEFORE_FINALIZATION = 3;
-const EVIDENCE_CLOSURE_TOOL_NAMES = new Set(["read", "bat", SUBMIT_EVIDENCE_TOOL_NAME]);
+// Safety ceiling only: coverage feedback, not this number, decides when the
+// same Pi exploration session is complete.
+export const EXPLORER_MAX_TURNS = 24;
+export const EXPLORER_MAX_TOOL_CALLS = 64;
 
 export type CompactionReason = "threshold" | "overflow";
 export type FinalizationReason =
@@ -175,6 +177,7 @@ export interface PiSessionMetrics {
 export interface PiSessionResult {
   readonly text: string;
   readonly candidate: Readonly<ExplorerCandidate> | null;
+  readonly canonicalResult: Readonly<FreeContextResult> | null;
   readonly observedReads: readonly Readonly<ObservedRead>[];
   readonly terminalFailure: TerminalFailureKind | null;
   readonly messages: readonly AgentMessage[];
@@ -202,6 +205,7 @@ export interface PiSessionOptions {
   readonly clock?: () => number;
   readonly timestamp?: () => number;
   readonly tokenCounter?: ContextTokenCounter;
+  readonly candidateEvaluator?: CanonicalCandidateEvaluator;
 }
 
 export interface PiFinalizationOptions {
@@ -226,6 +230,11 @@ interface PiSessionExecutionOptions extends PiSessionOptions {
   }>;
 }
 
+export type CanonicalCandidateEvaluator = (
+  candidate: Readonly<ExplorerCandidate>,
+  observedReads: readonly Readonly<ObservedRead>[],
+) => Promise<Readonly<FreeContextResult>>;
+
 export function visibleAssistantText(message: AgentMessage | undefined): string {
   if (!message || message.role !== "assistant") return "";
   return message.content
@@ -233,6 +242,27 @@ export function visibleAssistantText(message: AgentMessage | undefined): string 
     .map((block) => block.text)
     .join("")
     .trim();
+}
+
+type RepositorySearchCall = Readonly<{
+  name: string;
+  arguments: unknown;
+}>;
+
+const REPOSITORY_SEARCH_TOOLS = new Set(["glob", "rg"]);
+
+function repositorySearchBatch(
+  calls: readonly Readonly<{ name: string; arguments: unknown }>[],
+): readonly RepositorySearchCall[] | null {
+  if (calls.length === 0 || calls.some((call) => !REPOSITORY_SEARCH_TOOLS.has(call.name))) return null;
+  return calls.map((call) => ({ name: call.name, arguments: call.arguments }));
+}
+
+function sameRepositorySearchBatch(
+  left: readonly RepositorySearchCall[] | null,
+  right: readonly RepositorySearchCall[] | null,
+): boolean {
+  return left !== null && right !== null && isDeepStrictEqual(left, right);
 }
 
 function normalizedEvidenceKey(
@@ -244,6 +274,8 @@ function normalizedEvidenceKey(
   if (details && typeof details === "object") {
     const value = details as Record<string, unknown>;
     const target = typeof value.path === "string" ? value.path.replace(/\\/gu, "/").toLowerCase() : ".";
+    if (toolName === "rg" && value.noMatches === true) return null;
+    if (toolName === "glob" && value.count === 0) return null;
     if (toolName === "read" || toolName === "bat") {
       const start = Number(value.startLine ?? 1);
       const end = Number(value.actualEndLine ?? value.endLine ?? start);
@@ -253,17 +285,84 @@ function normalizedEvidenceKey(
     return `${toolName}:${target}:${pattern}`;
   }
   const header = fallbackText.split(/\r?\n/u, 1)[0]?.trim().toLowerCase();
+  if (toolName === "rg" && fallbackText.includes("<no matches>")) return null;
+  if (toolName === "glob" && fallbackText.includes("<no files matched>")) return null;
   return header ? `${toolName}:${header}` : null;
 }
 
-function candidateCompletion(
+function observedReadKey(read: Readonly<ObservedRead>): string {
+  return `${read.tool}\0${read.path}\0${read.startLine}\0${read.endLine}\0${read.content}`;
+}
+
+interface CoverageSnapshot {
+  readonly evidenceRefs: readonly string[];
+  readonly gapIds: readonly string[];
+  readonly gapKeys: readonly string[];
+  readonly candidateKey: string;
+  readonly observedReadCount: number;
+  readonly deficitFingerprint: string;
+}
+
+interface CoverageProgress {
+  readonly newEvidenceRefs: readonly string[];
+  readonly resolvedGapIds: readonly string[];
+  readonly remainingGapIds: readonly string[];
+  readonly candidateChanged: boolean;
+  readonly observationsChanged: boolean;
+  readonly deficitFingerprint: string;
+}
+
+function evidenceReferenceKey(item: ExplorerCandidate["evidence"][number]): string {
+  return [item.questionId, item.targetId ?? "", item.role, item.path, item.startLine, item.endLine, item.focusLine].join("\0");
+}
+
+function gapKey(gap: ExplorerCandidate["gaps"][number]): string {
+  return `${gap.questionId}\0${gap.targetId ?? ""}\0${gap.reason}`;
+}
+
+function coverageSnapshot(
   candidate: Readonly<ExplorerCandidate>,
-  required: ReadonlyMap<string, string>,
-): "coverage" | "partial_candidate" {
-  const coverage = new Map(candidate.evidence.map((item) => [item.questionId, item.role]));
-  return [...required].every(([questionId, role]) => coverage.get(questionId) === role)
-    ? "coverage"
-    : "partial_candidate";
+  result: Readonly<FreeContextResult>,
+  observedReadCount: number,
+): CoverageSnapshot {
+  const evidenceRefs = [...new Set(result.evidence.map(evidenceReferenceKey))].sort();
+  const gapKeys = [...new Set(result.gaps.map(gapKey))].sort();
+  const gapIds = [...new Set(result.gaps.map((gap) => gap.questionId))].sort();
+  const candidateEvidenceRefs = [...new Set(candidate.evidence.map(evidenceReferenceKey))].sort();
+  const candidateGapKeys = [...new Set(candidate.gaps.map(gapKey))].sort();
+  return {
+    evidenceRefs,
+    gapIds,
+    gapKeys,
+    candidateKey: [candidateEvidenceRefs.join("\n"), candidateGapKeys.join("\n")].join("\n--\n"),
+    observedReadCount,
+    deficitFingerprint: `${result.status}|${gapKeys.join("\n")}`,
+  };
+}
+
+function coverageProgress(
+  previous: CoverageSnapshot | null,
+  current: CoverageSnapshot,
+): CoverageProgress {
+  const previousEvidence = new Set(previous?.evidenceRefs ?? []);
+  const previousGapIds = new Set(previous?.gapIds ?? []);
+  const currentGapIds = new Set(current.gapIds);
+  return {
+    newEvidenceRefs: current.evidenceRefs.filter((ref) => !previousEvidence.has(ref)),
+    resolvedGapIds: [...previousGapIds].filter((id) => !currentGapIds.has(id)).sort(),
+    remainingGapIds: [...currentGapIds].sort(),
+    candidateChanged: previous !== null && previous.candidateKey !== current.candidateKey,
+    observationsChanged: previous !== null && previous.observedReadCount !== current.observedReadCount,
+    deficitFingerprint: current.deficitFingerprint,
+  };
+}
+
+function hasCoverageProgress(progress: CoverageProgress | null): boolean {
+  return Boolean(progress && (
+    progress.newEvidenceRefs.length > 0
+    || progress.resolvedGapIds.length > 0
+    || progress.candidateChanged
+  ));
 }
 
 function summarizeUsage(messages: readonly AgentMessage[]): Usage {
@@ -338,10 +437,10 @@ async function runPiSessionWithCounter({
   clock = performance.now.bind(performance),
   timestamp = Date.now,
   isolatedFinalization,
+  candidateEvaluator,
 }: PiSessionExecutionOptions, tokenCounter: ContextTokenCounter | null): Promise<Readonly<PiSessionResult>> {
-  const turnLimit = Math.min(maxTurns, EXPLORER_MAX_TURNS);
-  const explorationTurnLimit = Math.min(EXPLORATION_TURNS_BEFORE_FINALIZATION, turnLimit - 1);
-  const toolCallLimit = Math.min(maxToolCalls, EXPLORER_MAX_TOOL_CALLS);
+  const turnBudget = Math.min(maxTurns, EXPLORER_MAX_TURNS);
+  const toolCallBudget = Math.min(maxToolCalls, EXPLORER_MAX_TOOL_CALLS);
   const sessionStartedAt = clock();
   const counter = (): ContextTokenCounter => {
     if (!tokenCounter) throw new ContextBudgetError("Context compaction requires the Gigatoken counter.");
@@ -367,6 +466,7 @@ async function runPiSessionWithCounter({
   const activePromptText = isolatedPacket ?? promptText;
   let finalizationInjected = isolatedPacket !== null;
   let finalizationReason: FinalizationReason | null = isolatedPacket === null ? null : "provider_probe";
+  let finalizerCorrectionUsed = false;
   let blockedToolCalls = 0;
   let overflowRecovered = false;
   let finalizerStarted = false;
@@ -374,9 +474,7 @@ async function runPiSessionWithCounter({
   let effectiveMessages = [...initialMessages];
   const observedReads: ObservedRead[] = [...(initialFinalizationReads ?? [])];
   let finalizationReads: readonly ObservedRead[] | null = initialFinalizationReads;
-  const observedReadKeys = new Set(observedReads.map((read) => (
-    `${read.tool}\0${read.path}\0${read.startLine}\0${read.endLine}\0${read.content}`
-  )));
+  const observedReadKeys = new Set(observedReads.map(observedReadKey));
   const submission = createTerminalSubmissionState();
   const submitTool = createSubmitEvidenceTool({
     Type: bindings.Type,
@@ -386,7 +484,6 @@ async function runPiSessionWithCounter({
     isFinalizing: () => finalizerStarted,
   });
   const explorationTools = isolatedPacket === null ? [...tools, submitTool] : [];
-  const evidenceClosureTools = explorationTools.filter((tool) => EVIDENCE_CLOSURE_TOOL_NAMES.has(tool.name));
   let effectiveTools = isolatedPacket === null ? [...explorationTools] : [submitTool];
   let loopReportedContext = false;
   let compactions = 0;
@@ -402,12 +499,11 @@ async function runPiSessionWithCounter({
   const toolStarts = new Map<string, number>();
   const allEvidenceKeys = new Set<string>();
   const currentTurnKeys = new Set<string>();
+  const currentObservedReadKeys = new Set<string>();
   const evidenceProgress: TurnEvidenceProgress[] = [];
-  const requiredQuestions = new Map(
-    finalizationRequest.evidenceQuestions
-      .filter((question) => question.required)
-      .map((question) => [question.id, question.role]),
-  );
+  let latestCandidate: Readonly<ExplorerCandidate> | null = null;
+  let canonicalResult: Readonly<FreeContextResult> | null = null;
+  let evaluatedCandidate: Readonly<ExplorerCandidate> | null = null;
   const submitSchemaTokens = tokenCounter ? await submitSchemaTokenDelta({
     systemPrompt: activeSystemPrompt,
     promptText: activePromptText,
@@ -416,7 +512,22 @@ async function runPiSessionWithCounter({
     counter: tokenCounter,
   }) : 0;
   let currentProgressRecorded = false;
-  let stagnantTurns = 0;
+  let lastSubmissionEvaluation: Readonly<FreeContextResult> | null | undefined;
+  let lastCoverageSnapshot: CoverageSnapshot | null = null;
+  let currentCoverageProgress: CoverageProgress | null = null;
+  let lastDeficitAction: string | null = null;
+  let noProgressStreak = 0;
+  let previousSemanticProgress = false;
+  let previousReadActivity = false;
+  let softBudgetExtension = false;
+  let recoveryTurnPending = false;
+  let continuationFeedback: "no_tool" | "duplicate_search" | null = null;
+  let duplicateSearchFeedbackUsed = false;
+  let previousSearchBatch: readonly RepositorySearchCall[] | null = null;
+  let previousSearchBatchHadProgress = false;
+  let currentSearchBatch: readonly RepositorySearchCall[] | null = null;
+  let currentSearchBatchBlocked = false;
+  let currentSearchBlockCounted = false;
 
   const addEvidenceKey = (key: string | null): void => {
     if (!key || allEvidenceKeys.has(key)) return;
@@ -431,11 +542,63 @@ async function runPiSessionWithCounter({
       newKeys,
       totalKeys: allEvidenceKeys.size,
     }));
-    stagnantTurns = newKeys.length === 0 ? stagnantTurns + 1 : 0;
     currentProgressRecorded = true;
+  };
+  const recordLiveness = (action: string, progress?: CoverageProgress): boolean => {
+    const hasProgress = hasCoverageProgress(progress ?? null)
+      || currentObservedReadKeys.size > 0;
+    if (hasProgress) {
+      noProgressStreak = 0;
+      lastDeficitAction = null;
+      return false;
+    }
+    const fingerprint = `${progress?.deficitFingerprint ?? "no-candidate"}|${action}`;
+    noProgressStreak = lastDeficitAction === fingerprint ? noProgressStreak + 1 : 1;
+    lastDeficitAction = fingerprint;
+    return noProgressStreak >= 2;
   };
   const requestFinalization = (reason: FinalizationReason): void => {
     finalizationReason ??= reason;
+  };
+  const requestSoftBudgetFinalization = (): void => {
+    if (noProgressStreak >= 2) requestFinalization("stagnation");
+    else requestFinalization(toolCallCount >= toolCallBudget ? "tool_limit" : "turn_limit");
+  };
+  const currentTurnHasBudgetProgress = (): boolean => (
+    currentObservedReadKeys.size > 0 || hasCoverageProgress(currentCoverageProgress)
+  );
+  const mayExplorePastBudget = (): boolean => (
+    softBudgetExtension || currentTurnHasBudgetProgress() || noProgressStreak === 1
+  );
+
+  const evaluateSubmission = async (): Promise<Readonly<FreeContextResult> | null> => {
+    const candidate = submission.candidate;
+    if (!candidate) {
+      lastSubmissionEvaluation = null;
+      return null;
+    }
+    latestCandidate = candidate;
+    if (!candidateEvaluator) {
+      lastSubmissionEvaluation = null;
+      return null;
+    }
+    if (evaluatedCandidate === candidate) {
+      lastSubmissionEvaluation = canonicalResult;
+      return canonicalResult;
+    }
+    const result = await candidateEvaluator(candidate, Object.freeze([...observedReads]));
+    evaluatedCandidate = candidate;
+    canonicalResult = result;
+    lastSubmissionEvaluation = result;
+    const currentSnapshot = coverageSnapshot(candidate, result, observedReads.length);
+    const progress = coverageProgress(lastCoverageSnapshot, currentSnapshot);
+    lastCoverageSnapshot = currentSnapshot;
+    currentCoverageProgress = progress;
+    recordLiveness("submit", progress);
+    if (!finalizerStarted && result.status !== "ready" && result.status !== "failed") {
+      submission.clear();
+    }
+    return result;
   };
 
   const providerError = (value: unknown, allowFallback = false): ProviderError => {
@@ -469,8 +632,18 @@ async function runPiSessionWithCounter({
     if (event.type === "turn_start") {
       providerAttempts += 1;
       if (finalizationInjected) finalizerStarted = true;
+      lastSubmissionEvaluation = undefined;
       currentTurnKeys.clear();
+      currentObservedReadKeys.clear();
       currentProgressRecorded = false;
+      currentCoverageProgress = null;
+      currentSearchBatch = null;
+      currentSearchBatchBlocked = false;
+      currentSearchBlockCounted = false;
+      softBudgetExtension = previousSemanticProgress || previousReadActivity || recoveryTurnPending;
+      recoveryTurnPending = false;
+      previousSemanticProgress = false;
+      previousReadActivity = false;
     }
     if (event.type === "turn_end") {
       const overflow = event.message.role === "assistant"
@@ -478,10 +651,23 @@ async function runPiSessionWithCounter({
       const transientFailure = event.message.role === "assistant" && Boolean(assistantFailure(event.message)?.retryable);
       if (!overflow && !transientFailure) {
         for (const result of event.toolResults) {
+          if (result.isError) continue;
           const text = result.content.flatMap((block) => block.type === "text" ? [block.text] : []).join("\n");
           addEvidenceKey(normalizedEvidenceKey(result.toolName, null, text));
         }
         if (!finalizerStarted) recordEvidenceProgress();
+        previousSemanticProgress = hasCoverageProgress(currentCoverageProgress);
+        previousReadActivity = currentObservedReadKeys.size > 0;
+        if (previousSemanticProgress || previousReadActivity) duplicateSearchFeedbackUsed = false;
+        if (currentSearchBatch && !currentSearchBatchBlocked) {
+          previousSearchBatch = currentSearchBatch;
+          previousSearchBatchHadProgress = currentTurnKeys.size > 0
+            || previousSemanticProgress
+            || previousReadActivity;
+        } else if (!currentSearchBatchBlocked) {
+          previousSearchBatch = null;
+          previousSearchBatchHadProgress = false;
+        }
         turnCount += 1;
       }
     } else if (event.type === "tool_execution_start") {
@@ -498,10 +684,11 @@ async function runPiSessionWithCounter({
         addEvidenceKey(normalizedEvidenceKey(event.toolName, event.result.details));
         const observed = observedReadFromToolResult(event.toolName, event.result, event.isError);
         if (observed) {
-          const key = `${observed.tool}\0${observed.path}\0${observed.startLine}\0${observed.endLine}\0${observed.content}`;
+          const key = observedReadKey(observed);
           if (!observedReadKeys.has(key)) {
             observedReadKeys.add(key);
             observedReads.push(observed);
+            currentObservedReadKeys.add(key);
           }
         }
       }
@@ -594,6 +781,19 @@ async function runPiSessionWithCounter({
       : options;
     return bindings.streamSimple(target, context, effectiveOptions);
   };
+  const takeContinuationFeedback = (steeringOnly: boolean): AgentMessage[] => {
+    if (continuationFeedback === null || finalizationReason !== null || submission.failureKind) return [];
+    if (steeringOnly && continuationFeedback !== "duplicate_search") return [];
+    const feedback = continuationFeedback;
+    continuationFeedback = null;
+    return [{
+      role: "user",
+      content: feedback === "duplicate_search"
+        ? "Liveness recovery: the repeated repository-search batch was blocked before execution because it produced no new candidate or evidence. Read one already discovered candidate path, or call submit_evidence alone with the current evidence and explicit gaps."
+        : "Continuation check: the previous turn produced no repository tool call or evidence submission. Continue this same exploration session and make the next bounded evidence-producing action for the current questions before submitting.",
+      timestamp: timestamp(),
+    }];
+  };
   const loopConfig: AgentLoopConfig = {
     ...requestOptions,
     model,
@@ -619,16 +819,51 @@ async function runPiSessionWithCounter({
         submission.reject("unexpected_tool");
         return { block: true, reason: "Only submit_evidence is allowed during finalization." };
       }
-      if (toolCallCount >= toolCallLimit) {
+      const atEmergencyCeiling = turnCount >= EXPLORER_MAX_TURNS
+        || toolCallCount >= EXPLORER_MAX_TOOL_CALLS;
+      if (atEmergencyCeiling) {
         blockedToolCalls += 1;
-        requestFinalization("tool_limit");
+        requestFinalization(toolCallCount >= EXPLORER_MAX_TOOL_CALLS ? "tool_limit" : "turn_limit");
         return {
           block: true,
-          reason: `Repository exploration tool-call budget reached (${toolCallLimit}). Finalize from existing evidence.`,
+          reason: `Repository exploration emergency ceiling reached (${EXPLORER_MAX_TURNS} turns/${EXPLORER_MAX_TOOL_CALLS} tool calls). Finalize from existing evidence.`,
+        };
+      }
+      currentSearchBatch ??= repositorySearchBatch(calls);
+      if (!previousSearchBatchHadProgress && sameRepositorySearchBatch(previousSearchBatch, currentSearchBatch)) {
+        currentSearchBatchBlocked = true;
+        if (!currentSearchBlockCounted) {
+          blockedToolCalls += 1;
+          currentSearchBlockCounted = true;
+        }
+        return {
+          block: true,
+          reason: "This repository-search batch exactly repeats the preceding no-progress batch. Read a discovered candidate or submit current evidence and gaps.",
+        };
+      }
+      const atBudget = turnCount >= turnBudget || toolCallCount >= toolCallBudget;
+      if (atBudget && !mayExplorePastBudget()) {
+        blockedToolCalls += 1;
+        requestSoftBudgetFinalization();
+        return {
+          block: true,
+          reason: `Repository exploration budget reached (${turnBudget} turns/${toolCallBudget} tool calls) without new read or coverage progress. Finalize from existing evidence.`,
         };
       }
       toolCallCount += 1;
       return undefined;
+    },
+    afterToolCall: async ({ toolCall, isError }) => {
+      if (toolCall.name !== SUBMIT_EVIDENCE_TOOL_NAME || isError) return undefined;
+      const evaluation = await evaluateSubmission();
+      if (!evaluation) return undefined;
+      const terminal = finalizerStarted
+        || evaluation.status === "ready"
+        || evaluation.status === "failed";
+      return {
+        content: [{ type: "text" as const, text: serializeExplorerFeedback(evaluation) }],
+        terminate: terminal,
+      };
     },
     prepareNextTurn: async ({ context, message, toolResults }) => {
       loopReportedContext = true;
@@ -641,29 +876,55 @@ async function runPiSessionWithCounter({
       }
       const calls = message.content.filter((block) => block.type === "toolCall");
       for (const result of toolResults) {
+        if (result.isError) continue;
         const text = result.content
           .flatMap((block) => block.type === "text" ? [block.text] : [])
           .join("\n");
         addEvidenceKey(normalizedEvidenceKey(result.toolName, null, text));
       }
       recordEvidenceProgress();
-      if (!finalizerStarted && calls.some((call) => call.name === SUBMIT_EVIDENCE_TOOL_NAME) && !submission.candidate) {
-        requestFinalization("protocol_retry");
+      const hasSubmission = calls.some((call) => call.name === SUBMIT_EVIDENCE_TOOL_NAME);
+      const submissionToolError = hasSubmission && toolResults.some((result) =>
+        result.toolName === SUBMIT_EVIDENCE_TOOL_NAME && result.isError === true);
+      const evaluation = hasSubmission
+        ? (lastSubmissionEvaluation === undefined ? await evaluateSubmission() : lastSubmissionEvaluation)
+        : null;
+      if (hasSubmission && evaluation?.status === "ready") requestFinalization("coverage");
+      else if (hasSubmission && evaluation?.status === "failed") requestFinalization("protocol_retry");
+      else if (hasSubmission && evaluation === null && !submission.candidate && !submissionToolError) requestFinalization("protocol_retry");
+      if (calls.length === 0 && finalizationReason === null && !submission.failureKind) {
+        if (recordLiveness("no-tool")) requestFinalization("stagnation");
+        else continuationFeedback = "no_tool";
+      } else if (calls.length > 0 && !hasSubmission && finalizationReason === null && !submission.failureKind) {
+        const stagnant = recordLiveness("explore");
+        if (currentSearchBatchBlocked) {
+          if (!duplicateSearchFeedbackUsed) {
+            duplicateSearchFeedbackUsed = true;
+            recoveryTurnPending = true;
+            continuationFeedback = "duplicate_search";
+          } else if (stagnant) {
+            requestFinalization("stagnation");
+          }
+        }
       }
-      if (calls.length === 0) requestFinalization("protocol_retry");
       const completedTurns = Math.max(turnCount, evidenceProgress.length);
       if (submission.candidate) {
-        requestFinalization(candidateCompletion(submission.candidate, requiredQuestions));
+        if (finalizerStarted) requestFinalization("partial_candidate");
         effectiveSystemPrompt = context.systemPrompt;
         effectiveMessages = [...context.messages];
         effectiveTools = [...(context.tools ?? [])];
         return undefined;
       }
-      if (toolCallCount >= toolCallLimit) requestFinalization("tool_limit");
-      else if (completedTurns >= explorationTurnLimit) requestFinalization("turn_limit");
-      else if (stagnantTurns >= 2) requestFinalization("stagnation");
-      if (finalizationReason === null && completedTurns === explorationTurnLimit - 1) {
-        nextContext = { ...nextContext, tools: [...evidenceClosureTools] };
+      const softBudgetRecovery = finalizationReason === null && noProgressStreak === 1;
+      const progressAtBudget = currentTurnHasBudgetProgress();
+      const feedbackContinuation = continuationFeedback !== null && finalizationReason === null;
+      if (completedTurns >= EXPLORER_MAX_TURNS || toolCallCount >= EXPLORER_MAX_TOOL_CALLS) {
+        requestFinalization(toolCallCount >= EXPLORER_MAX_TOOL_CALLS ? "tool_limit" : "turn_limit");
+      } else if (!softBudgetRecovery
+        && !feedbackContinuation
+        && !progressAtBudget
+        && (toolCallCount >= toolCallBudget || completedTurns >= turnBudget)) {
+        requestSoftBudgetFinalization();
       }
       if (config.contextCompactionEnabled && !finalizerStarted) {
         const tokens = await estimateEffectiveContextTokens(nextContext.messages, counter());
@@ -703,26 +964,42 @@ async function runPiSessionWithCounter({
       effectiveTools = [...(nextContext.tools ?? [])];
       return nextContext === context ? undefined : { context: nextContext };
     },
-    shouldStopAfterTurn: async ({ context, message }) => {
+    getSteeringMessages: async () => takeContinuationFeedback(true),
+    getFollowUpMessages: async () => takeContinuationFeedback(false),
+    shouldStopAfterTurn: async ({ context, message, toolResults }) => {
       loopReportedContext = true;
       effectiveSystemPrompt = context.systemPrompt;
       effectiveMessages = [...context.messages];
       effectiveTools = [...(context.tools ?? [])];
       if (submission.candidate) {
-        requestFinalization(candidateCompletion(submission.candidate, requiredQuestions));
-        return true;
+        const evaluation = lastSubmissionEvaluation === undefined
+          ? await evaluateSubmission()
+          : lastSubmissionEvaluation;
+        if (evaluation?.status === "ready") requestFinalization("coverage");
+        else if (evaluation?.status === "failed") requestFinalization("protocol_retry");
+        else if (finalizerStarted) requestFinalization("partial_candidate");
+        if (submission.candidate) return true;
       }
       if (submission.failureKind) return true;
       if (finalizerStarted) {
         const calls = message.content.filter((block) => block.type === "toolCall");
         const submitCount = calls.filter((call) => call.name === SUBMIT_EVIDENCE_TOOL_NAME).length;
+        const invalidSubmit = submitCount === 1 && toolResults.some((result) =>
+          result.toolName === SUBMIT_EVIDENCE_TOOL_NAME && result.isError === true);
+        if (invalidSubmit && !finalizerCorrectionUsed) {
+          finalizerCorrectionUsed = true;
+          return false;
+        }
         if (calls.some((call) => call.name !== SUBMIT_EVIDENCE_TOOL_NAME)) submission.reject("unexpected_tool");
         else if (submitCount > 1) submission.reject("duplicate_submit");
         else if (submitCount === 1) submission.reject("invalid_arguments");
         else submission.reject("missing_submit");
         return true;
       }
-      return turnCount >= turnLimit;
+      if (finalizationInjected && !finalizerStarted) return false;
+      if (continuationFeedback !== null && finalizationReason === null) return false;
+      if (turnCount >= EXPLORER_MAX_TURNS || toolCallCount >= EXPLORER_MAX_TOOL_CALLS) return true;
+      return (turnCount >= turnBudget || toolCallCount >= toolCallBudget) && !mayExplorePastBudget();
     },
   };
 
@@ -817,7 +1094,8 @@ async function runPiSessionWithCounter({
 
   return Object.freeze({
     text: visibleAssistantText(assistant),
-    candidate: submission.candidate,
+    candidate: submission.candidate ?? latestCandidate,
+    canonicalResult,
     observedReads: Object.freeze(observedReads.map((read) => Object.freeze(read))),
     terminalFailure: submission.failureKind,
     messages: Object.freeze(allNewMessages),

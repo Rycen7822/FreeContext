@@ -126,7 +126,7 @@ Core options:
       --target NAME            Select one model target and disable fallback
       --prompt PATH            Load the system prompt from this Markdown file
       --format text|json        Output format (default: text)
-      --max-turns N             Model turns (2-5; default 5)
+      --max-turns N             Safety ceiling for model turns (2-8; default 8)
       --max-tool-calls N        Repository tool calls (1-18; default 18)
       --request-timeout-ms N    Provider request timeout in milliseconds
       --provider-retry-delays-ms LIST

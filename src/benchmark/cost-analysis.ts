@@ -1,10 +1,14 @@
 import type { TextTokenCounter } from "../runtime/gigatoken-counter.js";
-import { loadCostTrial } from "./cost-artifacts.js";
+import { loadCostTrial, type LoadedCostTrial } from "./cost-artifacts.js";
+
+export type BenchmarkArm = "control" | "treatment";
 
 export interface BenchmarkCostTrialReference {
   readonly taskId: string;
   readonly success: boolean;
   readonly agentDir: string;
+  readonly pairId?: string;
+  readonly arm?: BenchmarkArm;
 }
 
 export interface BenchmarkCostInput {
@@ -18,6 +22,52 @@ function rates(total: number, calls: number, tasks: number, successes: number): 
     perCall: calls > 0 ? total / calls : null,
     perTask: tasks > 0 ? total / tasks : null,
     perSuccess: successes > 0 ? total / successes : null,
+  });
+}
+
+function median(values: readonly number[]): number | null {
+  if (values.length === 0) return null;
+  const sorted = [...values].sort((left, right) => left - right);
+  const middle = Math.floor(sorted.length / 2);
+  return sorted.length % 2 === 1
+    ? sorted[middle]!
+    : ((sorted[middle - 1]! + sorted[middle]!) / 2);
+}
+
+function pairedMainMetric(trials: readonly LoadedCostTrial[]): Readonly<Record<string, unknown>> {
+  const groups = new Map<string, { control?: LoadedCostTrial; treatment?: LoadedCostTrial }>();
+  for (const trial of trials) {
+    if (trial.pairId === undefined && trial.arm === undefined) continue;
+    if (trial.pairId === undefined || trial.arm === undefined) {
+      throw new Error(`Trial ${trial.taskId} must provide both pairId and arm for paired analysis.`);
+    }
+    const group = groups.get(trial.pairId) ?? {};
+    if (group[trial.arm] !== undefined) throw new Error(`Duplicate ${trial.arm} trial for pair ${trial.pairId}.`);
+    group[trial.arm] = trial;
+    groups.set(trial.pairId, group);
+  }
+  const ratios: Array<Record<string, unknown>> = [];
+  for (const [pairId, group] of groups) {
+    if (!group.control || !group.treatment) continue;
+    const controlTokens = group.control.mainNative.reasoningExcludedUncachedTokens;
+    const treatmentTokens = group.treatment.mainNative.reasoningExcludedUncachedTokens;
+    ratios.push({
+      pairId,
+      controlTokens,
+      treatmentTokens,
+      treatmentToControlRatio: controlTokens > 0 ? treatmentTokens / controlTokens : null,
+      bothSucceeded: group.control.success && group.treatment.success,
+    });
+  }
+  const validRatios = ratios.flatMap((ratio) =>
+    typeof ratio.treatmentToControlRatio === "number" ? [ratio.treatmentToControlRatio] : []);
+  const successfulRatios = ratios.flatMap((ratio) =>
+    ratio.bothSucceeded && typeof ratio.treatmentToControlRatio === "number" ? [ratio.treatmentToControlRatio] : []);
+  return Object.freeze({
+    completePairs: ratios.length,
+    ratios: Object.freeze(ratios.map((ratio) => Object.freeze(ratio))),
+    medianTreatmentToControlRatio: median(validRatios),
+    successfulMedianTreatmentToControlRatio: median(successfulRatios),
   });
 }
 
@@ -57,6 +107,8 @@ export async function analyzeBenchmarkCosts(
       taskId: trial.taskId,
       success: trial.success,
       agentDir: trial.agentDir,
+      ...(trial.pairId === undefined ? {} : { pairId: trial.pairId }),
+      ...(trial.arm === undefined ? {} : { arm: trial.arm }),
       freeContextCalls: trial.freeContextCalls,
       mainVisible: { inputTokens: mainInputTokens, outputTokens: mainOutputTokens, totalTokens: mainInputTokens + mainOutputTokens },
       subagentDeliveredVisible: { totalTokens: sumSlice(slice.deliveredStart, slice.deliveredEnd) },
@@ -85,6 +137,14 @@ export async function analyzeBenchmarkCosts(
   const subagentReported = nativeTotals("subagent", "reportedTotalTokens");
   const mainReasoning = nativeTotals("main", "reasoningTokens");
   const subagentReasoning = nativeTotals("subagent", "reasoningTokens");
+  const mainReasoningExcludedUncached = trials.reduce(
+    (sum, trial) => sum + trial.providerNative.main.reasoningExcludedUncachedTokens,
+    0,
+  );
+  const subagentReasoningExcludedUncached = trials.reduce(
+    (sum, trial) => sum + trial.providerNative.subagent.reasoningExcludedUncachedTokens,
+    0,
+  );
   const transport = trials.reduce((total, trial) => ({
     observations: total.observations + trial.transport.observations,
     reminderEvents: total.reminderEvents + trial.transport.reminderEvents,
@@ -121,6 +181,11 @@ export async function analyzeBenchmarkCosts(
         },
       },
       providerNative: {
+        reasoningExcludedUncached: {
+          main: rates(mainReasoningExcludedUncached, callCount, taskCount, successCount),
+          subagent: rates(subagentReasoningExcludedUncached, callCount, taskCount, successCount),
+          total: rates(mainReasoningExcludedUncached + subagentReasoningExcludedUncached, callCount, taskCount, successCount),
+        },
         countedWithoutReasoning: {
           main: rates(mainCounted, callCount, taskCount, successCount),
           subagent: rates(subagentCounted, callCount, taskCount, successCount),
@@ -137,6 +202,9 @@ export async function analyzeBenchmarkCosts(
           total: rates(mainReasoning + subagentReasoning, callCount, taskCount, successCount),
         },
       },
+    },
+    paired: {
+      mainReasoningExcludedUncachedTokens: pairedMainMetric(loaded),
     },
     trials: Object.freeze(trials),
   });

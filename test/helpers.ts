@@ -11,7 +11,7 @@ import {
 import type { AssistantMessage } from "@earendil-works/pi-ai";
 import { createAssistantMessageEventStream, isContextOverflow, Type } from "@earendil-works/pi-ai";
 import type { FreeContextConfig, ResolvedRouteConfig } from "../src/config.js";
-import type { FreeContextRequest } from "../src/mcp/contracts.js";
+import type { CoverageTarget, FreeContextRequest } from "../src/mcp/contracts.js";
 import type { PiBindings } from "../src/runtime/pi-bindings.js";
 
 export const FakeType = new Proxy(
@@ -21,13 +21,23 @@ export const FakeType = new Proxy(
   },
 ) as unknown as typeof Type;
 
+export function topicTarget(
+  id: string,
+  topic = id,
+  factKind: CoverageTarget["factKind"] = "behavior",
+  coverageMode: CoverageTarget["coverageMode"] = "single",
+): CoverageTarget {
+  return { id, subject: { kind: "topic", topic }, factKind, coverageMode };
+}
+
 export function baseRequest(): Readonly<FreeContextRequest> {
   return {
     taskText: "Inspect the fixture.",
+    workUnit: { outcome: "answer", goal: "Inspect the fixture." },
     knownRefs: [],
     evidenceQuestions: [
-      { id: "impl", role: "implementation", question: "Where is the implementation?", required: true },
-      { id: "tests", role: "test", question: "Where is it tested?", required: false },
+      { id: "impl", role: "implementation", question: "Where is the implementation?", required: true, coverageTargets: [topicTarget("impl-target", "implementation", "location")] },
+      { id: "tests", role: "test", question: "Where is it tested?", required: false, coverageTargets: [topicTarget("test-target", "tests", "verification")] },
     ],
   };
 }

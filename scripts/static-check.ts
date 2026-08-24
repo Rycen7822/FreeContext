@@ -95,7 +95,7 @@ for (const required of [
   "readOnlyHint: true",
   "destructiveHint: false",
   "openWorldHint: true",
-  "inputSchema: FreeContextRequestSchema",
+  "inputSchema: FreeContextCallerRequestSchema",
   "outputSchema: FreeContextResultSchema",
 ]) {
   if (!mcpServer.includes(required)) failures.push(`src/mcp/server.ts: missing ${required}`);

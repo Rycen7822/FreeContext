@@ -21,7 +21,10 @@ import {
 import type { DuplicateSemanticCall } from "./delivery-observation.js";
 import type { FreeContextTransportObservation } from "./delivery-observation.js";
 import type { MissingReturnCausalEvidence } from "./delivery-observation.js";
-import { collectCompletedHostRepositoryActions } from "./host-action-observation.js";
+import {
+  collectCompletedDirectMcpRepositoryActions,
+  collectCompletedHostRepositoryActions,
+} from "./host-action-observation.js";
 import { buildFreeContextInvocationWindows } from "./invocation-window.js";
 import type { FreeContextInvocationKind, FreeContextInvocationWindow } from "./invocation-window.js";
 
@@ -49,6 +52,7 @@ export interface FreeContextCallReference {
   readonly observedTextSha256: string | null;
   readonly requestMatches: boolean | null;
   readonly structuredContentMatches: boolean | null;
+  readonly handoffProvenanceComplete: boolean | null;
   readonly recoverableResult: Readonly<FreeContextResult> | null;
   readonly missingReturnCausalEvidence: Readonly<MissingReturnCausalEvidence> | null;
   readonly episodeIndex: number | null;
@@ -61,7 +65,7 @@ export interface FreeContextCallReference {
 }
 
 export interface BenchmarkMasterAgentContext {
-  readonly schemaVersion: "freecontext-master-agent-context-v3";
+  readonly schemaVersion: "freecontext-master-agent-context-v4";
   readonly taskName: string;
   readonly createdAt: string;
   readonly masterAgentContext: readonly MasterAgentContextSource[];
@@ -141,6 +145,24 @@ async function collectFiles(directory: string, extension: string): Promise<strin
   return files.sort((left, right) => left.localeCompare(right));
 }
 
+function collectTaskCompleteTimestamps(
+  sources: readonly Readonly<MasterAgentContextSource>[],
+): readonly (string | null)[] {
+  const timestamps: Array<string | null> = [];
+  for (const { rawJsonl } of sources) {
+    for (const line of rawJsonl.split("\n")) {
+      if (!line.trim()) continue;
+      try {
+        const record: unknown = JSON.parse(line);
+        if (!isRecord(record) || record.type !== "event_msg" || !isRecord(record.payload) ||
+            record.payload.type !== "task_complete") continue;
+        timestamps.push(typeof record.timestamp === "string" ? record.timestamp : null);
+      } catch { /* Unrelated malformed lines cannot establish a task-complete boundary. */ }
+    }
+  }
+  return Object.freeze(timestamps);
+}
+
 function parseSessionDocument(text: string, filePath: string): FreeContextSessionDocument {
   const value: unknown = JSON.parse(text);
   if (!isRecord(value)) throw new Error(`Invalid FreeContext session file: ${filePath}`);
@@ -212,6 +234,7 @@ export async function exportMasterAgentContext({
     rawJsonl: await readFile(filePath, "utf8"),
   })));
   const completeMasterContext = masterAgentContext.map((source) => source.rawJsonl).join("\n");
+  const taskCompleteTimestamps = collectTaskCompleteTimestamps(masterAgentContext);
   const observedCalls = collectObservedCalls(completeMasterContext);
   const freeContextTransport = collectFreeContextTransportObservations(completeMasterContext);
   const firstObservedCallActions = observedCalls[0]
@@ -228,7 +251,8 @@ export async function exportMasterAgentContext({
   const freeContextDirectory = path.join(root, "freecontext-sessions");
   let freeContextFiles: string[] = [];
   try {
-    freeContextFiles = await collectFiles(freeContextDirectory, ".json");
+    freeContextFiles = (await collectFiles(freeContextDirectory, ".json"))
+      .filter((filePath) => !filePath.endsWith(".late.json"));
   } catch (error) {
     if (!(error instanceof Error && "code" in error && error.code === "ENOENT")) throw error;
   }
@@ -253,6 +277,7 @@ export async function exportMasterAgentContext({
       serializedTextSha256: session.serializedTextSha256,
     })),
     sessionTransports,
+    taskCompleteTimestamps,
   );
   const windowContextByFile = new Map<string, Readonly<{
     window: Readonly<FreeContextInvocationWindow>;
@@ -290,6 +315,9 @@ export async function exportMasterAgentContext({
       const windowContext = windowContextByFile.get(filePath);
       if (!windowContext) throw new Error(`FreeContext session has no invocation window: ${filePath}`);
       const { window, nextWindow } = windowContext;
+      const nextRequest = nextWindow
+        ? FreeContextRequestSchema.parse(auditableSessions[nextWindow.inputIndex]?.session.request)
+        : null;
       const hostObservation = explicitActions.length === 0 && window.windowObserved && window.windowStartedAfter
         ? collectCompletedHostRepositoryActions(completeMasterContext, {
             completedAt: window.windowStartedAfter,
@@ -300,11 +328,21 @@ export async function exportMasterAgentContext({
             gapQuestionIds: result.gaps.map(({ questionId }) => questionId),
           })
         : null;
+      const directMcpObservation = explicitActions.length === 0 && window.windowObserved
+        ? collectCompletedDirectMcpRepositoryActions(completeMasterContext, {
+            sessionFile: result.sessionFile,
+            taskId: taskName.trim(),
+            callId: session.invocation.callId,
+            repetition: "host-observed",
+            gapQuestionIds: result.gaps.map(({ questionId }) => questionId),
+          })
+        : null;
+      const fallbackObservation = hostObservation?.complete === true ? hostObservation : directMcpObservation;
       const windowObserved = window.windowObserved &&
-        (explicitActions.length > 0 || hostObservation?.complete === true);
+        (explicitActions.length > 0 || fallbackObservation?.complete === true);
       const observedActions = !windowObserved ? [] : explicitActions.length > 0
         ? explicitActions
-        : hostObservation?.actions ?? [];
+        : fallbackObservation?.actions ?? [];
       const actionIdentity = explicitActions[0];
       const consumptionAudit = analyzeFreeContextConsumption(
         result,
@@ -322,10 +360,17 @@ export async function exportMasterAgentContext({
           exactDuplicate: window.exactDuplicate,
           windowFailureReasons: windowObserved
             ? window.failureReasons
-            : [...window.failureReasons, ...(window.windowObserved ? ["host_action_observation"] : [])],
-          followedByGapFollowup: nextWindow?.invocationKind === "gap_followup",
+            : [...window.failureReasons, window.windowObserved
+                ? "host_action_observation"
+                : "task_complete_boundary"],
+          followedByReentrant: nextWindow?.invocationKind === "reentrant",
+          reentryOrigin: nextRequest?.reentry?.blockingGap.origin.kind ?? null,
         },
       );
+      const handoffProvenanceComplete = consumptionAudit.inlineEvidenceProvenanceComplete &&
+        delivery.deliveryStatus === "matched" && delivery.sessionReferenceMatches === 1 &&
+        delivery.observedTextSha256 === session.serializedTextSha256 &&
+        delivery.requestMatches !== false && delivery.structuredContentMatches !== false;
       const missingReturnCausalEvidence = classifyMissingReturn(delivery, session);
       return Object.freeze({
         callId: session.invocation.callId,
@@ -341,6 +386,7 @@ export async function exportMasterAgentContext({
         observedTextSha256: delivery.observedTextSha256,
         requestMatches: delivery.requestMatches,
         structuredContentMatches: delivery.structuredContentMatches,
+        handoffProvenanceComplete,
         recoverableResult: delivery.deliveryStatus === "matched" ? null : result,
         missingReturnCausalEvidence,
         episodeIndex: window.episodeIndex,
@@ -368,6 +414,7 @@ export async function exportMasterAgentContext({
       observedTextSha256: observation ? sha256(observation) : null,
       requestMatches: null,
       structuredContentMatches: null,
+      handoffProvenanceComplete: null,
       recoverableResult: null,
       missingReturnCausalEvidence: null,
       episodeIndex: null,
@@ -382,7 +429,7 @@ export async function exportMasterAgentContext({
 
   const createdAt = now().toISOString();
   const document: BenchmarkMasterAgentContext = {
-    schemaVersion: "freecontext-master-agent-context-v3",
+    schemaVersion: "freecontext-master-agent-context-v4",
     taskName: taskName.trim(),
     createdAt,
     masterAgentContext: Object.freeze(masterAgentContext),

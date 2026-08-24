@@ -5,8 +5,8 @@ import path from "node:path";
 import { parseArgs, HELP_TEXT } from "./cli/args.js";
 import { runDoctor } from "./cli/doctor.js";
 import type { DoctorReport } from "./cli/doctor.js";
-import { FreeContextRequestSchema, FreeContextResultSchema, serializeForModel } from "./mcp/contracts.js";
-import type { FreeContextRequest } from "./mcp/contracts.js";
+import { FreeContextCallerRequestSchema, FreeContextResultSchema, serializeForModel } from "./mcp/contracts.js";
+import type { FreeContextCallerRequest } from "./mcp/contracts.js";
 import { createGatherContextHandler } from "./mcp/tool.js";
 import { GigatokenCounter } from "./runtime/gigatoken-counter.js";
 import { runExplorer } from "./runtime/run.js";
@@ -67,15 +67,16 @@ function createEventReporter(stderr: CliIo["stderr"]): PiSessionEventHandler {
   };
 }
 
-function canonicalCliRequest(taskText: string): Readonly<FreeContextRequest> {
-  return FreeContextRequestSchema.parse({
+function canonicalCliRequest(taskText: string): Readonly<FreeContextCallerRequest> {
+  return FreeContextCallerRequestSchema.parse({
     taskText,
+    workUnit: { outcome: "answer", goal: "Identify the decisive implementation, consumer, verification, and public contract evidence." },
     knownRefs: [],
     evidenceQuestions: [
-      { id: "implementation", role: "implementation", question: "Locate the primary implementation or source passages needed to answer the task.", required: true },
-      { id: "caller", role: "caller", question: "Locate important callers, consumers, or downstream references relevant to the task.", required: false },
-      { id: "test", role: "test", question: "Locate tests or executable examples that verify the relevant behavior.", required: false },
-      { id: "contract", role: "contract", question: "Locate public contracts, configuration, or documentation constraints relevant to the task.", required: false },
+      { role: "implementation", question: "Where is the primary implementation owner?", required: true, target: { id: "implementation-owner", subject: { kind: "topic", topic: "primary implementation owner" }, factKind: "location", coverageMode: "single" } },
+      { role: "caller", question: "Where is the relevant caller or consumer seam?", required: false, target: { id: "caller-seam", subject: { kind: "topic", topic: "relevant caller or consumer seam" }, factKind: "location", coverageMode: "single" } },
+      { role: "test", question: "Where is the relevant verification seam?", required: false, target: { id: "verification-seam", subject: { kind: "topic", topic: "relevant verification seam" }, factKind: "verification", coverageMode: "single" } },
+      { role: "contract", question: "Where is the relevant public contract owner?", required: false, target: { id: "contract-owner", subject: { kind: "topic", topic: "relevant public contract owner" }, factKind: "contract", coverageMode: "single" } },
     ],
   });
 }

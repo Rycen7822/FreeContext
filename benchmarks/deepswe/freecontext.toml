@@ -2,7 +2,7 @@ version = 1
 default_route = "default"
 
 [runtime]
-max_turns = 5
+max_turns = 8
 max_tool_calls = 18
 request_timeout_ms = 180000
 provider_retry_delays_ms = [3000, 6000, 12000]

@@ -1,8 +1,14 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { analyzeFreeContextConsumption } from "../src/benchmark/consumption-analysis.js";
-import { collectCompletedHostRepositoryActions } from "../src/benchmark/host-action-observation.js";
-import { extractRepositoryActionsFromCode } from "../src/benchmark/shell-action-parser.js";
+import {
+  collectCompletedDirectMcpRepositoryActions,
+  collectCompletedHostRepositoryActions,
+} from "../src/benchmark/host-action-observation.js";
+import {
+  extractRepositoryActionsFromCode,
+  extractRepositoryActionsFromShellCommand,
+} from "../src/benchmark/shell-action-parser.js";
 import type { FreeContextResult } from "../src/mcp/contracts.js";
 
 const BOUNDARY = {
@@ -45,15 +51,13 @@ function partialResult(): FreeContextResult {
       endLine: 28,
       focusLine: 27,
       questionId: "implementation",
+      excerpt: "class Manager:\n    pass",
       why: "Defines the behavior.",
     }],
     gaps: [{ questionId: "contract", reason: "The contract remains unresolved." }],
     nextAction: {
-      kind: "read",
-      path: "bandit/core/manager.py",
-      startLine: 27,
-      endLine: 28,
-      reason: "Read the evidence.",
+      kind: "consume_evidence",
+      reason: "Use the evidence.",
     },
     errorCode: null,
     sessionId: "session-1",
@@ -76,7 +80,7 @@ const AUDIT_CONTEXT = {
 
 test("completed Codex cells yield ordered, evidence-addressable host actions", () => {
   const raw = completedCell(
-    'const r = await tools.exec_command({cmd:"git status --short && sed -n \'1,45p\' bandit/core/manager.py && sed -n \'120,165p\' bandit/core/tester.py && rg -n \'nosec\' bandit tests",workdir:"/app"}); text(r.output);',
+    'const r = await tools.exec_command({cmd:"git status --short && sed -n \'1,45p\' bandit/core/manager.py && sed -n \'120,165p\' bandit/core/tester.py && rg -n \'nosec\' bandit tests && python -m pytest tests",workdir:"/app"}); text(r.output);',
   );
   const observation = collectCompletedHostRepositoryActions(raw, BOUNDARY);
   assert.equal(observation.complete, true);
@@ -105,6 +109,14 @@ test("completed Codex cells yield ordered, evidence-addressable host actions", (
       broad: false,
       gapQuestionIds: ["contract"],
     },
+    {
+      kind: "check",
+      path: null,
+      startLine: null,
+      endLine: null,
+      broad: false,
+      gapQuestionIds: [],
+    },
   ]);
   const audit = analyzeFreeContextConsumption(
     partialResult(),
@@ -112,11 +124,12 @@ test("completed Codex cells yield ordered, evidence-addressable host actions", (
     AUDIT_CONTEXT,
   );
   assert.equal(audit.observationSource, "completed_codex_tool_call");
-  assert.equal(audit.firstRepositoryBatchSize, 3);
-  assert.equal(audit.firstRepositoryBatchConcurrent, false);
-  assert.equal(audit.allEvidenceConsumed, true);
+  assert.equal(audit.inlineEvidenceProvenanceComplete, true);
+  assert.equal(audit.nativeEvidenceRereadCount, 1);
   assert.equal(audit.searchCount, 1);
-  assert.deepEqual(audit.escapedExplorationReasons, ["first_batch_not_evidence_only"]);
+  assert.equal(audit.checkCount, 1);
+  assert.equal(audit.preEditNativeExplorationCount, 2);
+  assert.deepEqual(audit.failureReasons, ["pre_edit_handoff_scope_exceeded"]);
 });
 
 test("host observation stays unobserved for dynamic, failed, or incomplete cells", () => {
@@ -130,6 +143,20 @@ test("host observation stays unobserved for dynamic, failed, or incomplete cells
     "Script error: nested execution failed",
   );
   assert.equal(collectCompletedHostRepositoryActions(failed, BOUNDARY).complete, false);
+
+  const syntaxRejected = [
+    completedCell(
+      'await tools.exec_command({cmd:"sed -n \'1,45p\' ignored.py"});',
+      "Script failed\nScript error:\nSyntaxError: Invalid token",
+    ),
+    completedCell('await tools.exec_command({cmd:"sed -n \'1,45p\' observed.py"});')
+      .replaceAll("2026-08-16T01:32:30.000Z", "2026-08-16T01:32:32.000Z")
+      .replaceAll("2026-08-16T01:32:31.000Z", "2026-08-16T01:32:33.000Z")
+      .replaceAll("cell-1", "cell-2"),
+  ].join("\n");
+  const syntaxObservation = collectCompletedHostRepositoryActions(syntaxRejected, BOUNDARY);
+  assert.equal(syntaxObservation.complete, true);
+  assert.deepEqual(syntaxObservation.actions.map(({ action }) => action.path), ["observed.py"]);
 
   const rejectedPatch = completedCell(
     'const patch = "*** Begin Patch\\n*** Update File: a.py\\n*** End Patch"; await tools.apply_patch(patch);',
@@ -153,9 +180,44 @@ test("host observation stays unobserved for dynamic, failed, or incomplete cells
     concurrentObservation.actions,
     AUDIT_CONTEXT,
   );
-  assert.equal(concurrentAudit.firstRepositoryBatchSize, 2);
-  assert.equal(concurrentAudit.firstRepositoryBatchConcurrent, true);
-  assert.equal(concurrentAudit.allEvidenceConsumed, true);
+  assert.equal(concurrentAudit.inlineEvidenceProvenanceComplete, true);
+  assert.equal(concurrentAudit.nativeEvidenceRereadCount, 2);
+
+  const mapped = completedCell(`const cmds = [
+    ["first", "sed -n '1,5p' first.py"],
+    ["second", "rg -n 'target' src"]
+  ];
+  await Promise.all(cmds.map(async ([label, cmd]) => [label, await tools.exec_command({cmd})]));`);
+  const mappedObservation = collectCompletedHostRepositoryActions(mapped, BOUNDARY);
+  assert.equal(mappedObservation.complete, true);
+  assert.deepEqual(mappedObservation.actions.map(({ action }) => action.kind), ["read", "search"]);
+  assert.ok(mappedObservation.actions.every(({ observationBatchConcurrent }) => observationBatchConcurrent));
+
+  const commandFirst = completedCell(`const cmds = [
+    ["sed -n '1,5p' first.py", "/app"],
+    ["rg -n 'target' src", "/app"]
+  ];
+  await Promise.all(cmds.map(async ([cmd, workdir]) => tools.exec_command({cmd, workdir})));`);
+  const commandFirstObservation = collectCompletedHostRepositoryActions(commandFirst, BOUNDARY);
+  assert.equal(commandFirstObservation.complete, true);
+  assert.deepEqual(commandFirstObservation.actions.map(({ action }) => action.kind), ["read", "search"]);
+
+  const pathMapped = completedCell([
+    'const paths = ["first.py", "second.py"];',
+    'const ranges = ["1,5", "7,9"];',
+    "await Promise.all(paths.map((path, i) => tools.exec_command({cmd:`sed -n '${ranges[i]}p' ${path}`})));",
+  ].join("\n"));
+  const pathMappedObservation = collectCompletedHostRepositoryActions(pathMapped, BOUNDARY);
+  assert.equal(pathMappedObservation.complete, true);
+  assert.deepEqual(pathMappedObservation.actions.map(({ action }) => ({
+    path: action.path,
+    startLine: action.startLine,
+    endLine: action.endLine,
+  })), [
+    { path: "first.py", startLine: 1, endLine: 5 },
+    { path: "second.py", startLine: 7, endLine: 9 },
+  ]);
+  assert.ok(pathMappedObservation.actions.every(({ observationBatchConcurrent }) => observationBatchConcurrent));
 
   const incomplete = record("2026-08-16T01:32:30.000Z", {
     type: "custom_tool_call",
@@ -175,6 +237,72 @@ test("host observation stays unobserved for dynamic, failed, or incomplete cells
     },
   });
   assert.equal(collectCompletedHostRepositoryActions(missingTimestamp, BOUNDARY).complete, false);
+});
+
+test("direct MCP item observes an ordered contiguous read window without timestamps", () => {
+  const sessionFile = "/logs/agent/freecontext-sessions/session-1.json";
+  const mcp = { id: "mcp-1", type: "mcp_tool_call", server: "freecontext", tool: "gather_context" };
+  const command = (id: string, path: string) => [
+    { type: "item.started", item: { id, type: "command_execution", command: `/bin/bash -lc \"sed -n '27,28p' ${path}\"`, status: "in_progress" } },
+    { type: "item.completed", item: { id, type: "command_execution", aggregated_output: "ok", exit_code: 0, status: "completed" } },
+  ];
+  const raw = [
+    { type: "item.started", item: { ...mcp, result: null, status: "in_progress" } },
+    { type: "item.completed", item: {
+      ...mcp,
+      result: { content: [{ type: "text", text: `Status: ready\nSession: ${sessionFile}` }] },
+      status: "completed",
+    } },
+    ...command("cmd-1", "bandit/core/manager.py"),
+    ...command("cmd-2", "bandit/core/tester.py"),
+    { type: "item.started", item: { id: "mcp-2", type: "mcp_tool_call", server: "freecontext", tool: "gather_context", status: "in_progress" } },
+  ].map((item) => JSON.stringify(item)).join("\n");
+  const observation = collectCompletedDirectMcpRepositoryActions(raw, {
+    sessionFile,
+    taskId: "task-1",
+    callId: "2",
+    repetition: "host-observed",
+    gapQuestionIds: [],
+  });
+  assert.equal(observation.complete, true);
+  assert.deepEqual(observation.actions.map(({ action }) => action.path), [
+    "bandit/core/manager.py",
+    "bandit/core/tester.py",
+  ]);
+  assert.equal(new Set(observation.actions.map(({ observationBatchId }) => observationBatchId)).size, 1);
+  assert.ok(observation.actions.every(({ observationBatchConcurrent }) => !observationBatchConcurrent));
+});
+
+test("direct MCP observation fails closed when a command crosses the ordered boundary", () => {
+  const sessionFile = "/logs/agent/freecontext-sessions/session-1.json";
+  const raw = [
+    { type: "item.completed", item: {
+      id: "mcp-1", type: "mcp_tool_call", server: "freecontext", tool: "gather_context",
+      result: { content: [{ type: "text", text: `Status: ready\nSession: ${sessionFile}` }] }, status: "completed",
+    } },
+    { type: "item.started", item: {
+      id: "cmd-1", type: "command_execution", command: "/bin/bash -lc \"sed -n '1,2p' bandit/core/manager.py\"", status: "in_progress",
+    } },
+    { type: "item.started", item: { id: "mcp-2", type: "mcp_tool_call", server: "freecontext", tool: "gather_context", status: "in_progress" } },
+  ].map((item) => JSON.stringify(item)).join("\n");
+  const observation = collectCompletedDirectMcpRepositoryActions(raw, {
+    sessionFile,
+    taskId: "task-1",
+    callId: "2",
+    repetition: "host-observed",
+    gapQuestionIds: [],
+  });
+  assert.equal(observation.complete, false);
+  assert.deepEqual(observation.actions, []);
+});
+
+test("read-only stderr suppression inside a shell substitution remains auditable", () => {
+  const extracted = extractRepositoryActionsFromShellCommand(
+    "sed -n '55,78p' plumbing/format/index/index.go; rg -n \\\"SetIndex\\\" $(go env GOPATH 2>/dev/null)/pkg/mod --glob '*.go'",
+    [],
+  );
+  assert.equal(extracted.complete, true);
+  assert.deepEqual(extracted.actions.map(({ kind }) => kind), ["read", "search"]);
 });
 
 test("calls at or before the FreeContext completion boundary are excluded", () => {
@@ -266,4 +394,19 @@ test("unsupported shell redirection fails closed", () => {
     [],
   );
   assert.deepEqual(extracted, { complete: false, actions: [], concurrent: false });
+});
+
+test("task-solution external source commands share one direct classifier", () => {
+  for (const command of [
+    "curl https://raw.githubusercontent.com/example/project/main/file.ts",
+    "git ls-remote https://github.com/example/project.git",
+    "npm view example-package version",
+  ]) {
+    const extracted = extractRepositoryActionsFromShellCommand(command, []);
+    assert.equal(extracted.complete, true);
+    assert.equal(extracted.actions.some(({ externalSource }) => externalSource === true), true, command);
+  }
+  for (const command of ["rg symbol src", "git status --short", "npm test"]) {
+    assert.equal(extractRepositoryActionsFromShellCommand(command, []).actions.some(({ externalSource }) => externalSource === true), false, command);
+  }
 });

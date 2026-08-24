@@ -6,7 +6,12 @@ import os from "node:os";
 import path from "node:path";
 import type { BenchmarkMasterAgentContext } from "../src/benchmark/master-context.js";
 import { exportMasterAgentContext } from "../src/benchmark/master-context.js";
-import { FREECONTEXT_ELIGIBILITY_POLICY, serializeForModel } from "../src/mcp/contracts.js";
+import {
+  FREECONTEXT_ELIGIBILITY_POLICY,
+  normalizeFreeContextRequest,
+  serializeForModel,
+} from "../src/mcp/contracts.js";
+import type { FreeContextHandoff } from "../src/mcp/contracts.js";
 import { failedResult } from "../src/mcp/failure.js";
 import type { McpSessionDocument } from "../src/mcp/session.js";
 import { collectFreeContextTransportObservations, evaluateDelivery } from "../src/benchmark/delivery-observation.js";
@@ -16,31 +21,39 @@ const RUNTIME_SESSION = "/logs/agent/freecontext-sessions/call-001.json";
 function v3Session(): McpSessionDocument {
   const request = {
     taskText: "locate the router",
+    workUnit: { outcome: "answer" as const, goal: "Locate the router." },
     knownRefs: [{ kind: "path" as const, path: "src/router.ts" }],
     evidenceQuestions: [
-      { id: "impl", role: "implementation" as const, question: "Where is the router?", required: true },
-      { id: "tests", role: "test" as const, question: "How is it tested?", required: false },
+      { id: "impl", role: "implementation" as const, question: "Where is the router?", required: true, coverageTargets: [{ id: "router", subject: { kind: "symbol" as const, symbol: "router" }, factKind: "definition" as const, coverageMode: "single" as const }] },
+      { id: "tests", role: "test" as const, question: "How is it tested?", required: false, coverageTargets: [{ id: "router-tests", subject: { kind: "symbol" as const, symbol: "router" }, factKind: "verification" as const, coverageMode: "single" as const }] },
     ],
   };
   const result = {
     status: "ready" as const,
     summary: "router found",
     evidence: [{
+      id: "e1",
       role: "implementation" as const,
       path: "src/router.ts",
       startLine: 1,
       endLine: 2,
       focusLine: 1,
       questionId: "impl",
+      targetId: "router",
+      excerpt: "export const router = true;",
       why: "Defines the route.",
     }],
-    gaps: [{ questionId: "tests", reason: "No test was found." }],
+    gaps: [{ questionId: "tests", targetId: "router-tests", reason: "No test was found." }],
+    handoff: {
+      id: "handoff:invocation-001",
+      workUnit: request.workUnit,
+      evidenceIds: ["e1"],
+      outcome: { kind: request.workUnit.outcome, instruction: "Answer with the verified router evidence." },
+      blockingGaps: [],
+    },
     nextAction: {
-      kind: "read" as const,
-      path: "src/router.ts",
-      startLine: 1,
-      endLine: 2,
-      reason: "Read the route.",
+      kind: "consume_evidence" as const,
+      reason: "Use the route evidence.",
     },
     errorCode: null,
     sessionId: "call-001",
@@ -215,7 +228,7 @@ async function createFixture(
           type: "custom_tool_call",
           name: "exec",
           call_id: "outer-001",
-          input: "const result = await tools.mcp__freecontext__gather_context({ taskText: \"x\" }); notify(\"slow\");",
+          input: "const gather = tools.mcp__freecontext__gather_context; const result = await gather({ taskText: \"x\" }); text(result);",
           internal_chat_message_metadata_passthrough: metadata,
         },
       }, {
@@ -338,7 +351,11 @@ async function createFixture(
   } else if (observedText !== null) {
     events.push({ type: "freecontext_tool_output", payload: observedText });
   }
-  events.push({ type: "other_context", payload: "after" });
+  events.push({ type: "other_context", payload: "after" }, {
+    timestamp: "2026-08-09T00:00:20.000Z",
+    type: "event_msg",
+    payload: { type: "task_complete" },
+  });
   const masterRaw = `${events.map((event) => JSON.stringify(event)).join("\n")}\n`;
   const sessionRaw = `${JSON.stringify(session, null, 2)}\n`;
   await Promise.all([
@@ -348,12 +365,17 @@ async function createFixture(
   return { agentDir, masterRaw, sessionRaw };
 }
 
-test("master context exporter joins v3 by session address and preserves the actual observation", async () => {
+test("master context exporter joins an aliased v3 call and ignores its late diagnostic", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "freecontext-master-"));
   try {
     const session = v3Session();
     const actualText = serializeForModel(session.result);
     const fixture = await createFixture(root, session, actualText, undefined, true, false, true);
+    await writeFile(
+      path.join(fixture.agentDir, "freecontext-sessions", "call-001.late.json"),
+      `${JSON.stringify({ schemaVersion: "freecontext-late-result-v2" })}\n`,
+      "utf8",
+    );
     const outputPath = await exportMasterAgentContext({
       agentDir: fixture.agentDir,
       taskName: "TaskNameXXX",
@@ -361,7 +383,7 @@ test("master context exporter joins v3 by session address and preserves the actu
     });
     const document = JSON.parse(await readFile(outputPath, "utf8")) as BenchmarkMasterAgentContext;
     const call = document.freeContextCalls[0];
-    assert.equal(document.schemaVersion, "freecontext-master-agent-context-v3");
+    assert.equal(document.schemaVersion, "freecontext-master-agent-context-v4");
     assert.deepEqual(document.freeContextTransport, [{
       schemaVersion: "freecontext-transport-observation-v1",
       turnId: "turn-001",
@@ -387,7 +409,8 @@ test("master context exporter joins v3 by session address and preserves the actu
     assert.equal(call?.structuredContentMatches, true);
     assert.equal(call?.recoverableResult, null);
     assert.equal(call?.consumptionAudit?.observationSource, "explicit_host_event");
-    assert.equal(call?.consumptionAudit?.allEvidenceConsumed, true);
+    assert.equal(call?.consumptionAudit?.inlineEvidenceProvenanceComplete, true);
+    assert.equal(call?.handoffProvenanceComplete, true);
     assert.equal(call?.consumptionAudit?.broadSearchCount, 0);
     assert.equal(call?.invocationKind, "initial");
     assert.equal(call?.windowObserved, true);
@@ -403,7 +426,7 @@ test("master context exporter joins v3 by session address and preserves the actu
       "utf8",
     )).trim().split("\n").map((line) => JSON.parse(line));
     assert.deepEqual(consumption.map(({ schemaVersion }) => schemaVersion), [
-      "freecontext-consumption-audit-v3",
+      "freecontext-consumption-audit-v6",
       "freecontext-duplicate-semantic-call-v1",
       "freecontext-transport-observation-v1",
     ]);
@@ -444,13 +467,88 @@ test("same-cell code-await output is the actual observation without a direct MCP
     assert.equal(call?.callIdCorrelation, "missing");
     assert.equal(call?.sessionReferenceMatches, 1);
     assert.equal(call?.consumptionAudit?.observationSource, "completed_codex_tool_call");
-    assert.equal(call?.consumptionAudit?.allEvidenceConsumed, true);
+    assert.equal(call?.consumptionAudit?.inlineEvidenceProvenanceComplete, true);
+    assert.equal(call?.handoffProvenanceComplete, true);
     assert.equal(call?.serializedTextSha256, call?.observedTextSha256);
     assert.equal(call?.requestMatches, null);
     assert.equal(call?.structuredContentMatches, null);
     assert.equal(call?.recoverableResult, null);
     assert.equal(document.freeContextTransport[0]?.terminalOutputSeen, true);
     assert.deepEqual(document.duplicateSemanticCalls, []);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("persisted nested MCP completion is an authoritative FreeContext delivery", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "freecontext-mcp-end-master-"));
+  try {
+    const base = v3Session();
+    const callerRequest = {
+      taskText: base.request.taskText,
+      workUnit: base.request.workUnit,
+      knownRefs: base.request.knownRefs,
+      evidenceQuestions: base.request.evidenceQuestions.map(({ role, question, required, coverageTargets }) => ({
+        role,
+        question,
+        required,
+        target: coverageTargets[0]!,
+      })),
+    };
+    const request = normalizeFreeContextRequest(callerRequest);
+    const result = {
+      ...base.result,
+      evidence: base.result.evidence.map((item) => ({ ...item, questionId: "q1" })),
+      gaps: base.result.gaps.map((gap) => ({ ...gap, questionId: "q2" })),
+    };
+    const actualText = serializeForModel(result);
+    const session = {
+      ...base,
+      request,
+      result,
+      serializedTextSha256: createHash("sha256").update(actualText).digest("hex"),
+    };
+    const fixture = await createFixture(root, session, null, undefined, false, true, false, false, true);
+    const completion = {
+      timestamp: "2026-08-09T00:00:12.000Z",
+      type: "event_msg",
+      payload: {
+        type: "mcp_tool_call_end",
+        call_id: "exec-completed-001",
+        duration: { secs: 12, nanos: 0 },
+        invocation: {
+          server: "freecontext",
+          tool: "gather_context",
+          arguments: callerRequest,
+        },
+        result: {
+          Ok: {
+            content: [{ type: "text", text: actualText }],
+            structuredContent: session.result,
+          },
+        },
+      },
+    };
+    await writeFile(
+      path.join(fixture.agentDir, "sessions", "2026", "08", "09", "rollout.jsonl"),
+      `${JSON.stringify(completion)}\n${fixture.masterRaw}`,
+      "utf8",
+    );
+
+    const outputPath = await exportMasterAgentContext({
+      agentDir: fixture.agentDir,
+      taskName: "nested-mcp-completion",
+    });
+    const document = JSON.parse(await readFile(outputPath, "utf8")) as BenchmarkMasterAgentContext;
+    const call = document.freeContextCalls[0];
+    assert.equal(call?.deliveryStatus, "matched");
+    assert.equal(call?.sessionReferenceMatches, 1);
+    assert.equal(call?.requestMatches, true);
+    assert.equal(call?.structuredContentMatches, true);
+    assert.equal(call?.handoffProvenanceComplete, true);
+    assert.equal(call?.invocationKind, "initial");
+    assert.equal(call?.windowObserved, true);
+    assert.equal(document.freeContextTransport[0]?.terminalOutputSeen, true);
   } finally {
     await rm(root, { recursive: true, force: true });
   }
@@ -468,7 +566,7 @@ test("rejected request transports do not invalidate a matched session window", a
     assert.equal(document.freeContextTransport[0]?.terminalTextSha256, null);
     assert.equal(document.freeContextCalls[0]?.invocationKind, "initial");
     assert.equal(document.freeContextCalls[0]?.windowObserved, true);
-    assert.deepEqual(document.freeContextCalls[0]?.consumptionAudit?.escapedExplorationReasons, []);
+    assert.deepEqual(document.freeContextCalls[0]?.consumptionAudit?.failureReasons, []);
   } finally {
     await rm(root, { recursive: true, force: true });
   }
@@ -489,7 +587,7 @@ test("terminal text hash correlates a yielded cell when the MCP call id differs"
     assert.notEqual(document.freeContextTransport[0]?.cellId, session.invocation.callId);
     assert.equal(document.freeContextTransport[0]?.terminalTextSha256, session.serializedTextSha256);
     assert.equal(document.freeContextCalls[0]?.consumptionAudit?.observationSource, "completed_codex_tool_call");
-    assert.equal(document.freeContextCalls[0]?.consumptionAudit?.allEvidenceConsumed, true);
+    assert.equal(document.freeContextCalls[0]?.consumptionAudit?.inlineEvidenceProvenanceComplete, true);
   } finally {
     await rm(root, { recursive: true, force: true });
   }
@@ -512,7 +610,7 @@ test("fast code-await can correlate the completed outer exec call", async () => 
     });
     const document = JSON.parse(await readFile(outputPath, "utf8")) as BenchmarkMasterAgentContext;
     assert.equal(document.freeContextCalls[0]?.consumptionAudit?.observationSource, "completed_codex_tool_call");
-    assert.equal(document.freeContextCalls[0]?.consumptionAudit?.allEvidenceConsumed, true);
+    assert.equal(document.freeContextCalls[0]?.consumptionAudit?.inlineEvidenceProvenanceComplete, true);
   } finally {
     await rm(root, { recursive: true, force: true });
   }
@@ -747,18 +845,36 @@ test("two-call export assigns each completed host cell to one disjoint invocatio
       evidencePath: string,
       startedAt: string,
       finishedAt: string,
+      priorHandoff: Readonly<FreeContextHandoff> | null = null,
     ): McpSessionDocument => {
       const base = v3Session();
       const sessionFile = `/logs/agent/freecontext-sessions/${callId}.json`;
+      const workUnit = priorHandoff?.workUnit ?? { outcome: "answer" as const, goal: `Locate ${questionId}.` };
+      const target = { id: `${questionId}-target`, subject: { kind: "symbol" as const, symbol: questionId }, factKind: "location" as const, coverageMode: "single" as const };
       const request = {
         taskText: `locate ${questionId}`,
+        workUnit,
         knownRefs: [],
         evidenceQuestions: [{
           id: questionId,
           role: "implementation" as const,
           question: `Where is ${questionId}?`,
           required: true,
+          coverageTargets: [target],
         }],
+        ...(priorHandoff ? {
+          reentry: {
+            priorHandoff,
+            blockingGap: {
+              id: `gap:${questionId}-target`,
+              targetId: target.id,
+              kind: "contract_unknown" as const,
+              scope: target.subject,
+              requiredFact: `Locate ${questionId} after consuming prior Evidence.`,
+              origin: { kind: "evidence_consumption" as const, evidenceIds: [priorHandoff.evidenceIds[0]!] },
+            },
+          },
+        } : {}),
       };
       const result = {
         ...base.result,
@@ -766,9 +882,17 @@ test("two-call export assigns each completed host cell to one disjoint invocatio
           ...base.result.evidence[0]!,
           path: evidencePath,
           questionId,
+          targetId: `${questionId}-target`,
         }],
         gaps: [],
-        nextAction: { kind: "read" as const, path: evidencePath, startLine: 1, endLine: 2, reason: "Read it." },
+        handoff: {
+          id: `handoff:invocation-${callId}`,
+          workUnit,
+          evidenceIds: ["e1"],
+          outcome: { kind: workUnit.outcome, instruction: `Proceed with ${workUnit.goal}` },
+          blockingGaps: [],
+        },
+        nextAction: { kind: "consume_evidence" as const, reason: "Use it." },
         sessionId: callId,
         sessionFile,
       };
@@ -794,10 +918,10 @@ test("two-call export assigns each completed host cell to one disjoint invocatio
         },
       };
     };
-    const sessions = [
-      makeSession("call-001", "implementation", "src/router.ts", "2026-08-21T00:00:00.000Z", "2026-08-21T00:00:10.000Z"),
-      makeSession("call-002", "contract", "src/contract.ts", "2026-08-21T00:00:20.000Z", "2026-08-21T00:00:30.000Z"),
-    ];
+    const firstSession = makeSession("call-001", "implementation", "src/router.ts", "2026-08-21T00:00:00.000Z", "2026-08-21T00:00:10.000Z");
+    const sessions = [firstSession, makeSession(
+      "call-002", "contract", "src/contract.ts", "2026-08-21T00:00:20.000Z", "2026-08-21T00:00:30.000Z", firstSession.result.handoff ?? null,
+    )];
     const events: unknown[] = [];
     for (const [index, session] of sessions.entries()) {
       const second = index === 1;
@@ -867,6 +991,11 @@ test("two-call export assigns each completed host cell to one disjoint invocatio
         payload: { type: "custom_tool_call_output", call_id: `read-${index + 1}`, output: "ok" },
       });
     }
+    events.push({
+      timestamp: "2026-08-21T00:00:40.000Z",
+      type: "event_msg",
+      payload: { type: "task_complete" },
+    });
     await Promise.all([
       writeFile(path.join(sessionDir, "rollout.jsonl"), `${events.map((event) => JSON.stringify(event)).join("\n")}\n`, "utf8"),
       ...sessions.map((session) => writeFile(
@@ -881,18 +1010,18 @@ test("two-call export assigns each completed host cell to one disjoint invocatio
     assert.deepEqual(document.freeContextCalls.map(({ invocationKind, episodeIndex, consumptionAudit }) => ({
       invocationKind,
       episodeIndex,
-      escaped: consumptionAudit?.escapedExplorationReasons,
+      failures: consumptionAudit?.failureReasons,
     })), [
-      { invocationKind: "initial", episodeIndex: 1, escaped: [] },
-      { invocationKind: "reentrant", episodeIndex: 2, escaped: [] },
+      { invocationKind: "initial", episodeIndex: 1, failures: [] },
+      { invocationKind: "reentrant", episodeIndex: 2, failures: [] },
     ]);
     assert.deepEqual(document.freeContextCalls.map(({ windowEndedBefore }) => windowEndedBefore), [
       "2026-08-21T00:00:20.000Z",
-      null,
+      "2026-08-21T00:00:40.000Z",
     ]);
     assert.deepEqual(document.freeContextCalls.map(({ consumptionAudit }) => consumptionAudit?.actionCount), [1, 1]);
     assert.ok(document.freeContextCalls.every(({ consumptionAudit }) =>
-      consumptionAudit?.allEvidenceConsumed && consumptionAudit.escapedExplorationReasons.length === 0));
+      consumptionAudit?.inlineEvidenceProvenanceComplete));
   } finally {
     await rm(root, { recursive: true, force: true });
   }
@@ -901,27 +1030,26 @@ test("two-call export assigns each completed host cell to one disjoint invocatio
 test("canonical Pier adapter registers direct MCP without legacy CLI wrappers", async () => {
   const source = await readFile(new URL("../benchmarks/deepswe/pier_codex_freecontext_agent.py", import.meta.url), "utf8");
   const freeContextConfig = await readFile(new URL("../benchmarks/deepswe/freecontext.toml", import.meta.url), "utf8");
-  const explicitPolicies = `EXPLICIT_FC_FIRST_POLICY = (
-    "[Benchmark arm policy: explicit_fc_first]\\n"
-    "Initial: the first cell reads only the installed FreeContext SKILL.md; the next calls "
-    "gather_context and awaits its terminal result. Do no native exploration first and read "
-    "the skill once. Use required implementation, caller, contract, and test questions with "
-    "minimumSpans 2, 2, 1, and 1. Use the installed skill's exact taskText, evidenceQuestions, "
-    "and knownRefs object schema; never guess keys or string refs; required minimumSpans sum is at most 6. After each result, read every "
-    "Evidence range with literal concurrent calls only. Each episode has one main call; only "
-    "partial permits one gap-only follow-up after its Evidence: copy unresolved question objects "
-    "without rewriting and include every returned evidence path, with no third invocation in that "
-    "episode. Ready is invocation-scoped. Then edit/test or call gather_context before any "
-    "non-evidence read/search, new multi-role/module/document issue, or test failure unexplained by "
-    "one exact read; use 1–4 new questions and edited/failure/confirmed refs. After not_found/failed, "
-    "use one exact path or symbol probe at most and never broad search."
-)
-EXPLICIT_NATIVE_ONLY_POLICY = (
-    "[Benchmark arm policy: explicit_native_only]\\n"
-    "FreeContext is disabled for this arm. Use native repository tools for exploration "
-    "and do not invoke FreeContext."
-)`;
-  assert.equal(source.includes(explicitPolicies), true, "explicit arm policy text drifted");
+  const treatmentPolicy = source.match(/EXPLICIT_FC_FIRST_POLICY = \(([\s\S]*?)\n\)/u)?.[1] ?? "";
+  const controlPolicy = source.match(/EXPLICIT_NATIVE_ONLY_POLICY = \(([\s\S]*?)\n\)/u)?.[1] ?? "";
+  assert.doesNotMatch(treatmentPolicy, /curl|wget|raw GitHub|npm view|npm pack/iu);
+  assert.doesNotMatch(controlPolicy, /curl|wget|raw GitHub|npm view|npm pack/iu);
+  for (const fragment of [
+    "COMMON_TASK_EFFECT_POLICY = (",
+    "Do not use web search, curl, wget, raw GitHub, remote git clone/ls-remote/fetch, npm view/pack",
+    "EXPLICIT_FC_FIRST_POLICY = (",
+    "First read the installed skill; next call gather_context",
+    "follow the skill, handoff, and nextAction for later exploration",
+    "Preserve every upstream requirement",
+    "base Codex config already owns developer_instructions",
+    "EXPLICIT_NATIVE_ONLY_POLICY = (",
+  ]) assert.equal(source.includes(fragment), true, `explicit arm policy fragment drifted: ${fragment}`);
+  for (const retired of [
+    "complete unresolved question",
+    "same-work-unit follow-up",
+    "private acceptance receipt",
+    "Do not search, list, or open an uncited path first",
+  ]) assert.equal(source.includes(retired), false);
   for (const gate of FREECONTEXT_ELIGIBILITY_POLICY.gates) assert.equal(source.includes(gate.instruction), false);
   for (const pattern of [
     /\[mcp_servers\.freecontext\]/u,
@@ -934,10 +1062,20 @@ EXPLICIT_NATIVE_ONLY_POLICY = (
     /--session-dir \{_REMOTE_SESSION_DIR\.as_posix\(\)\} \\"\$@\\"/u,
     /freecontext-benchmark-context\.mjs/u,
     /FREECONTEXT_PROVIDER_BOOTSTRAP_PROFILE/u,
-    /return f"\{policy\}\\n\\n\[Upstream task instruction\]\\n\{instruction\}"/u,
-    /compose_benchmark_instruction\(EXPLICIT_FC_FIRST_POLICY, instruction\)/u,
+    /return f"\{COMMON_TASK_EFFECT_POLICY\}\\n\\n\{policy\}\\n\\n\[Upstream task instruction\]\\n\{instruction\}"/u,
+    /developer_instructions = \{json\.dumps\(EXPLICIT_FC_FIRST_POLICY\)\}/u,
+    /def _freecontext_config_toml\(self, base_config: str \| None\) -> str:/u,
+    /base_text = base_config or ""/u,
+    /parsed_base = tomllib\.loads\(base_text\) if base_text\.strip\(\) else \{\}/u,
+    /tomllib\.loads\(combined\)/u,
+    /self\._config_toml = self\._freecontext_config_toml\(original_config_toml\)/u,
+    /await super\(\)\.run\(\s+instruction,/u,
     /compose_benchmark_instruction\(EXPLICIT_NATIVE_ONLY_POLICY, instruction\)/u,
+    /command="git config --local user\.name 'DeepSWE Benchmark Agent'"/u,
+    /command="git config --local user\.email 'benchmark-agent@local\.invalid'"/u,
   ]) assert.match(source, pattern);
+  assert.doesNotMatch(source, /compose_benchmark_instruction\(EXPLICIT_FC_FIRST_POLICY, instruction\)/u);
+  assert.equal(source.includes("git reset --mixed"), false);
   for (const legacy of ["_GUIDANCE", "freecontext explore", "_REMOTE_WRAPPER", "write_stdin"]) {
     assert.equal(source.includes(legacy), false, `legacy adapter surface remains: ${legacy}`);
   }

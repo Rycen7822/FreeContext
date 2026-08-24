@@ -52,7 +52,7 @@ test("cost analysis batches all visible text once and separates local from provi
         schemaVersion: "freecontext-transport-observation-v1",
         reminderCount: 1,
         sameCellWaitCount: 1,
-        latencyMs: 12_000,
+        latencyMs: 12_000.25,
       }],
     });
     await writeJson(path.join(treatment, "freecontext-sessions", "ready.json"), {
@@ -64,20 +64,28 @@ test("cost analysis batches all visible text once and separates local from provi
     });
     await writeJson(path.join(treatment, "freecontext-sessions", "failed.json"), {
       capture: null,
-      runtimeEvents: [{
-        event: {
-          type: "provider_attempt_failed",
-          usage: { input: 8, output: 2, cacheRead: 1, reasoning: 0, totalTokens: 10 },
+      runtimeEvents: [
+        {
+          event: {
+            type: "turn_end",
+            message: { usage: { input: 6, output: 1, cacheRead: 2, reasoning: 0, totalTokens: 9 } },
+          },
         },
-      }],
+        {
+          event: {
+            type: "provider_attempt_failed",
+            usage: { input: 8, output: 2, cacheRead: 1, reasoning: 0, totalTokens: 10 },
+          },
+        },
+      ],
     });
 
     const batches: string[][] = [];
     const report = await analyzeBenchmarkCosts({
       schemaVersion: "freecontext-cost-input-v1",
       trials: [
-        { taskId: "treatment", success: true, agentDir: treatment },
-        { taskId: "control", success: false, agentDir: control },
+        { taskId: "treatment", success: true, agentDir: treatment, pairId: "pair-1", arm: "treatment" },
+        { taskId: "control", success: false, agentDir: control, pairId: "pair-1", arm: "control" },
       ],
     }, {
       countBatch: async (texts) => {
@@ -115,10 +123,29 @@ test("cost analysis batches all visible text once and separates local from provi
     const provider = (report.aggregate as Record<string, Record<string, Record<string, Record<string, number>>>>).providerNative;
     assert.ok(provider);
     assert.equal(provider.countedWithoutReasoning?.main?.total, 142);
-    assert.equal(provider.countedWithoutReasoning?.subagent?.total, 33);
-    assert.equal(provider.countedWithoutReasoning?.total?.total, 175);
-    assert.equal(provider.providerReported?.total?.total, 187);
+    assert.equal(provider.countedWithoutReasoning?.subagent?.total, 42);
+    assert.equal(provider.countedWithoutReasoning?.total?.total, 184);
+    assert.equal(provider.reasoningExcludedUncached?.main?.total, 112);
+    assert.equal(provider.reasoningExcludedUncached?.subagent?.total, 40);
+    assert.equal(provider.reasoningExcludedUncached?.total?.total, 152);
+    assert.equal(provider.providerReported?.total?.total, 196);
     assert.equal(provider.reasoning?.total?.total, 12);
+    const treatmentNative = (report.trials as Array<Record<string, unknown>>)[0]?.providerNative as Record<string, Record<string, number>>;
+    assert.deepEqual(treatmentNative.main, {
+      promptTokens: 100,
+      completionTokens: 40,
+      cachedPromptTokens: 30,
+      reasoningTokens: 10,
+      uncachedInputTokens: 70,
+      visibleOutputTokens: 30,
+      reasoningExcludedUncachedTokens: 100,
+      countedTokens: 130,
+      reportedTotalTokens: 140,
+    });
+    const paired = report.paired as Record<string, Record<string, unknown>>;
+    assert.equal(paired.mainReasoningExcludedUncachedTokens?.completePairs, 1);
+    assert.equal(paired.mainReasoningExcludedUncachedTokens?.medianTreatmentToControlRatio, 100 / 12);
+    assert.equal(paired.mainReasoningExcludedUncachedTokens?.successfulMedianTreatmentToControlRatio, null);
     assert.equal((report.method as Record<string, Record<string, unknown>>).localVisibleText?.tokenizerInstances, 1);
     assert.deepEqual((report.aggregate as Record<string, unknown>).transport, {
       observations: 1,
@@ -126,7 +153,7 @@ test("cost analysis batches all visible text once and separates local from provi
       outerExecToolTurns: 1,
       waitToolTurns: 1,
       totalToolTurns: 2,
-      latencyMs: { samples: 1, total: 12_000, mean: 12_000, max: 12_000 },
+      latencyMs: { samples: 1, total: 12_000.25, mean: 12_000.25, max: 12_000.25 },
     });
   } finally {
     await rm(root, { recursive: true, force: true });

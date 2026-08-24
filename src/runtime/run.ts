@@ -2,7 +2,6 @@ import type { CliConfigOverrides } from "../config.js";
 import { redactUrl } from "../config.js";
 import {
   FreeContextInvocationContextSchema,
-  normalizeFreeContextRequest,
 } from "../mcp/contracts.js";
 import type {
   FreeContextInvocationContext,
@@ -15,7 +14,7 @@ import type { Workspace } from "../tools/contracts.js";
 import { createWorkspace } from "../tools/workspace.js";
 import type { ContextTokenCounter } from "./context-budget.js";
 import { GigatokenCounter } from "./gigatoken-counter.js";
-import type { PiSessionEventHandler } from "./pi-session.js";
+import type { CanonicalCandidateEvaluator, PiSessionEventHandler } from "./pi-session.js";
 import type { RouterDependencies } from "./router.js";
 import { runPrimaryRoute } from "./router.js";
 import { captureCompiler, capturePiSession } from "./session-capture.js";
@@ -56,7 +55,7 @@ async function runExplorerWithCounter(
   }: RunExplorerOptions,
   tokenCounter: ContextTokenCounter,
 ): Promise<Readonly<FreeContextResult>> {
-  const request = normalizeFreeContextRequest(rawRequest);
+  const request = rawRequest;
   const invocation = FreeContextInvocationContextSchema.parse(rawInvocation);
   const clock = dependencies.clock ?? performance.now.bind(performance);
   const startedAt = clock();
@@ -65,6 +64,8 @@ async function runExplorerWithCounter(
     throw new Error("Invocation workspaceRoot must be the resolved workspace root.");
   }
   const primaryPrompt = buildUserPrompt(request);
+  const candidateEvaluator: CanonicalCandidateEvaluator = (candidate, observedReads) =>
+    compileFreeContextResult(request, invocation, candidate, { errorCode: null }, observedReads);
   const routed = await runPrimaryRoute({
     cli,
     workspace,
@@ -73,7 +74,7 @@ async function runExplorerWithCounter(
     ...(signal ? { signal } : {}),
     ...(onEvent ? { onEvent } : {}),
     startedAt,
-    dependencies: { ...dependencies, tokenCounter },
+    dependencies: { ...dependencies, tokenCounter, candidateEvaluator },
   });
   const runtime: Readonly<ExplorerRuntime> = Object.freeze({
     route: routed.route,
@@ -88,18 +89,24 @@ async function runExplorerWithCounter(
     tools: Object.freeze([...routed.repositoryTools.names]),
   });
 
-  const compilerStartedAt = clock();
   const terminal = routed.primary.terminalFailure
     ? { errorCode: "INTERNAL_ERROR" as const, reason: `Terminal protocol failure: ${routed.primary.terminalFailure}` }
     : { errorCode: null };
-  const result = await compileFreeContextResult(
-    request,
-    invocation,
-    routed.primary.candidate,
-    terminal,
-    routed.primary.observedReads,
-  );
-  const compilerMs = Math.max(0, clock() - compilerStartedAt);
+  let compilerMs = 0;
+  let result: Readonly<FreeContextResult>;
+  if (routed.primary.canonicalResult && routed.primary.terminalFailure === null) {
+    result = routed.primary.canonicalResult;
+  } else {
+    const compilerStartedAt = clock();
+    result = await compileFreeContextResult(
+      request,
+      invocation,
+      routed.primary.candidate,
+      terminal,
+      routed.primary.observedReads,
+    );
+    compilerMs = Math.max(0, clock() - compilerStartedAt);
+  }
   if (onSessionCapture) {
     await onSessionCapture(Object.freeze({
       schemaVersion: "freecontext-explorer-capture-v3",

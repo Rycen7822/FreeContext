@@ -13,7 +13,7 @@ import {
   retainedObservedReads,
   submitSchemaTokenDelta,
 } from "../src/runtime/finalization.js";
-import { baseRequest } from "./helpers.js";
+import { baseRequest, topicTarget } from "./helpers.js";
 
 const observedRead = {
   tool: "read" as const,
@@ -46,12 +46,53 @@ test("submit_evidence accepts one locally valid observed candidate", async () =>
     isFinalizing: () => false,
   });
   const result = await tool.execute("submit-1", validArguments);
-  assert.equal(result.terminate, true);
+  assert.equal(result.terminate, false);
   assert.equal(state.failureKind, null);
   assert.deepEqual(state.failureDetails, []);
   assert.equal(state.candidate?.evidence[0]?.path, "src/index.ts");
   assert.equal(state.candidate?.evidence[0]?.role, "implementation");
   assert.equal((result.details as { readonly tool?: string }).tool, "submit_evidence");
+});
+
+test("submit_evidence retries an incomplete structural header and accepts its self-contained range", async () => {
+  const state = createTerminalSubmissionState();
+  const structuralRead = {
+    tool: "read" as const,
+    path: "src/result.py",
+    startLine: 24,
+    endLine: 27,
+    content: "[read src/result.py:24-27]\n24: class Result(  # type: ignore[type-var]\n25:     BaseContainer,\n26: ):\n27:     def bind(self): ...",
+  };
+  const tool = createSubmitEvidenceTool({
+    Type,
+    request: baseRequest(),
+    observedReads: () => [structuralRead],
+    state,
+    isFinalizing: () => false,
+  });
+  const incomplete = {
+    ...validArguments,
+    evidence: [{ ...validArguments.evidence[0], path: "src/result.py", start_line: 24, end_line: 24, focus_line: 24 }],
+  };
+  await assert.rejects(tool.execute("submit-header", incomplete), /incomplete_structural_evidence/u);
+  assert.equal(state.failureKind, null);
+  await tool.execute("submit-range", {
+    ...incomplete,
+    evidence: [{ ...incomplete.evidence[0], end_line: 27 }],
+  });
+  assert.equal(state.candidate?.evidence[0]?.endLine, 27);
+
+  const finalState = createTerminalSubmissionState();
+  const finalTool = createSubmitEvidenceTool({
+    Type,
+    request: baseRequest(),
+    observedReads: () => [structuralRead],
+    state: finalState,
+    isFinalizing: () => true,
+  });
+  const finalResult = await finalTool.execute("final-header", incomplete);
+  assert.equal(finalResult.terminate, true);
+  assert.deepEqual(finalState.candidate?.gaps.map((gap) => gap.questionId), ["tests", "impl"]);
 });
 
 test("submit_evidence clips an adjacent merged range to the focus observation", async () => {
@@ -106,7 +147,8 @@ test("submit_evidence exposes only portable shape constraints to the provider", 
     isFinalizing: () => false,
   });
   const schema = JSON.stringify(tool.parameters);
-  assert.match(tool.description, /six observed spans.*required allocation.*reserved slots/iu);
+  assert.match(tool.description, /at most 6 self-contained observed evidence items.*required allocation.*reserved slots.*never submit a seventh/iu);
+  assert.match(tool.description, /existing owner that proves absence as complete negative evidence/iu);
   assert.match(tool.description, /1 reserved slots/iu);
   assert.match(tool.description, /minimumSpans/iu);
   assert.equal(schema.includes('"role"'), false);
@@ -133,13 +175,17 @@ test("local submission validation records exact limits removed from the provider
       state,
       isFinalizing: () => true,
     });
-    await assert.rejects(tool.execute(`invalid-${index}`, invalid), /local semantic/u);
+    await assert.rejects(tool.execute(`invalid-${index}`, invalid), (error: unknown) => {
+      assert.match(String(error), /local semantic/u);
+      assert.match(String(error), new RegExp(expected.join("|"), "u"));
+      return true;
+    });
     assert.equal(state.failureKind, "invalid_arguments");
     assert.deepEqual(state.failureDetails, expected);
   }
 });
 
-test("finalizer requires each requested minimum or an explicit partial-coverage gap", async () => {
+test("finalizer turns missing allocation into an explicit partial-coverage gap", async () => {
   const request = {
     ...baseRequest(),
     evidenceQuestions: baseRequest().evidenceQuestions.map((question) => (
@@ -156,8 +202,11 @@ test("finalizer requires each requested minimum or an explicit partial-coverage 
   });
 
   const missing = createTerminalSubmissionState();
-  await assert.rejects(createTool(missing).execute("missing-secondary", validArguments), /local semantic/u);
-  assert.deepEqual(missing.failureDetails, ["required_coverage_missing"]);
+  const missingResult = await createTool(missing).execute("missing-secondary", validArguments);
+  assert.equal(missingResult.terminate, true);
+  assert.equal(missing.failureKind, null);
+  assert.deepEqual(missing.failureDetails, []);
+  assert.deepEqual(missing.candidate?.gaps.map((gap) => gap.questionId), ["tests", "impl"]);
 
   const partial = createTerminalSubmissionState();
   await createTool(partial).execute("partial-secondary", {
@@ -183,10 +232,10 @@ test("finalizer preserves bounded partial evidence when a required gap remains",
   const requiredRequest = {
     ...baseRequest(),
     evidenceQuestions: [
-      { id: "implementation", role: "implementation" as const, question: "Which implementation spans matter?", required: true, minimumSpans: 2 },
-      { id: "caller", role: "caller" as const, question: "Which callers matter?", required: true, minimumSpans: 2 },
-      { id: "contract", role: "contract" as const, question: "Which contract matters?", required: true },
-      { id: "tests", role: "test" as const, question: "Which tests matter?", required: true },
+      { id: "implementation", role: "implementation" as const, question: "Which implementation spans matter?", required: true, minimumSpans: 2, coverageTargets: [topicTarget("implementation-target", "implementation", "behavior")] },
+      { id: "caller", role: "caller" as const, question: "Which callers matter?", required: true, minimumSpans: 2, coverageTargets: [topicTarget("caller-target", "callers", "relationship")] },
+      { id: "contract", role: "contract" as const, question: "Which contract matters?", required: true, coverageTargets: [topicTarget("contract-target", "contract", "contract")] },
+      { id: "tests", role: "test" as const, question: "Which tests matter?", required: true, coverageTargets: [topicTarget("tests-target", "tests", "verification")] },
     ],
   };
   const reads = Array.from({ length: 6 }, (_, index) => ({
@@ -217,7 +266,7 @@ test("finalizer preserves bounded partial evidence when a required gap remains",
   assert.deepEqual(state.candidate?.gaps.map((gap) => gap.questionId), ["contract"]);
 });
 
-test("finalizer removes a redundant gap after validating evidence for the same question", async () => {
+test("finalizer preserves a semantic gap alongside evidence for the same question", async () => {
   const state = createTerminalSubmissionState();
   const tool = createSubmitEvidenceTool({
     Type,
@@ -233,22 +282,33 @@ test("finalizer removes a redundant gap after validating evidence for the same q
   });
   assert.equal(state.failureKind, null);
   assert.equal(state.candidate?.evidence.length, 6);
-  assert.deepEqual(state.candidate?.gaps, []);
+  assert.deepEqual(state.candidate?.gaps, [{
+    questionId: "impl",
+    reason: "The implementation was not found.",
+  }]);
 });
 
-test("finalizer rejects unobserved evidence and records invalid_arguments", async () => {
+test("finalizer preserves observed evidence and turns an unobserved citation into a gap", async () => {
   const state = createTerminalSubmissionState();
   const tool = createSubmitEvidenceTool({
     Type,
     request: baseRequest(),
-    observedReads: () => [],
+    observedReads: () => [observedRead],
     state,
     isFinalizing: () => true,
   });
-  await assert.rejects(tool.execute("submit-1", validArguments), /observed-read validation/u);
-  assert.equal(state.candidate, null);
-  assert.equal(state.failureKind, "invalid_arguments");
-  assert.deepEqual(state.failureDetails, ["unobserved_range"]);
+  const result = await tool.execute("submit-1", {
+    ...validArguments,
+    evidence: [
+      validArguments.evidence[0]!,
+      { ...validArguments.evidence[0]!, question_id: "tests", path: "tests/missing.py" },
+    ],
+  });
+  assert.equal(result.terminate, true);
+  assert.equal(state.failureKind, null);
+  assert.deepEqual(state.failureDetails, []);
+  assert.equal(state.candidate?.evidence.length, 1);
+  assert.deepEqual(state.candidate?.gaps.map((gap) => gap.questionId), ["tests"]);
 });
 
 test("finalizer records bounded semantic rejection categories without argument values", async () => {
@@ -295,11 +355,11 @@ test("isolated packet marks exploration complete and omits repository tool origi
     maxItems: { evidence: 6, gaps: 6 },
     requiredMinimumSpans: 1,
     requiredAllocation: [
-      { question_id: "impl", role: "implementation", slots: 1 },
+      { question_id: "impl", role: "implementation", slots: 1, remainingSlots: 1, targets: [{ target_id: "impl-target", slots: 1 }], eligibleObservedSpanIds: [1] },
     ],
     question_id: "exact questions[].id; omit role because the harness derives it",
-    citation: "non-empty repository-relative path; integer 1 <= start_line <= focus_line <= end_line <= 10000000; range within one matching repositoryObservation",
-    coverage: "Treat requiredAllocation as reserved quotas: fill every quota with distinct role-matched observed spans before any surplus. Cite relevant partial observations instead of replacing their quota with surplus; if a quota still cannot be met, include that exact question ID in gaps. Test role requires an actual test/spec file or inline test block, never a production helper whose name contains test. Never substitute another role or claim a present role-matched observation is absent.",
+    citation: "non-empty repository-relative path; integer 1 <= start_line <= focus_line <= end_line <= 10000000; smallest self-contained range within one matching repositoryObservation",
+    coverage: "Treat requiredAllocation as reserved quotas: fill every target quota and remaining minimum-spans quota with distinct role-matched observed spans before any surplus. A slot is covered only by self-contained observed evidence that answers the full declared question or target, not a declaration or keyword match. Count evidence and gaps before the call; evidence.length must be at most maxItems.evidence, and when requiredAllocation fills the six evidence slots there is no surplus slot. Cite relevant partial observations instead of replacing their quota with surplus; if a quota still cannot be met, include that exact question ID and target_id in gaps. Test role requires an actual test/spec file or inline test block, never a production helper whose name contains test. Never substitute another role or claim a present role-matched observation is absent.",
   });
   const { tool: _tool, ...modelObservation } = observedRead;
   assert.equal(_tool, "read");
@@ -308,27 +368,32 @@ test("isolated packet marks exploration complete and omits repository tool origi
   assert.equal(packet.includes("[read src/index.ts:4-8]"), false);
   assert.equal(FINALIZATION_SYSTEM_PROMPT.includes("completed repository exploration"), true);
   assert.equal(FINALIZATION_SYSTEM_PROMPT.includes("Repository tools are unavailable"), true);
+  assert.equal(FINALIZATION_SYSTEM_PROMPT.includes("never submit a seventh evidence item"), true);
   assert.equal(FINALIZATION_SYSTEM_PROMPT.includes("submissionRules.requiredAllocation"), true);
+  assert.equal(FINALIZATION_SYSTEM_PROMPT.includes("eligibleObservedSpanIds"), true);
   assert.equal(FINALIZATION_SYSTEM_PROMPT.includes("A wider adjacent range is clipped"), true);
+  assert.equal(FINALIZATION_SYSTEM_PROMPT.includes("smallest self-contained observed evidence"), true);
+  assert.equal(FINALIZATION_SYSTEM_PROMPT.includes("declaration or keyword line alone is insufficient"), true);
+  assert.equal(FINALIZATION_SYSTEM_PROMPT.includes("complete negative answer"), true);
   assert.equal(FINALIZATION_SYSTEM_PROMPT.includes("never claim a present role-matched repository observation is absent"), true);
 
   const quotaRequest = {
     ...baseRequest(),
     evidenceQuestions: [
-      { id: "implementation", role: "implementation" as const, question: "Implementation?", required: true, minimumSpans: 2 },
-      { id: "application", role: "caller" as const, question: "Callers?", required: true, minimumSpans: 2 },
-      { id: "contract", role: "contract" as const, question: "Contract?", required: true },
-      { id: "tests", role: "test" as const, question: "Tests?", required: true },
+      { id: "implementation", role: "implementation" as const, question: "Implementation?", required: true, minimumSpans: 2, coverageTargets: [topicTarget("implementation-quota", "implementation", "behavior")] },
+      { id: "application", role: "caller" as const, question: "Callers?", required: true, minimumSpans: 2, coverageTargets: [topicTarget("application-quota", "callers", "relationship")] },
+      { id: "contract", role: "contract" as const, question: "Contract?", required: true, coverageTargets: [topicTarget("contract-quota", "contract", "contract")] },
+      { id: "tests", role: "test" as const, question: "Tests?", required: true, coverageTargets: [topicTarget("tests-quota", "tests", "verification")] },
     ],
   };
   const quotaPacket = JSON.parse(buildFinalizationPacket(quotaRequest, [observedRead], null)) as {
     submissionRules: { requiredAllocation: unknown };
   };
   assert.deepEqual(quotaPacket.submissionRules.requiredAllocation, [
-    { question_id: "implementation", role: "implementation", slots: 2 },
-    { question_id: "application", role: "caller", slots: 2 },
-    { question_id: "contract", role: "contract", slots: 1 },
-    { question_id: "tests", role: "test", slots: 1 },
+    { question_id: "implementation", role: "implementation", slots: 2, remainingSlots: 2, targets: [{ target_id: "implementation-quota", slots: 1 }], eligibleObservedSpanIds: [1] },
+    { question_id: "application", role: "caller", slots: 2, remainingSlots: 2, targets: [{ target_id: "application-quota", slots: 1 }], eligibleObservedSpanIds: [1] },
+    { question_id: "contract", role: "contract", slots: 1, remainingSlots: 1, targets: [{ target_id: "contract-quota", slots: 1 }], eligibleObservedSpanIds: [1] },
+    { question_id: "tests", role: "test", slots: 1, remainingSlots: 1, targets: [{ target_id: "tests-quota", slots: 1 }], eligibleObservedSpanIds: [1] },
   ]);
 });
 

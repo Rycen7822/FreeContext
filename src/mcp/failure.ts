@@ -20,7 +20,7 @@ export function failedResult({
     summary: "",
     evidence: [],
     gaps: request?.evidenceQuestions.map((question) => ({ questionId: question.id, reason })) ?? [],
-    nextAction: { kind: "direct_search", reason },
+    nextAction: { kind: "exact_probe", reason },
     errorCode: code,
     sessionId,
     sessionFile,

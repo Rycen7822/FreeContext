@@ -2,7 +2,15 @@ import type { FreeContextResult } from "../mcp/contracts.js";
 import { isRecord } from "./delivery-observation.js";
 import type { FreeContextInvocationKind } from "./invocation-window.js";
 
-export type ParentRepositoryActionKind = "read" | "search" | "edit" | "other";
+export type ParentRepositoryActionKind = "read" | "search" | "edit" | "check" | "other";
+export type FreeContextConsumptionPhase = "pre_edit_handoff" | "post_edit_diagnostic" | "reentry";
+
+export interface FreeContextConsumptionPhaseSummary {
+  readonly phase: FreeContextConsumptionPhase;
+  readonly actionCount: number;
+  readonly firstSequence: number | null;
+  readonly lastSequence: number | null;
+}
 
 export interface ParentRepositoryActionEvent {
   readonly schemaVersion: "freecontext-parent-action-v1";
@@ -19,11 +27,12 @@ export interface ParentRepositoryActionEvent {
     readonly endLine: number | null;
     readonly broad: boolean;
     readonly gapQuestionIds: readonly string[];
+    readonly externalSource?: true;
   }>;
 }
 
 export interface FreeContextConsumptionAudit {
-  readonly schemaVersion: "freecontext-consumption-audit-v3";
+  readonly schemaVersion: "freecontext-consumption-audit-v6";
   readonly observationSource: "explicit_host_event" | "completed_codex_tool_call";
   readonly taskId: string;
   readonly callId: string;
@@ -34,19 +43,24 @@ export interface FreeContextConsumptionAudit {
   readonly windowEndedBefore: string | null;
   readonly windowObserved: boolean;
   readonly actionCount: number;
-  readonly firstRepositoryBatchSize: number;
-  readonly firstRepositoryBatchConcurrent: boolean;
-  readonly firstRepositoryBatchReadOnly: boolean;
-  readonly firstRepositoryBatchEvidenceOnly: boolean;
-  readonly allEvidenceConsumed: boolean;
-  readonly consumedEvidenceCount: number;
+  readonly inlineEvidenceCount: number;
+  readonly inlineEvidenceProvenanceComplete: boolean;
+  readonly nativeEvidenceRereadCount: number;
+  readonly firstRepositoryActionKind: ParentRepositoryActionKind | null;
+  readonly preEditNativeExplorationCount: number;
+  readonly postEditNativeExplorationCount: number;
   readonly searchCount: number;
   readonly searchBatchCount: number;
   readonly broadSearchCount: number;
   readonly distinctNonEvidenceReadPaths: number;
   readonly editCount: number;
+  readonly checkCount: number;
+  readonly followedByReentrant: boolean;
+  readonly editOrCheckObserved: boolean;
   readonly exactDuplicate: boolean;
-  readonly escapedExplorationReasons: readonly string[];
+  readonly externalSourceCommandCount: number;
+  readonly phases: readonly Readonly<FreeContextConsumptionPhaseSummary>[];
+  readonly failureReasons: readonly string[];
 }
 
 export interface FreeContextConsumptionAuditContext {
@@ -61,7 +75,8 @@ export interface FreeContextConsumptionAuditContext {
   readonly windowObserved: boolean;
   readonly exactDuplicate: boolean;
   readonly windowFailureReasons?: readonly string[];
-  readonly followedByGapFollowup?: boolean;
+  readonly followedByReentrant?: boolean;
+  readonly reentryOrigin?: "evidence_consumption" | "edit" | "check" | null;
 }
 
 function positiveInteger(value: unknown): number | null {
@@ -83,14 +98,16 @@ function parseActionEvent(value: unknown): Readonly<ParentRepositoryActionEvent>
   const endLine = value.action.endLine;
   const broad = value.action.broad;
   const gapQuestionIds = value.action.gapQuestionIds;
+  const externalSource = value.action.externalSource ?? false;
   if (sequence === null || !(observationBatchId === null ||
       (typeof observationBatchId === "string" && observationBatchId.length > 0)) ||
       typeof observationBatchConcurrent !== "boolean" || (observationBatchConcurrent && observationBatchId === null) ||
-      !["read", "search", "edit", "other"].includes(String(kind)) ||
+      !["read", "search", "edit", "check", "other"].includes(String(kind)) ||
       !(path === null || typeof path === "string") ||
       !(startLine === null || positiveInteger(startLine) !== null) ||
       !(endLine === null || positiveInteger(endLine) !== null) || typeof broad !== "boolean" ||
-      !Array.isArray(gapQuestionIds) || gapQuestionIds.some((item) => typeof item !== "string" || !item)) {
+      !Array.isArray(gapQuestionIds) || gapQuestionIds.some((item) => typeof item !== "string" || !item) ||
+      typeof externalSource !== "boolean") {
     throw new Error("Invalid freecontext-parent-action-v1 action.");
   }
   if ((startLine === null) !== (endLine === null) ||
@@ -112,6 +129,7 @@ function parseActionEvent(value: unknown): Readonly<ParentRepositoryActionEvent>
       endLine: endLine as number | null,
       broad,
       gapQuestionIds: Object.freeze([...(gapQuestionIds as string[])]),
+      ...(externalSource ? { externalSource: true as const } : {}),
     }),
   });
 }
@@ -163,6 +181,22 @@ function hitsAnyEvidence(
   return result.evidence.some((evidence) => hitsEvidenceItem(action, evidence));
 }
 
+function isEvidencePath(
+  action: ParentRepositoryActionEvent["action"],
+  result: Readonly<FreeContextResult>,
+): boolean {
+  if (action.kind !== "read" || action.path === null) return false;
+  const actionPath = normalizePath(action.path);
+  return result.evidence.some((evidence) => normalizePath(evidence.path) === actionPath);
+}
+
+function isNativeExploration(
+  action: ParentRepositoryActionEvent["action"],
+  result: Readonly<FreeContextResult>,
+): boolean {
+  return action.kind === "search" || (action.kind === "read" && !hitsAnyEvidence(action, result));
+}
+
 function batchKey(event: Readonly<ParentRepositoryActionEvent>): string {
   return event.observationBatchId ?? `sequence:${event.sequence}`;
 }
@@ -184,47 +218,83 @@ export function analyzeFreeContextConsumption(
   if (new Set(actions.map(({ sequence }) => sequence)).size !== actions.length) {
     throw new Error(`Duplicate parent-action sequence for callId ${context.callId}.`);
   }
-  const first = actions[0];
-  const firstRepositoryBatch = first === undefined ? [] : actions.filter((event) => batchKey(event) === batchKey(first));
-  const consumedEvidenceCount = result.evidence.filter((evidence) =>
-    firstRepositoryBatch.some(({ action }) => hitsEvidenceItem(action, evidence))).length;
-  const firstRepositoryBatchReadOnly = firstRepositoryBatch.length > 0 &&
-    firstRepositoryBatch.every(({ action }) => action.kind === "read");
-  const firstRepositoryBatchEvidenceOnly = firstRepositoryBatchReadOnly &&
-    firstRepositoryBatch.every(({ action }) => hitsAnyEvidence(action, result));
-  const allEvidenceConsumed = result.evidence.length > 0 && consumedEvidenceCount === result.evidence.length;
+  const tracksEvidenceHandoff = result.status === "ready" || result.status === "partial";
+  const inlineEvidenceCount = result.evidence.filter(({ excerpt }) =>
+    typeof excerpt === "string" && excerpt.trim().length > 0).length;
+  const inlineEvidenceProvenanceComplete = !tracksEvidenceHandoff ||
+    (result.evidence.length > 0 && inlineEvidenceCount === result.evidence.length);
+  const nativeEvidenceRereadCount = actions.filter(({ action }) => hitsAnyEvidence(action, result)).length;
+  const firstEditAt = actions.findIndex(({ action }) => action.kind === "edit" || action.kind === "check");
+  const preEditActions = firstEditAt < 0 ? actions : actions.slice(0, firstEditAt);
+  const postEditActions = firstEditAt < 0 ? [] : actions.slice(firstEditAt);
+  const preEditNativeExplorationCount = actions.filter(({ action }, index) =>
+    (firstEditAt < 0 || index < firstEditAt) && isNativeExploration(action, result)).length;
+  const postEditNativeExplorationCount = firstEditAt < 0 ? 0 : actions.filter(({ action }, index) =>
+    index > firstEditAt && isNativeExploration(action, result)).length;
   const searches = actions.filter(({ action }) => action.kind === "search");
   const broadSearchCount = searches.filter(({ action }) => action.broad).length;
+  const searchBatchCount = new Set(searches.map(batchKey)).size;
   const edits = actions.filter(({ action }) => action.kind === "edit");
+  const checks = actions.filter(({ action }) => action.kind === "check");
+  const followedByReentrant = context.followedByReentrant === true;
+  const editOrCheckObserved = edits.length > 0 || checks.length > 0;
   const editedPaths = new Set(edits.flatMap(({ action }) => action.path === null ? [] : [normalizePath(action.path)]));
   const distinctNonEvidenceReadPaths = new Set(actions.flatMap(({ action }) =>
     action.kind === "read" && action.path !== null && !hitsAnyEvidence(action, result) &&
       !editedPaths.has(normalizePath(action.path))
       ? [normalizePath(action.path)]
       : [])).size;
-  const escaped = [...(context.windowFailureReasons ?? [])];
+  const preDiscoveredReadPaths = new Set<string>();
+  let preAdjacentEvidenceReadCount = 0;
+  for (const { action } of preEditActions) {
+    if (action.kind !== "read" || action.path === null || hitsAnyEvidence(action, result)) continue;
+    const normalized = normalizePath(action.path);
+    if (isEvidencePath(action, result)) preAdjacentEvidenceReadCount += 1;
+    else preDiscoveredReadPaths.add(normalized);
+  }
+  const failures = [...(context.windowFailureReasons ?? [])];
   const addReason = (reason: string): void => {
-    if (!escaped.includes(reason)) escaped.push(reason);
+    if (!failures.includes(reason)) failures.push(reason);
   };
   if (!context.windowObserved) addReason("unobserved_window");
   if (context.exactDuplicate) addReason("exact_request_replay");
-  const searchBatchCount = new Set(searches.map(batchKey)).size;
-  if (context.windowObserved) {
-    if ((result.status === "ready" || result.status === "partial") && !firstRepositoryBatchEvidenceOnly) {
-      addReason("first_batch_not_evidence_only");
-    }
-    if ((result.status === "ready" || result.status === "partial") && !allEvidenceConsumed) {
-      addReason("evidence_not_consumed_in_first_batch");
-    }
-    if (broadSearchCount > 0) addReason("broad_search");
-    if (searchBatchCount > 1) addReason("second_search_batch");
-    if (distinctNonEvidenceReadPaths >= 3) addReason("third_non_evidence_read_path");
-    if (context.followedByGapFollowup && actions.length > firstRepositoryBatch.length) {
-      addReason("action_before_gap_followup");
-    }
+  if (!inlineEvidenceProvenanceComplete) addReason("inline_evidence_provenance_missing");
+  const externalSourceCommandCount = actions.filter(({ action }) => action.externalSource === true).length;
+  if (externalSourceCommandCount > 0) addReason("task_solution_external_source");
+  if (followedByReentrant && !editOrCheckObserved && context.reentryOrigin !== "evidence_consumption") {
+    addReason("reentry_without_typed_origin");
   }
+  const preSearches = preEditActions.filter(({ action }) => action.kind === "search");
+  const preBroadSearchCount = preSearches.filter(({ action }) => action.broad).length;
+  const preSearchExceeded = result.nextAction.kind === "consume_evidence"
+    ? preSearches.length > 0
+    : preSearches.length > 1;
+  const preReadExceeded = result.nextAction.kind === "consume_evidence"
+    ? preAdjacentEvidenceReadCount > 1 || preDiscoveredReadPaths.size > 0
+    : preDiscoveredReadPaths.size > 1;
+  if (preBroadSearchCount > 0 || preSearchExceeded || preReadExceeded) addReason("pre_edit_handoff_scope_exceeded");
+  const postSearches = postEditActions.filter(({ action }) => action.kind === "search");
+  const postDiagnosticPaths = new Set(postEditActions.flatMap(({ action }) =>
+    action.kind === "read" && action.path !== null && !hitsAnyEvidence(action, result)
+      && !editedPaths.has(normalizePath(action.path)) ? [normalizePath(action.path)] : []));
+  const postSearchBatches = new Set(postSearches.map(batchKey)).size;
+  if (postSearches.some(({ action }) => action.broad) || postSearchBatches > 1 || postDiagnosticPaths.size > 1) {
+    addReason("post_edit_cross_file_exploration_without_fc");
+  }
+  const phaseSummary = (
+    phase: FreeContextConsumptionPhase,
+    phaseActions: readonly Readonly<ParentRepositoryActionEvent>[],
+  ): Readonly<FreeContextConsumptionPhaseSummary> => Object.freeze({
+    phase,
+    actionCount: phaseActions.length,
+    firstSequence: phaseActions[0]?.sequence ?? null,
+    lastSequence: phaseActions.at(-1)?.sequence ?? null,
+  });
+  const phases = [phaseSummary("pre_edit_handoff", preEditActions)];
+  if (postEditActions.length > 0) phases.push(phaseSummary("post_edit_diagnostic", postEditActions));
+  if (followedByReentrant) phases.push(phaseSummary("reentry", []));
   return Object.freeze({
-    schemaVersion: "freecontext-consumption-audit-v3",
+    schemaVersion: "freecontext-consumption-audit-v6",
     observationSource: context.observationSource,
     taskId: context.taskId,
     callId: context.callId,
@@ -235,18 +305,23 @@ export function analyzeFreeContextConsumption(
     windowEndedBefore: context.windowEndedBefore,
     windowObserved: context.windowObserved,
     actionCount: actions.length,
-    firstRepositoryBatchSize: firstRepositoryBatch.length,
-    firstRepositoryBatchConcurrent: firstRepositoryBatch.some((event) => event.observationBatchConcurrent),
-    firstRepositoryBatchReadOnly,
-    firstRepositoryBatchEvidenceOnly,
-    allEvidenceConsumed,
-    consumedEvidenceCount,
+    inlineEvidenceCount,
+    inlineEvidenceProvenanceComplete,
+    nativeEvidenceRereadCount,
+    firstRepositoryActionKind: actions[0]?.action.kind ?? null,
+    preEditNativeExplorationCount,
+    postEditNativeExplorationCount,
     searchCount: searches.length,
     searchBatchCount,
     broadSearchCount,
     distinctNonEvidenceReadPaths,
     editCount: edits.length,
+    checkCount: checks.length,
+    followedByReentrant,
+    editOrCheckObserved,
     exactDuplicate: context.exactDuplicate,
-    escapedExplorationReasons: Object.freeze(escaped),
+    externalSourceCommandCount,
+    phases: Object.freeze(phases),
+    failureReasons: Object.freeze(failures),
   });
 }

@@ -10,7 +10,11 @@ import { createModel, createRequestOptions } from "./model.js";
 import type { ContextTokenCounter } from "./context-budget.js";
 import type { PiBindings } from "./pi-bindings.js";
 import { loadPiBindings } from "./pi-bindings.js";
-import type { PiSessionEventHandler, PiSessionResult } from "./pi-session.js";
+import type {
+  CanonicalCandidateEvaluator,
+  PiSessionEventHandler,
+  PiSessionResult,
+} from "./pi-session.js";
 import { runPiSession } from "./pi-session.js";
 
 export interface RouterDependencies {
@@ -22,6 +26,7 @@ export interface RouterDependencies {
   readonly clock?: () => number;
   readonly timestamp?: () => number;
   readonly tokenCounter?: ContextTokenCounter;
+  readonly candidateEvaluator?: CanonicalCandidateEvaluator;
 }
 
 export interface PrimaryRouteResult {
@@ -110,6 +115,7 @@ export async function runPrimaryRoute({
         clock,
         ...(dependencies.tokenCounter ? { tokenCounter: dependencies.tokenCounter } : {}),
         ...(dependencies.timestamp ? { timestamp: dependencies.timestamp } : {}),
+        ...(dependencies.candidateEvaluator ? { candidateEvaluator: dependencies.candidateEvaluator } : {}),
       });
       primarySessionMs += Math.max(0, clock() - primaryStartedAt);
       return Object.freeze({

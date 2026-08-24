@@ -17,43 +17,36 @@ test("implicit discovery routes complex reads to one MCP tool without copying el
   assert.ok([...description].length <= 420);
   assert.equal(
     description,
-    "Delegate complex multi-file/document, cross-module, long-document, or source-bound exploration to gather_context first. Reenter before a second search batch or third unrelated path; don't reread it.",
+    "Delegate multi-file, cross-module, long-document, or source-bound exploration to gather_context; follow nextAction and reenter for a new edit/check blocker.",
   );
   for (const gate of FREECONTEXT_ELIGIBILITY_POLICY.gates) assert.equal(skill.includes(gate.instruction), false);
   assert.match(skill, /First cell reads only this file; next call `tools\.mcp__freecontext__gather_context`/iu);
-  for (const trigger of ["multi-file/document", "cross-module", "long-document", "source-bound"]) {
+  for (const trigger of ["multi-file", "cross-module", "long-document", "source-bound"]) {
     assert.ok(description.includes(trigger));
   }
-  assert.match(description, /Reenter before a second search batch or third unrelated path/iu);
-  assert.match(description, /don't reread it/iu);
-  assert.match(skill, /third distinct non-evidence\/non-edited path/iu);
+  assert.match(description, /follow nextAction and reenter for a new edit\/check blocker/iu);
+  assert.doesNotMatch(description, /second search batch|third unrelated path/iu);
   assert.doesNotMatch(skill, /never auto-trigger|only (?:after )?an explicit user request/iu);
   assert.match(skill, /typeof tools\.mcp__freecontext__gather_context !== "function"/u);
   assert.doesNotMatch(skill, /ALL_TOOLS/u);
   assert.equal(skill.match(/await tools\.mcp__freecontext__gather_context\(args\)/gu)?.length, 1);
-  assert.equal(skill.match(/\bnotify\(/gu)?.length, 1);
+  assert.equal(skill.match(/\bnotify\(/gu)?.length ?? 0, 0);
   assert.equal(skill.match(/functions\.wait/gu)?.length, 1);
   assert.match(skill, /yield_time_ms: 300000, max_tokens: 10000/u);
   assert.match(skill, /terminalTexts\.length !== 1/u);
   assert.doesNotMatch(skill, /JSON\.stringify/u);
-  assert.match(skill, /FreeContext installs no waiting Hook/u);
+  assert.match(skill, /No waiting Hook/u);
   assert.match(skill, /Args \(0–12 refs\)/u);
-  assert.match(skill, /\{taskText,evidenceQuestions:\[\{id,role,question,required,minimumSpans\}\],knownRefs:/u);
-  assert.match(skill, /No `questions`, string refs, secrets, or dumps/iu);
-  assert.match(skill, /Required `minimumSpans` sum is at most 6/iu);
-  assert.match(skill, /Initial uses required implementation\/caller\/contract\/test questions/iu);
-  assert.match(skill, /`minimumSpans` 2\/2\/1\/1/u);
-  assert.match(skill, /other initial uses 2–6/iu);
-  assert.match(skill, /Reentrant uses 1–4 new questions/iu);
-  assert.match(skill, /After `partial`, consume its Evidence; then copy only unresolved question objects without rewriting/iu);
+  assert.match(skill, /\{taskText,workUnit:\{outcome:"edit"\|"check"\|"answer"\|"decision",goal\},evidenceQuestions:/u);
+  assert.match(skill, /Retain task requirements; use one target\/question and at most six/iu);
   assert.doesNotMatch(skill, /\bworkspace_root\b/u);
-  assert.match(skill, /Summaries are not reads/u);
-  assert.match(skill, /next repository cell reads every exact Evidence range in one `Promise\.all` of literal `tools\.exec_command/iu);
-  assert.match(skill, /No generated arrays, loops, `map`, variables, or command-level `for`/iu);
-  assert.match(skill, /Each episode has one main call/iu);
-  assert.match(skill, /only `partial` permits one gap-only follow-up/iu);
-  assert.match(skill, /no third invocation in that episode/iu);
-  assert.match(skill, /`ready` covers only its invocation/iu);
+  assert.match(skill, /follow the returned handoff and its single `nextAction`/iu);
+  assert.match(skill, /make one necessary cited-adjacent read only when change-critical context is omitted/iu);
+  assert.match(skill, /exact failure location or changed-file tail is a direct bounded read, not a new FC gap/iu);
+  assert.match(skill, /Any broader search, listing, keyword expansion, or extra path calls FreeContext/iu);
+  assert.match(skill, /pass the prior handoff verbatim as `reentry\.priorHandoff`/iu);
+  assert.match(skill, /Prompt rewrites, more known refs, imports, file tails, and ordinary adjacent context are not new gaps/iu);
+  assert.doesNotMatch(skill, /complete unresolved question|same-unit|same gaps|Acceptance receipt|private acceptance receipt/iu);
 
   assert.match(metadata, /^  allow_implicit_invocation: true$/mu);
   assert.equal(metadata.match(/^    - type:/gmu)?.length, 1);
@@ -80,7 +73,7 @@ test("implicit discovery routes complex reads to one MCP tool without copying el
   }
 });
 
-test("caller template emits only one canonical text and one slow reminder", async () => {
+test("caller template emits only one canonical terminal text", async () => {
   const skill = await readFile(new URL("../skills/freecontext/SKILL.md", import.meta.url), "utf8");
   const caller = skill.match(/```js\n(?<code>[\s\S]+?)\n```/u)?.groups?.code;
   assert.ok(caller);
@@ -92,18 +85,12 @@ test("caller template emits only one canonical text and one slow reminder", asyn
   }>;
   type Caller = (
     tools: Readonly<{ mcp__freecontext__gather_context: (args: unknown) => Promise<ToolResult> }>,
-    schedule: (callback: () => void, delayMs: number) => number,
-    notify: (message: string) => void,
     text: (message: string) => void,
-    cancel: (handle: number) => void,
     args: unknown,
   ) => Promise<void>;
   const execute = new Function(
     "tools",
-    "setTimeout",
-    "notify",
     "text",
-    "clearTimeout",
     "args",
     `"use strict"; return (async () => {\n${caller}\n})();`,
   ) as Caller;
@@ -111,17 +98,11 @@ test("caller template emits only one canonical text and one slow reminder", asyn
   function start(call: () => Promise<ToolResult>) {
     const state = {
       calls: 0,
-      timers: [] as { callback: () => void; delayMs: number }[],
-      notifications: [] as string[],
       outputs: [] as string[],
-      cancelled: [] as number[],
     };
     const promise = execute(
       { mcp__freecontext__gather_context: async () => { state.calls += 1; return call(); } },
-      (callback, delayMs) => { state.timers.push({ callback, delayMs }); return state.timers.length; },
-      (message) => state.notifications.push(message),
       (message) => state.outputs.push(message),
-      (handle) => state.cancelled.push(handle),
       { taskText: "inspect" },
     );
     return { promise, state };
@@ -134,28 +115,11 @@ test("caller template emits only one canonical text and one slow reminder", asyn
   }));
   await fast.promise;
   assert.equal(fast.state.calls, 1);
-  assert.equal(fast.state.timers.length, 1);
-  assert.equal(fast.state.timers[0]?.delayMs, 8_000);
-  assert.deepEqual(fast.state.notifications, []);
   assert.deepEqual(fast.state.outputs, ["terminal"]);
-  assert.deepEqual(fast.state.cancelled, [1]);
-
-  let finishSlow!: (result: ToolResult) => void;
-  const slowResult = new Promise<ToolResult>((resolve) => { finishSlow = resolve; });
-  const slow = start(() => slowResult);
-  await Promise.resolve();
-  slow.state.timers[0]?.callback();
-  finishSlow({ content: [{ type: "text", text: "slow terminal" }] });
-  await slow.promise;
-  assert.equal(slow.state.calls, 1);
-  assert.equal(slow.state.notifications.length, 1);
-  assert.deepEqual(slow.state.outputs, ["slow terminal"]);
-  assert.deepEqual(slow.state.cancelled, [1]);
 
   const malformed = start(async () => ({
     content: [{ type: "text", text: "first" }, { type: "text", text: "second" }],
   }));
   await assert.rejects(malformed.promise, /no unique terminal text result/u);
   assert.deepEqual(malformed.state.outputs, []);
-  assert.deepEqual(malformed.state.cancelled, [1]);
 });

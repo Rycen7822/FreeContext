@@ -7,7 +7,9 @@ export interface NativeUsage {
   completionTokens: number;
   cachedPromptTokens: number;
   reasoningTokens: number;
-  visibleCompletionTokens: number;
+  uncachedInputTokens: number;
+  visibleOutputTokens: number;
+  reasoningExcludedUncachedTokens: number;
   countedTokens: number;
   reportedTotalTokens: number;
 }
@@ -51,13 +53,16 @@ function nativeUsage(
   reasoningTokens: number,
   reportedTotalTokens: number,
 ): NativeUsage {
-  const visibleCompletionTokens = Math.max(0, completionTokens - reasoningTokens);
+  const uncachedInputTokens = Math.max(0, promptTokens - cachedPromptTokens);
+  const visibleOutputTokens = Math.max(0, completionTokens - reasoningTokens);
   return {
     promptTokens,
     completionTokens,
     cachedPromptTokens,
     reasoningTokens,
-    visibleCompletionTokens,
+    uncachedInputTokens,
+    visibleOutputTokens,
+    reasoningExcludedUncachedTokens: uncachedInputTokens + visibleOutputTokens,
     countedTokens: Math.max(0, reportedTotalTokens - reasoningTokens),
     reportedTotalTokens,
   };
@@ -66,6 +71,11 @@ function nativeUsage(
 function requiredInteger(value: unknown, location: string): number {
   if (Number.isSafeInteger(value) && (value as number) >= 0) return value as number;
   throw new Error(`${location} must be a non-negative integer.`);
+}
+
+function requiredNonNegativeNumber(value: unknown, location: string): number {
+  if (typeof value === "number" && Number.isFinite(value) && value >= 0) return value;
+  throw new Error(`${location} must be a finite non-negative number.`);
 }
 
 function emptyTransportMetrics(): TransportMetrics {
@@ -134,7 +144,9 @@ function addNative(target: NativeUsage, source: Readonly<NativeUsage>): void {
   target.completionTokens += source.completionTokens;
   target.cachedPromptTokens += source.cachedPromptTokens;
   target.reasoningTokens += source.reasoningTokens;
-  target.visibleCompletionTokens += source.visibleCompletionTokens;
+  target.uncachedInputTokens += source.uncachedInputTokens;
+  target.visibleOutputTokens += source.visibleOutputTokens;
+  target.reasoningExcludedUncachedTokens += source.reasoningExcludedUncachedTokens;
   target.countedTokens += source.countedTokens;
   target.reportedTotalTokens += source.reportedTotalTokens;
 }
@@ -196,7 +208,7 @@ async function subagentMetrics(agentDir: string): Promise<Readonly<{
     transport.reminderEvents += requiredInteger(observation.reminderCount, "freeContextTransport[].reminderCount");
     transport.waitToolTurns += requiredInteger(observation.sameCellWaitCount, "freeContextTransport[].sameCellWaitCount");
     if (observation.latencyMs !== null && observation.latencyMs !== undefined) {
-      const latencyMs = requiredInteger(observation.latencyMs, "freeContextTransport[].latencyMs");
+      const latencyMs = requiredNonNegativeNumber(observation.latencyMs, "freeContextTransport[].latencyMs");
       transport.latencySamples += 1;
       transport.latencyMsTotal += latencyMs;
       transport.latencyMsMax = Math.max(transport.latencyMsMax, latencyMs);
@@ -226,7 +238,14 @@ async function subagentMetrics(agentDir: string): Promise<Readonly<{
       const event = (rawRuntimeEvent as Record<string, unknown>).event;
       if (!event || typeof event !== "object" || Array.isArray(event)) continue;
       const typed = event as Record<string, unknown>;
-      if (typed.type === "provider_attempt_failed") addNative(native, piUsage(typed.usage));
+      if (typed.type === "turn_end") {
+        const message = typed.message && typeof typed.message === "object" && !Array.isArray(typed.message)
+          ? typed.message as Record<string, unknown>
+          : null;
+        addNative(native, piUsage(message?.usage));
+      } else if (typed.type === "provider_attempt_failed") {
+        addNative(native, piUsage(typed.usage));
+      }
     }
   }
   return { calls: calls.length, delivered, native, transport: Object.freeze(transport) };

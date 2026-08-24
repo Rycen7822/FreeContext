@@ -127,10 +127,11 @@ try {
   };
   const request: FreeContextRequest = {
     taskText: "Find answer",
+    workUnit: { outcome: "answer", goal: "Find the answer in the fixture." },
     knownRefs: [{ kind: "path", path: "sample.js" }],
     evidenceQuestions: [
-      { id: "impl", role: "implementation", question: "Where is answer implemented?", required: true },
-      { id: "tests", role: "test", question: "How is answer tested?", required: false },
+      { id: "impl", role: "implementation", question: "Where is answer implemented?", required: true, coverageTargets: [{ id: "impl-target", subject: { kind: "symbol", symbol: "answer", path: "sample.js" }, factKind: "definition", coverageMode: "single" }] },
+      { id: "tests", role: "test", question: "How is answer tested?", required: false, coverageTargets: [{ id: "test-target", subject: { kind: "symbol", symbol: "answer" }, factKind: "verification", coverageMode: "single" }] },
     ],
   };
   const invocation: FreeContextInvocationContext = {

@@ -5,18 +5,28 @@ export interface ExplorerEvidenceCandidate {
   readonly endLine: number;
   readonly focusLine: number;
   readonly questionId: string;
+  readonly targetId?: string | undefined;
+  readonly coverageBasis?: boolean | undefined;
   readonly why: string;
 }
 
 export interface ExplorerGapCandidate {
   readonly questionId: string;
+  readonly targetId?: string | undefined;
   readonly reason: string;
+}
+
+export interface ExplorerCoverageCandidate {
+  readonly targetId: string;
+  readonly members: readonly string[];
+  readonly gaps: readonly string[];
 }
 
 export interface ExplorerCandidate {
   readonly summary: string;
   readonly evidence: readonly ExplorerEvidenceCandidate[];
   readonly gaps: readonly ExplorerGapCandidate[];
+  readonly coverage?: readonly ExplorerCoverageCandidate[] | undefined;
 }
 
 export function clipSingleLine(value: string, maximum: number): string {

@@ -5,14 +5,16 @@ import {
   FREECONTEXT_HOST_ROUTE_METADATA,
   TOOL_DESCRIPTION,
 } from "../src/mcp/contracts.js";
-import { decideFreeContextEligibility } from "../src/mcp/eligibility.js";
+import { decideFreeContextEligibility, validateFreeContextReentry } from "../src/mcp/eligibility.js";
 import type { FreeContextEligibilityFacts } from "../src/mcp/eligibility.js";
+import { baseRequest, topicTarget } from "./helpers.js";
 
 const implementationQuestion = {
   id: "implementation",
   role: "implementation" as const,
   question: "Where is this implemented?",
   required: true,
+  coverageTargets: [topicTarget("implementation-target", "implementation", "location")],
 };
 
 function facts(overrides: Partial<FreeContextEligibilityFacts> = {}): FreeContextEligibilityFacts {
@@ -41,6 +43,9 @@ test("one immutable policy owns gate order, tool text, and host route metadata",
   for (const gate of FREECONTEXT_ELIGIBILITY_POLICY.gates) {
     assert.ok(TOOL_DESCRIPTION.includes(gate.instruction));
   }
+  assert.match(TOOL_DESCRIPTION, /one structured path, symbol, or topic fact target/iu);
+  assert.match(TOOL_DESCRIPTION, /first call is not a repository map/iu);
+  assert.match(TOOL_DESCRIPTION, /If a listed gap blocks the next action, call gather_context for that gap/iu);
 });
 
 test("complex scopes call FreeContext before any repository probe", () => {
@@ -48,7 +53,7 @@ test("complex scopes call FreeContext before any repository probe", () => {
     {
       evidenceQuestions: [
         implementationQuestion,
-        { id: "tests", role: "test", question: "Where is this tested?", required: true },
+        { id: "tests", role: "test", question: "Where is this tested?", required: true, coverageTargets: [topicTarget("tests-target", "tests", "verification")] },
       ],
     },
     { crossModuleCallChain: true },
@@ -88,14 +93,14 @@ test("one precise location stays direct only before native exploration escalates
   })).outcome, "exact_probe");
 });
 
-test("a second search batch or third non-evidence path escalates before direct-read exceptions", () => {
+test("native expansion with an unresolved bounded read escalates before broader exploration", () => {
   for (const selected of [
-    { nativeSearchBatchCount: 1 },
-    { distinctNonEvidenceReadPathCount: 2 },
+    { nativeSearchBatchCount: 1, distinctNonEvidenceReadPathCount: 0 },
+    { nativeSearchBatchCount: 99, distinctNonEvidenceReadPathCount: 99 },
   ]) {
     const decision = decideFreeContextEligibility(facts({
       knownRefs: [{ kind: "stack", path: "src/index.ts", line: 10 }],
-      boundedReadSufficient: true,
+      boundedReadSufficient: false,
       ...selected,
     }));
     assert.equal(decision.outcome, "call");
@@ -103,21 +108,25 @@ test("a second search batch or third non-evidence path escalates before direct-r
   }
 });
 
-test("one exact probe routes zero or three-to-six candidates and directly reads one or two", () => {
-  const probe = decideFreeContextEligibility(facts());
-  assert.deepEqual({ outcome: probe.outcome, gate: probe.gate }, { outcome: "exact_probe", gate: 5 });
-  for (const count of [0, 1, 2, 3, 6]) {
+test("candidate counts are observations, not a coverage threshold", () => {
+  for (const count of [0, 7]) {
     const decision = decideFreeContextEligibility(facts({
       exactCandidateCount: count,
       knownRefs: [{ kind: "path", path: "src/index.ts" }],
       boundedReadSufficient: true,
     }));
-    assert.equal(decision.outcome, count === 0 || count >= 3 ? "call" : "direct_read");
-    assert.equal(decision.gate, 3);
+    assert.equal(decision.outcome, "direct_read");
+    assert.equal(decision.gate, 4);
   }
+  const unresolved = decideFreeContextEligibility(facts({
+    exactCandidateCount: 7,
+    knownRefs: [{ kind: "path", path: "src/index.ts" }],
+    boundedReadSufficient: false,
+  }));
+  assert.deepEqual({ outcome: unresolved.outcome, gate: unresolved.gate }, { outcome: "call", gate: 3 });
   assert.throws(
-    () => decideFreeContextEligibility(facts({ exactCandidateCount: 7 })),
-    /zero through six/u,
+    () => decideFreeContextEligibility(facts({ exactCandidateCount: -1 })),
+    /non-negative integer/u,
   );
   assert.throws(
     () => decideFreeContextEligibility(facts({ nativeSearchBatchCount: -1 })),
@@ -131,4 +140,61 @@ test("forbidden capabilities never route to the read-only subagent", () => {
     assert.equal(decision.outcome, "forbidden");
     assert.equal(decision.gate, null);
   }
+});
+
+test("reentry accepts a new typed blocker and rejects rewritten or changed-file adjacent gaps", () => {
+  const request = baseRequest();
+  const priorHandoff = {
+    id: "handoff:previous",
+    workUnit: request.workUnit,
+    evidenceIds: ["e1"],
+    outcome: { kind: request.workUnit.outcome, instruction: "Use the prior Evidence." },
+    blockingGaps: [{
+      id: "gap:old-contract",
+      targetId: "old-contract",
+      kind: "contract_unknown" as const,
+      scope: { kind: "symbol" as const, symbol: "OldContract", path: "src/contract.ts" },
+      requiredFact: "Determine the old contract.",
+    }],
+  };
+  const withGap = (blockingGap: NonNullable<typeof request.reentry>["blockingGap"]) => ({
+    ...request,
+    evidenceQuestions: [{
+      ...request.evidenceQuestions[0]!,
+      coverageTargets: [{
+        id: blockingGap.targetId,
+        subject: blockingGap.scope,
+        factKind: "location" as const,
+        coverageMode: "single" as const,
+      }],
+    }],
+    reentry: { priorHandoff, blockingGap },
+  });
+
+  assert.equal(validateFreeContextReentry(withGap({
+    id: "gap:new-verification",
+    targetId: "new-verification",
+    kind: "verification_unknown",
+    scope: { kind: "path", path: "test/new-behavior.test.ts" },
+    requiredFact: "Locate cross-file verification for the newly edited behavior.",
+    origin: { kind: "edit", changedPaths: ["src/implementation.ts"] },
+  })).accepted, true);
+
+  assert.equal(validateFreeContextReentry(withGap({
+    id: "gap:rewritten",
+    targetId: "old-contract",
+    kind: "contract_unknown",
+    scope: { kind: "symbol", symbol: "OldContract", path: "src/contract.ts" },
+    requiredFact: "Reworded request for the same contract.",
+    origin: { kind: "evidence_consumption", evidenceIds: ["e1"] },
+  })).accepted, false);
+
+  assert.equal(validateFreeContextReentry(withGap({
+    id: "gap:file-tail",
+    targetId: "file-tail",
+    kind: "cross_file_unknown",
+    scope: { kind: "path", path: "src/implementation.ts" },
+    requiredFact: "Read the changed file tail.",
+    origin: { kind: "edit", changedPaths: ["src/implementation.ts"] },
+  })).accepted, false);
 });

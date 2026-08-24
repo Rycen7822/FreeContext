@@ -39,6 +39,7 @@ FreeContext performs one operation: read-only repository exploration for a paren
    - Parses the last `<final_answer>` block.
    - Resolves every citation against the workspace.
    - Verifies file existence and line ranges.
+   - Returns the exact observed source excerpt with each newly compiled evidence item.
    - Deduplicates exact ranges.
    - Performs one no-tool repair request when needed.
 
@@ -73,7 +74,7 @@ The loop has two independent limits:
 - `maxTurns`: model response rounds;
 - `maxToolCalls`: prepared structured tool calls.
 
-After the penultimate turn with tool results, or after the tool budget is reached, `prepareNextTurn` returns a context with no tools and a finalization instruction. The final request can only synthesize evidence already in the child transcript.
+When canonical coverage is complete, or when a liveness/resource boundary is reached, `prepareNextTurn` either accepts the result or injects a finalization instruction. An ordinary partial submission instead returns exact gaps as feedback to the same Pi session with its existing tools and observed reads. Only the safety finalizer is restricted to synthesizing evidence already in the child transcript.
 
 ## Provider boundary
 

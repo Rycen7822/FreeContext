@@ -94,7 +94,7 @@ async function runMcpScenario(runs: number, warmup: number): Promise<void> {
           why: "Supports the result.",
         }],
         gaps: [{ questionId: "tests", reason: "No test fixture is needed." }],
-        nextAction: { kind: "read", path: "document.md", startLine: 1, endLine: 1, reason: "Read the evidence." },
+        nextAction: { kind: "consume_evidence", reason: "Use the evidence." },
         errorCode: null,
         sessionId: options.invocation.sessionId,
         sessionFile: options.invocation.sessionFile,
@@ -118,10 +118,11 @@ async function runMcpScenario(runs: number, warmup: number): Promise<void> {
   });
   const request: FreeContextRequest = {
     taskText: "collect benchmark context",
+    workUnit: { outcome: "answer", goal: "Collect benchmark context." },
     knownRefs: [],
     evidenceQuestions: [
-      { id: "impl", role: "implementation", question: "Where is it implemented?", required: true },
-      { id: "tests", role: "test", question: "How is it tested?", required: false },
+      { id: "impl", role: "implementation", question: "Where is it implemented?", required: true, coverageTargets: [{ id: "impl-target", subject: { kind: "topic", topic: "implementation" }, factKind: "location", coverageMode: "single" }] },
+      { id: "tests", role: "test", question: "How is it tested?", required: false, coverageTargets: [{ id: "test-target", subject: { kind: "topic", topic: "tests" }, factKind: "verification", coverageMode: "single" }] },
     ],
   };
   let callIndex = 0;
@@ -255,10 +256,11 @@ async function main(): Promise<void> {
     : [];
   const finalizationRequest: FreeContextRequest = {
     taskText: "collect benchmark context",
+    workUnit: { outcome: "answer", goal: "Collect benchmark context." },
     knownRefs: [],
     evidenceQuestions: [
-      { id: "impl", role: "implementation", question: "Where is it implemented?", required: true },
-      { id: "tests", role: "test", question: "How is it tested?", required: false },
+      { id: "impl", role: "implementation", question: "Where is it implemented?", required: true, coverageTargets: [{ id: "impl-target", subject: { kind: "topic", topic: "implementation" }, factKind: "location", coverageMode: "single" }] },
+      { id: "tests", role: "test", question: "How is it tested?", required: false, coverageTargets: [{ id: "test-target", subject: { kind: "topic", topic: "tests" }, factKind: "verification", coverageMode: "single" }] },
     ],
   };
   const runOnce = async () => await runPiSession({

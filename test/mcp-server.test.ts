@@ -19,7 +19,7 @@ import {
   SERVER_INSTRUCTIONS,
   TOOL_DESCRIPTION,
 } from "../src/mcp/contracts.js";
-import type { FreeContextRequest, FreeContextResult } from "../src/mcp/contracts.js";
+import type { FreeContextCallerRequest, FreeContextRequest, FreeContextResult } from "../src/mcp/contracts.js";
 import type { ContextTokenCounter } from "../src/runtime/context-budget.js";
 import type { RunExplorerOptions } from "../src/runtime/run.js";
 
@@ -27,13 +27,14 @@ const tokenCounter: ContextTokenCounter = {
   countBatch: async (texts) => texts.map(() => 0),
 };
 
-function request(taskText: string): FreeContextRequest {
+function request(taskText: string): FreeContextCallerRequest {
   return {
     taskText,
+    workUnit: { outcome: "answer", goal: "Locate the fixture implementation and verification evidence." },
     knownRefs: [],
     evidenceQuestions: [
-      { id: "impl", role: "implementation", question: "Where is it implemented?", required: true },
-      { id: "tests", role: "test", question: "How is it tested?", required: false },
+      { role: "implementation", question: "Where is it implemented?", required: true, target: { id: "implementation-owner", subject: { kind: "topic", topic: "implementation owner" }, factKind: "location", coverageMode: "single" } },
+      { role: "test", question: "How is it tested?", required: false, target: { id: "test-seam", subject: { kind: "topic", topic: "test seam" }, factKind: "verification", coverageMode: "single" } },
     ],
   };
 }
@@ -43,21 +44,26 @@ function result(options: RunExplorerOptions): Readonly<FreeContextResult> {
     status: "ready",
     summary: "Server result.",
     evidence: [{
+      id: "e1",
       role: "implementation",
       path: "document.md",
       startLine: 1,
       endLine: 1,
       focusLine: 1,
-      questionId: "impl",
+      questionId: "q1",
       why: "Supports the result.",
     }],
-    gaps: [{ questionId: "tests", reason: "No test was found." }],
+    gaps: [{ questionId: "q2", reason: "No test was found." }],
+    handoff: {
+      id: `handoff:${options.invocation.invocationId}`,
+      workUnit: options.request.workUnit,
+      evidenceIds: ["e1"],
+      outcome: { kind: options.request.workUnit.outcome, instruction: "Use the server Evidence." },
+      blockingGaps: [],
+    },
     nextAction: {
-      kind: "read",
-      path: "document.md",
-      startLine: 1,
-      endLine: 1,
-      reason: "Read the first evidence span.",
+      kind: "consume_evidence",
+      reason: "Use the evidence.",
     },
     errorCode: null,
     sessionId: options.invocation.sessionId,
@@ -134,13 +140,17 @@ test("no-network MCP loopback awaits one terminal Promise and never emits an int
       destructiveHint: false,
       openWorldHint: true,
     });
-    assert.deepEqual(tool?.inputSchema.required, ["taskText", "evidenceQuestions"]);
-    assert.deepEqual(Object.keys(tool?.inputSchema.properties ?? {}).sort(), ["evidenceQuestions", "knownRefs", "taskText"]);
+    assert.deepEqual(tool?.inputSchema.required, ["taskText", "workUnit", "evidenceQuestions"]);
+    assert.deepEqual(Object.keys(tool?.inputSchema.properties ?? {}).sort(), ["evidenceQuestions", "knownRefs", "reentry", "taskText", "workUnit"]);
     const questionItem = (tool?.inputSchema.properties?.evidenceQuestions as {
-      readonly items?: { readonly properties?: Record<string, { readonly type?: string }>; readonly required?: readonly string[] };
+      readonly items?: { readonly properties?: Record<string, { readonly type?: string; readonly enum?: readonly string[]; readonly description?: string }>; readonly required?: readonly string[] };
     } | undefined)?.items;
-    assert.equal(questionItem?.properties?.minimumSpans?.type, "integer");
-    assert.equal(questionItem?.required?.includes("minimumSpans"), false);
+    assert.deepEqual(questionItem?.properties?.role?.enum, ["implementation", "caller", "test", "contract"]);
+    assert.match(questionItem?.properties?.role?.description ?? "", /evidence category, not an agent persona/iu);
+    assert.equal(questionItem?.properties?.target?.type, "object");
+    assert.equal(questionItem?.properties?.id, undefined);
+    assert.equal(questionItem?.properties?.minimumSpans, undefined);
+    assert.deepEqual(questionItem?.required, ["role", "question", "required", "target"]);
     assert.ok(tool?.outputSchema?.properties?.status);
 
     let firstSettled = false;
@@ -199,11 +209,16 @@ test("default MCP binding succeeds from public request identity and one file roo
     roots: [{ uri: pathToFileURL(workspace).href, name: "workspace" }],
   }));
   const invocations: RunExplorerOptions["invocation"][] = [];
+  const normalizedRequests: FreeContextRequest[] = [];
   const runtime = createFreeContextMcpServer(
     { sessionDirectory: sessions },
     {
       tokenCounter,
-      runExplorer: async (options) => { invocations.push(options.invocation); return result(options); },
+      runExplorer: async (options) => {
+        invocations.push(options.invocation);
+        normalizedRequests.push(options.request);
+        return result(options);
+      },
     },
   );
   try {
@@ -223,6 +238,8 @@ test("default MCP binding succeeds from public request identity and one file roo
     assert.equal(invocations.length, 2);
     assert.equal(invocations[0]?.workspaceRoot, workspace);
     assert.equal(invocations[0]?.workspaceRevision, "unversioned");
+    assert.deepEqual(normalizedRequests[0]?.evidenceQuestions.map(({ id }) => id), ["q1", "q2"]);
+    assert.ok(normalizedRequests[0]?.evidenceQuestions.every((question) => question.coverageTargets?.length === 1));
     assert.notEqual(invocations[0]?.invocationId, invocations[1]?.invocationId);
     assert.notEqual(invocations[0]?.callId, invocations[1]?.callId);
     assert.notEqual(first.sessionFile, second.sessionFile);
