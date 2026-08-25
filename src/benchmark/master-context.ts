@@ -1,7 +1,12 @@
 import { readdir, readFile, realpath, writeFile } from "node:fs/promises";
 import path from "node:path";
-import { FreeContextInvocationContextSchema, FreeContextRequestSchema, FreeContextResultSchema } from "../mcp/contracts.js";
-import type { FreeContextRequest, FreeContextResult } from "../mcp/contracts.js";
+import {
+  FreeContextInvocationContextSchema,
+  FreeContextRequestSchema,
+  FreeContextResultSchema,
+  LegacyFreeContextResultSchema,
+} from "../mcp/contracts.js";
+import type { FreeContextRequest, FreeContextResult, LegacyFreeContextResult } from "../mcp/contracts.js";
 import type { McpSessionDocument } from "../mcp/session.js";
 import {
   analyzeFreeContextConsumption,
@@ -27,10 +32,13 @@ import {
 } from "./host-action-observation.js";
 import { buildFreeContextInvocationWindows } from "./invocation-window.js";
 import type { FreeContextInvocationKind, FreeContextInvocationWindow } from "./invocation-window.js";
+import { collectInvocationProvenance } from "./invocation-provenance.js";
+import type { FreeContextInvocationProvenance } from "./invocation-provenance.js";
 
 const OUTPUT_NAME = "master-agent-context.json";
 const DELIVERY_AUDIT_NAME = "delivery-observations.jsonl";
 const CONSUMPTION_AUDIT_NAME = "consumption-observations.jsonl";
+const INVOCATION_PROVENANCE_NAME = "invocation-provenance.json";
 const RUNTIME_AGENT_DIR = "/logs/agent";
 
 export interface MasterAgentContextSource {
@@ -72,6 +80,7 @@ export interface BenchmarkMasterAgentContext {
   readonly freeContextCalls: readonly FreeContextCallReference[];
   readonly freeContextTransport: readonly Readonly<FreeContextTransportObservation>[];
   readonly duplicateSemanticCalls: readonly Readonly<DuplicateSemanticCall & { readonly repetition: string | null }>[];
+  readonly invocationProvenance: Readonly<FreeContextInvocationProvenance>;
 }
 
 interface HistoricalMcpSessionV2 {
@@ -100,6 +109,11 @@ interface HistoricalMcpSessionV2 {
   readonly terminalError: McpSessionDocument["terminalError"];
 }
 
+interface LegacyMcpSessionV2 extends Omit<HistoricalMcpSessionV2, "result"> {
+  readonly contract: "legacy";
+  readonly result: Readonly<LegacyFreeContextResult>;
+}
+
 interface HistoricalMcpSession {
   readonly schemaVersion: "freecontext-mcp-session-v1";
   readonly invocation: Readonly<{ request: string }>;
@@ -113,7 +127,7 @@ interface HistoricalBenchmarkSession {
 }
 
 type AuditableMcpSession = McpSessionDocument | HistoricalMcpSessionV2;
-type FreeContextSessionDocument = AuditableMcpSession | HistoricalMcpSession | HistoricalBenchmarkSession;
+type FreeContextSessionDocument = AuditableMcpSession | LegacyMcpSessionV2 | HistoricalMcpSession | HistoricalBenchmarkSession;
 
 interface LoadedFreeContextSession {
   readonly filePath: string;
@@ -125,7 +139,13 @@ interface LoadedAuditableMcpSession extends LoadedFreeContextSession {
 }
 
 function isAuditableMcpSession(session: FreeContextSessionDocument): session is AuditableMcpSession {
-  return session.schemaVersion === "freecontext-mcp-session-v2" || session.schemaVersion === "freecontext-mcp-session-v3";
+  return (session.schemaVersion === "freecontext-mcp-session-v2" || session.schemaVersion === "freecontext-mcp-session-v3") &&
+    (session as { readonly contract?: string }).contract !== "legacy";
+}
+
+function isLegacyMcpSession(session: FreeContextSessionDocument): session is LegacyMcpSessionV2 {
+  return (session.schemaVersion === "freecontext-mcp-session-v2" || session.schemaVersion === "freecontext-mcp-session-v3") &&
+    (session as { readonly contract?: string }).contract === "legacy";
 }
 
 function posixRelative(root: string, target: string): string {
@@ -171,7 +191,11 @@ function parseSessionDocument(text: string, filePath: string): FreeContextSessio
       throw new Error(`Invalid FreeContext v2 session file: ${filePath}`);
     }
     FreeContextRequestSchema.parse(value.request);
-    FreeContextResultSchema.parse(value.result);
+    const currentResult = FreeContextResultSchema.safeParse(value.result);
+    const legacyResult = currentResult.success ? null : LegacyFreeContextResultSchema.safeParse(value.result);
+    if (!currentResult.success && !legacyResult?.success) {
+      throw new Error(`Invalid current or legacy FreeContext result: ${filePath}`);
+    }
     if (value.schemaVersion === "freecontext-mcp-session-v3") {
       FreeContextInvocationContextSchema.parse(value.invocation);
     } else if (
@@ -187,7 +211,8 @@ function parseSessionDocument(text: string, filePath: string): FreeContextSessio
     ) {
       throw new Error(`FreeContext MCP session has no serialized hash or terminal decision: ${filePath}`);
     }
-    return value as unknown as AuditableMcpSession;
+    if (currentResult.success) return value as unknown as AuditableMcpSession;
+    return Object.freeze({ ...value, contract: "legacy" as const, result: legacyResult?.data }) as unknown as LegacyMcpSessionV2;
   }
   if (
     value.schemaVersion === "freecontext-mcp-session-v1" &&
@@ -202,13 +227,13 @@ function parseSessionDocument(text: string, filePath: string): FreeContextSessio
 }
 
 function promptToFreeContext(session: FreeContextSessionDocument): string {
-  return isAuditableMcpSession(session)
+  return isAuditableMcpSession(session) || isLegacyMcpSession(session)
     ? JSON.stringify(session.request, null, 2)
     : session.invocation.request;
 }
 
 function sessionStatus(session: FreeContextSessionDocument): string {
-  if (isAuditableMcpSession(session) || session.schemaVersion === "freecontext-mcp-session-v1") {
+  if (isAuditableMcpSession(session) || isLegacyMcpSession(session) || session.schemaVersion === "freecontext-mcp-session-v1") {
     return session.result.status;
   }
   return session.capture?.outcome?.status ?? "failed_before_capture";
@@ -294,6 +319,16 @@ export async function exportMasterAgentContext({
     ),
     ...loadedSessions.filter(({ session }) => !isAuditableMcpSession(session)),
   ];
+  const invocationProvenance = collectInvocationProvenance({
+    calls: observedCalls,
+    sessions: auditableSessions.map(({ session }) => ({
+      callId: session.invocation.callId,
+      request: FreeContextRequestSchema.parse(session.request),
+      result: FreeContextResultSchema.parse(session.result),
+      capture: session.capture,
+    })),
+    windows: invocationWindows,
+  });
 
   const freeContextCalls = orderedSessions.map(({ filePath, session }) => {
     const relativePath = posixRelative(root, filePath);
@@ -364,6 +399,9 @@ export async function exportMasterAgentContext({
                 ? "host_action_observation"
                 : "task_complete_boundary"],
           followedByReentrant: nextWindow?.invocationKind === "reentrant",
+          followedByRecovery: nextWindow?.invocationKind === "recovery",
+          recoveryProbePath: nextRequest?.recovery?.probe.path ?? null,
+          hasFollowupInvocation: nextWindow !== undefined,
           reentryOrigin: nextRequest?.reentry?.blockingGap.origin.kind ?? null,
         },
       );
@@ -436,6 +474,7 @@ export async function exportMasterAgentContext({
     freeContextCalls: Object.freeze(freeContextCalls),
     freeContextTransport,
     duplicateSemanticCalls: Object.freeze(duplicateSemanticCalls),
+    invocationProvenance,
   };
   const outputPath = path.join(root, OUTPUT_NAME);
   await writeFile(outputPath, `${JSON.stringify(document, null, 2)}\n`, {
@@ -453,6 +492,11 @@ export async function exportMasterAgentContext({
       ...call,
     })).join("\n") + (freeContextCalls.length > 0 ? "\n" : ""),
     { encoding: "utf8", flag: "ax", mode: 0o600 },
+  );
+  await writeFile(
+    path.join(root, INVOCATION_PROVENANCE_NAME),
+    `${JSON.stringify(invocationProvenance, null, 2)}\n`,
+    { encoding: "utf8", flag: "wx", mode: 0o600 },
   );
   const consumptionRecords = [
     ...freeContextCalls.flatMap((call) => call.consumptionAudit ? [{

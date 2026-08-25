@@ -5,7 +5,7 @@ import {
   serializeForModel,
 } from "./contracts.js";
 import type { FreeContextCallContext, FreeContextResult } from "./contracts.js";
-import { validateFreeContextReentry } from "./eligibility.js";
+import { validateFreeContextRecovery, validateFreeContextReentry } from "./eligibility.js";
 import { errorReason, failedResult } from "./failure.js";
 import {
   createDeadlineClock,
@@ -62,6 +62,19 @@ const directExecutor: SingleFlightExecutor = Object.freeze({
   run: <T>(task: () => Promise<T>) => task(),
 });
 
+function safeRequestSchemaReason(error: unknown): string {
+  if (!error || typeof error !== "object" || !Array.isArray((error as { issues?: unknown }).issues)) {
+    return errorReason("INVALID_REQUEST");
+  }
+  const issue = (error as { issues: unknown[] }).issues[0];
+  if (!issue || typeof issue !== "object") return errorReason("INVALID_REQUEST");
+  const path = Array.isArray((issue as { path?: unknown }).path)
+    ? (issue as { path: unknown[] }).path.map((part) => typeof part === "number" ? `[${part}]` : String(part)).join(".")
+    : "request";
+  const code = typeof (issue as { code?: unknown }).code === "string" ? (issue as { code: string }).code : "invalid";
+  return `Request schema rejected at ${path || "request"} (${code}).`;
+}
+
 function callResult(
   result: Readonly<FreeContextResult>,
   serializedText = serializeForModel(result),
@@ -110,16 +123,35 @@ export function createGatherContextHandler(
     let request;
     try {
       request = normalizeFreeContextRequest(rawInput);
-      if (!validateFreeContextReentry(request).accepted) throw new TypeError("Invalid FreeContext reentry contract.");
-    } catch {
+    } catch (error) {
       return callResult(failedResult({
         code: "INVALID_REQUEST",
-        reason: errorReason("INVALID_REQUEST"),
+        reason: safeRequestSchemaReason(error),
         sessionId: callContext.invocationId,
         sessionFile: null,
       }));
     }
+    const reentryDecision = validateFreeContextReentry(request);
+    if (!reentryDecision.accepted) {
+      return callResult(failedResult({
+        code: "INVALID_REQUEST",
+        reason: reentryDecision.reason,
+        sessionId: callContext.invocationId,
+        sessionFile: null,
+        request,
+      }));
+    }
 
+    const recoveryDecision = validateFreeContextRecovery(request);
+    if (!recoveryDecision.accepted) {
+      return callResult(failedResult({
+        code: "INVALID_REQUEST",
+        reason: recoveryDecision.reason,
+        sessionId: callContext.invocationId,
+        sessionFile: null,
+        request,
+      }));
+    }
     const completed = await executeSingleCall(request, callContext, externalSignal, {
       ...dependencies,
       terminalStore,

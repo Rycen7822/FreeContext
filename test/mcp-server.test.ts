@@ -141,7 +141,7 @@ test("no-network MCP loopback awaits one terminal Promise and never emits an int
       openWorldHint: true,
     });
     assert.deepEqual(tool?.inputSchema.required, ["taskText", "workUnit", "evidenceQuestions"]);
-    assert.deepEqual(Object.keys(tool?.inputSchema.properties ?? {}).sort(), ["evidenceQuestions", "knownRefs", "reentry", "taskText", "workUnit"]);
+    assert.deepEqual(Object.keys(tool?.inputSchema.properties ?? {}).sort(), ["evidenceQuestions", "knownRefs", "recovery", "reentry", "taskText", "workUnit"]);
     const questionItem = (tool?.inputSchema.properties?.evidenceQuestions as {
       readonly items?: { readonly properties?: Record<string, { readonly type?: string; readonly enum?: readonly string[]; readonly description?: string }>; readonly required?: readonly string[] };
     } | undefined)?.items;

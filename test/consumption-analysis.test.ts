@@ -24,7 +24,18 @@ function result(status: FreeContextResult["status"] = "ready"): FreeContextResul
     }],
     gaps: status === "partial" ? [{ questionId: "tests", reason: "Tests remain unresolved." }] : [],
     nextAction: status === "not_found" || status === "failed"
-      ? { kind: "exact_probe", reason: "Search directly." }
+      ? {
+          kind: "exact_probe",
+          reason: "Search directly.",
+          ...(status === "not_found" ? {
+            recovery: {
+              requestKind: "not_found_recovery" as const,
+              priorSessionId: "session-1",
+              workUnit: { outcome: "answer" as const, goal: "Inspect the fixture." },
+              requiredProbe: "exact_probe" as const,
+            },
+          } : {}),
+        }
       : { kind: "consume_evidence", reason: "Use the evidence." },
     errorCode: status === "failed" ? "INTERNAL_ERROR" : null,
     sessionId: "session-1",
@@ -242,4 +253,33 @@ test("typed reentry and unobserved windows fail closed", () => {
   assert.throws(() => analyzeFreeContextConsumption(result(), [action(1)], {
     ...context(), windowObserved: false,
   }), /Unobserved window/u);
+});
+
+test("not_found recovery requires one bounded exact probe and no handoff", () => {
+  const accepted = analyzeFreeContextConsumption(result("not_found"), [
+    action(1, { path: "src/candidate.ts", startLine: 1, endLine: 5 }),
+  ], context({ followedByRecovery: true, recoveryProbePath: "./src/candidate.ts" }));
+  assert.equal(accepted.followedByRecovery, true);
+  assert.equal(accepted.recoveryProbeAccepted, true);
+  assert.deepEqual(accepted.failureReasons, []);
+
+  const missing = analyzeFreeContextConsumption(result("not_found"), [], context({ followedByRecovery: true, recoveryProbePath: "src/candidate.ts" }));
+  assert.equal(missing.recoveryProbeAccepted, false);
+  assert.deepEqual(missing.failureReasons, ["not_found_recovery_probe_missing"]);
+
+  const missingDeclaration = analyzeFreeContextConsumption(result("not_found"), [action(1, { path: "src/candidate.ts", startLine: 1, endLine: 5 })], context({ followedByRecovery: true }));
+  assert.deepEqual(missingDeclaration.failureReasons, ["not_found_recovery_probe_path_missing"]);
+
+  const mismatchedPath = analyzeFreeContextConsumption(result("not_found"), [action(1, { path: "src/other.ts", startLine: 1, endLine: 5 })], context({ followedByRecovery: true, recoveryProbePath: "src/candidate.ts" }));
+  assert.deepEqual(mismatchedPath.failureReasons, ["not_found_recovery_probe_path_mismatch"]);
+
+  const broad = analyzeFreeContextConsumption(result("not_found"), [
+    action(1, { kind: "search", path: null, startLine: null, endLine: null, broad: true }),
+  ], context({ followedByRecovery: true, recoveryProbePath: "src/candidate.ts" }));
+  assert.deepEqual(broad.failureReasons, ["not_found_recovery_probe_scope_exceeded"]);
+
+  for (const status of ["partial", "ready"] as const) {
+    const afterHandoff = analyzeFreeContextConsumption(result(status), [action(1)], context({ followedByRecovery: true }));
+    assert.deepEqual(afterHandoff.failureReasons, ["recovery_after_handoff"]);
+  }
 });

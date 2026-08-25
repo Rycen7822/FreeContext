@@ -7,6 +7,7 @@ import {
 } from "../src/mcp/contracts.js";
 import { decideFreeContextEligibility, validateFreeContextReentry } from "../src/mcp/eligibility.js";
 import type { FreeContextEligibilityFacts } from "../src/mcp/eligibility.js";
+import type { ReentryBlockingGap } from "../src/mcp/contracts.js";
 import { baseRequest, topicTarget } from "./helpers.js";
 
 const implementationQuestion = {
@@ -45,7 +46,7 @@ test("one immutable policy owns gate order, tool text, and host route metadata",
   }
   assert.match(TOOL_DESCRIPTION, /one structured path, symbol, or topic fact target/iu);
   assert.match(TOOL_DESCRIPTION, /first call is not a repository map/iu);
-  assert.match(TOOL_DESCRIPTION, /If a listed gap blocks the next action, call gather_context for that gap/iu);
+  assert.match(TOOL_DESCRIPTION, /only a new typed blocker exposed while consuming Evidence or by edit\/check may start another invocation/iu);
 });
 
 test("complex scopes call FreeContext before any repository probe", () => {
@@ -142,7 +143,7 @@ test("forbidden capabilities never route to the read-only subagent", () => {
   }
 });
 
-test("reentry accepts a new typed blocker and rejects rewritten or changed-file adjacent gaps", () => {
+test("reentry round-trips the exact handoff and exposes all origin contracts", () => {
   const request = baseRequest();
   const priorHandoff = {
     id: "handoff:previous",
@@ -171,14 +172,72 @@ test("reentry accepts a new typed blocker and rejects rewritten or changed-file 
     reentry: { priorHandoff, blockingGap },
   });
 
-  assert.equal(validateFreeContextReentry(withGap({
-    id: "gap:new-verification",
-    targetId: "new-verification",
-    kind: "verification_unknown",
-    scope: { kind: "path", path: "test/new-behavior.test.ts" },
-    requiredFact: "Locate cross-file verification for the newly edited behavior.",
-    origin: { kind: "edit", changedPaths: ["src/implementation.ts"] },
-  })).accepted, true);
+  const validOrigins = [
+    {
+      id: "gap:new-evidence",
+      targetId: "new-evidence",
+      kind: "contract_unknown" as const,
+      scope: { kind: "symbol" as const, symbol: "NewContract", path: "src/contract.ts" },
+      requiredFact: "Locate the newly exposed contract dependency.",
+      origin: { kind: "evidence_consumption" as const, evidenceIds: ["e1"] },
+    },
+    {
+      id: "gap:new-edit",
+      targetId: "new-edit",
+      kind: "verification_unknown" as const,
+      scope: { kind: "path" as const, path: "test/new-behavior.test.ts" },
+      requiredFact: "Locate cross-file verification for the newly edited behavior.",
+      origin: { kind: "edit" as const, changedPaths: ["src/implementation.ts"] },
+    },
+    {
+      id: "gap:new-check",
+      targetId: "new-check",
+      kind: "cross_file_unknown" as const,
+      scope: { kind: "symbol" as const, symbol: "CheckContract", path: "src/check.ts" },
+      requiredFact: "Locate the contract exposed by the failing check.",
+      origin: { kind: "check" as const, check: "Run the focused contract check.", failureLocation: "test/check.test.ts:12" },
+    },
+  ] satisfies ReentryBlockingGap[];
+  for (const blockingGap of validOrigins) {
+    assert.equal(validateFreeContextReentry(withGap(blockingGap)).accepted, true, blockingGap.origin.kind);
+  }
+
+  const invalidOrigins = [
+    {
+      request: withGap({
+        ...validOrigins[0]!,
+        origin: { kind: "evidence_consumption" as const, evidenceIds: ["missing-evidence"] },
+      }),
+      reason: "Evidence-origin reentry must cite Evidence returned in priorHandoff.",
+    },
+    {
+      request: withGap({
+        ...validOrigins[0]!,
+        origin: { kind: "evidence_consumption" as const, evidenceIds: ["e1"], priorGapId: "missing-gap" },
+      }),
+      reason: "Evidence-origin reentry cited an unknown prior gap.",
+    },
+    {
+      request: {
+        ...request,
+        reentry: {
+          priorHandoff,
+          blockingGap: { ...validOrigins[0]!, targetId: "missing-target" },
+        },
+      },
+      reason: "Reentry blocking gap must bind to a current declared target.",
+    },
+  ];
+  for (const invalid of invalidOrigins) assert.equal(validateFreeContextReentry(invalid.request).reason, invalid.reason);
+
+  const mismatch = {
+    ...withGap(validOrigins[0]!),
+    workUnit: { ...request.workUnit, goal: "A different work unit." },
+  };
+  assert.deepEqual(validateFreeContextReentry(mismatch), {
+    accepted: false,
+    reason: "Reentry request.workUnit must exactly equal priorHandoff.workUnit.",
+  });
 
   assert.equal(validateFreeContextReentry(withGap({
     id: "gap:rewritten",
@@ -187,7 +246,7 @@ test("reentry accepts a new typed blocker and rejects rewritten or changed-file 
     scope: { kind: "symbol", symbol: "OldContract", path: "src/contract.ts" },
     requiredFact: "Reworded request for the same contract.",
     origin: { kind: "evidence_consumption", evidenceIds: ["e1"] },
-  })).accepted, false);
+  })).reason, "Reentry blocking gap duplicates an existing target and scope.");
 
   assert.equal(validateFreeContextReentry(withGap({
     id: "gap:file-tail",
@@ -196,5 +255,14 @@ test("reentry accepts a new typed blocker and rejects rewritten or changed-file 
     scope: { kind: "path", path: "src/implementation.ts" },
     requiredFact: "Read the changed file tail.",
     origin: { kind: "edit", changedPaths: ["src/implementation.ts"] },
-  })).accepted, false);
+  })).reason, "Edit-origin reentry targets a changed path; read that path directly instead.");
+
+  assert.equal(validateFreeContextReentry(withGap({
+    id: "gap:check-path",
+    targetId: "check-path",
+    kind: "verification_unknown",
+    scope: { kind: "path", path: "src/failure.ts" },
+    requiredFact: "Read the exact failure path.",
+    origin: { kind: "check", check: "Run the focused check.", failureLocation: "src/failure.ts" },
+  })).reason, "Check-origin reentry targets the exact failure path; use a bounded direct diagnostic instead.");
 });

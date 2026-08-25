@@ -61,7 +61,7 @@ export function createRgTool({ Type, workspace, semaphore, config, executable }:
     name: "rg",
     label: "Ripgrep repository",
     description:
-      "Search repository text with ripgrep. Use several independent calls in one response for broad first-pass exploration, then narrow by symbol/path. Read-only; no shell is involved.",
+      "Search repository text with ripgrep. With path-backed knownRefs and no observed read, read the exact knownRef first; an immediate-parent probe is allowed only with literal=true, an explicit non-recursive glob filter, and a small result bound. Root, higher-ancestor, and broad recursive first-pass search is blocked. Read-only; no shell is involved.",
     parameters,
     executionMode: "parallel",
     execute: async (_toolCallId: string, params: Static<typeof parameters>, signal?: AbortSignal) =>

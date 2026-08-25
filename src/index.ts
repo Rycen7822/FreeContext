@@ -12,6 +12,7 @@ export {
   FREECONTEXT_HOST_ROUTE_METADATA,
   FreeContextCallerRequestSchema,
   FreeContextResultSchema,
+  LegacyFreeContextResultSchema,
   normalizeFreeContextRequest,
   serializeForModel,
 } from "./mcp/contracts.js";
@@ -20,6 +21,11 @@ export {
   analyzeFreeContextConsumption,
   collectParentRepositoryActions,
 } from "./benchmark/consumption-analysis.js";
+export {
+  adaptHistoricalInvocationProvenanceV1,
+  collectInvocationProvenance,
+  evaluateFreshInvocationGate,
+} from "./benchmark/invocation-provenance.js";
 export type {
   FreeContextEligibilityGate,
   FreeContextEligibilityOutcome,
@@ -27,7 +33,18 @@ export type {
   FreeContextCallerRequest,
   FreeContextInvocationContext,
   FreeContextResult,
+  LegacyFreeContextResult,
 } from "./mcp/contracts.js";
+export type {
+  FreeContextInvocationProvenance,
+  FreeContextInvocationAttempt,
+  FreeContextInvocationLayer,
+  FreeContextInvocationLayerStatus,
+  FreeContextInvocationCounts,
+  FreeContextHistoricalInvocationProvenanceV1,
+  FreeContextFreshInvocationGate,
+  FreeContextFreshInvocationGateFailure,
+} from "./benchmark/invocation-provenance.js";
 export type {
   ForbiddenFreeContextAction,
   FreeContextEligibilityDecision,

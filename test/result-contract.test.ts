@@ -3,6 +3,7 @@ import test from "node:test";
 import {
   FreeContextRequestSchema,
   FreeContextResultSchema,
+  LegacyFreeContextResultSchema,
   MODEL_RESULT_MAX_BYTES,
   normalizeFreeContextRequest,
   serializeForModel,
@@ -160,14 +161,40 @@ test("serializeForModel is text-first and contains every canonical evidence fiel
 
 test("canonical result schema enforces terminal state and span invariants", () => {
   const sixGaps = Array.from({ length: 6 }, (_, index) => ({ questionId: `question-${index}`, reason: "No observed evidence." }));
-  assert.equal(FreeContextResultSchema.parse({
+  const legacyNotFound = {
     ...readyResult(),
     status: "not_found",
     evidence: [],
     gaps: sixGaps,
     handoff: null,
     nextAction: { kind: "exact_probe", reason: "Search the unresolved questions." },
-  }).gaps.length, 6);
+  };
+  assert.equal(LegacyFreeContextResultSchema.parse(legacyNotFound).gaps.length, 6);
+  assert.throws(() => FreeContextResultSchema.parse(legacyNotFound), /not_found requires structured recovery/u);
+  assert.equal(FreeContextResultSchema.parse({
+    ...legacyNotFound,
+    nextAction: {
+      ...legacyNotFound.nextAction,
+      recovery: {
+        requestKind: "not_found_recovery",
+        priorSessionId: "session-1",
+        workUnit: readyResult().handoff.workUnit,
+        requiredProbe: "exact_probe",
+      },
+    },
+  }).status, "not_found");
+  assert.throws(() => FreeContextResultSchema.parse({
+    ...legacyNotFound,
+    nextAction: {
+      ...legacyNotFound.nextAction,
+      recovery: {
+        requestKind: "not_found_recovery",
+        priorSessionId: "other-session",
+        workUnit: readyResult().handoff.workUnit,
+        requiredProbe: "exact_probe",
+      },
+    },
+  }), /must bind to the result session/u);
   assert.throws(() => FreeContextResultSchema.parse({
     ...readyResult(),
     nextAction: { kind: "exact_probe", reason: "Probe despite complete Evidence." },

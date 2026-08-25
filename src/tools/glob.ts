@@ -27,7 +27,7 @@ export function createGlobTool({ Type, workspace, semaphore, config, executable 
     name: "glob",
     label: "List repository paths",
     description:
-      "List files matching glob patterns using ripgrep's file walker. Use for repository structure discovery. Read-only.",
+      "List files matching glob patterns using ripgrep's file walker. With path-backed knownRefs and no observed read, read the exact knownRef first; an immediate-parent probe is allowed only with an explicit non-recursive pattern and a small result bound. Root, higher-ancestor, default-all, and ** recursive first-pass listings are blocked. Read-only.",
     parameters,
     executionMode: "parallel",
     execute: async (_toolCallId: string, params: Static<typeof parameters>, signal?: AbortSignal) =>

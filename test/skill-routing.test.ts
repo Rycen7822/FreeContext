@@ -17,14 +17,14 @@ test("implicit discovery routes complex reads to one MCP tool without copying el
   assert.ok([...description].length <= 420);
   assert.equal(
     description,
-    "Delegate multi-file, cross-module, long-document, or source-bound exploration to gather_context; follow nextAction and reenter for a new edit/check blocker.",
+    "Delegate multi-file, cross-module, long-document, multi-document, or source-bound exploration to gather_context; follow its structured nextAction and continuation contract.",
   );
   for (const gate of FREECONTEXT_ELIGIBILITY_POLICY.gates) assert.equal(skill.includes(gate.instruction), false);
-  assert.match(skill, /First cell reads only this file; next call `tools\.mcp__freecontext__gather_context`/iu);
+  assert.match(skill, /read this file in the first cell, then call `tools\.mcp__freecontext__gather_context`/iu);
   for (const trigger of ["multi-file", "cross-module", "long-document", "source-bound"]) {
     assert.ok(description.includes(trigger));
   }
-  assert.match(description, /follow nextAction and reenter for a new edit\/check blocker/iu);
+  assert.match(description, /structured nextAction and continuation contract/iu);
   assert.doesNotMatch(description, /second search batch|third unrelated path/iu);
   assert.doesNotMatch(skill, /never auto-trigger|only (?:after )?an explicit user request/iu);
   assert.match(skill, /typeof tools\.mcp__freecontext__gather_context !== "function"/u);
@@ -36,16 +36,17 @@ test("implicit discovery routes complex reads to one MCP tool without copying el
   assert.match(skill, /terminalTexts\.length !== 1/u);
   assert.doesNotMatch(skill, /JSON\.stringify/u);
   assert.match(skill, /No waiting Hook/u);
-  assert.match(skill, /Args \(0–12 refs\)/u);
-  assert.match(skill, /\{taskText,workUnit:\{outcome:"edit"\|"check"\|"answer"\|"decision",goal\},evidenceQuestions:/u);
-  assert.match(skill, /Retain task requirements; use one target\/question and at most six/iu);
+  assert.match(skill, /Public args are `taskText`, `workUnit`, `evidenceQuestions`/u);
   assert.doesNotMatch(skill, /\bworkspace_root\b/u);
-  assert.match(skill, /follow the returned handoff and its single `nextAction`/iu);
-  assert.match(skill, /make one necessary cited-adjacent read only when change-critical context is omitted/iu);
-  assert.match(skill, /exact failure location or changed-file tail is a direct bounded read, not a new FC gap/iu);
-  assert.match(skill, /Any broader search, listing, keyword expansion, or extra path calls FreeContext/iu);
-  assert.match(skill, /pass the prior handoff verbatim as `reentry\.priorHandoff`/iu);
-  assert.match(skill, /Prompt rewrites, more known refs, imports, file tails, and ordinary adjacent context are not new gaps/iu);
+  assert.match(skill, /follow the handoff and structured `nextAction`/iu);
+  assert.match(skill, /one necessary cited-adjacent read only when change-critical context is omitted/iu);
+  assert.match(skill, /Exact failure\/tail reads are bounded direct reads/iu);
+  assert.match(skill, /broader search, listing, keyword expansion, or extra paths call FC/iu);
+  assert.match(skill, /Copy `priorHandoff` verbatim/iu);
+  assert.match(skill, /its `workUnit` exactly/iu);
+  for (const origin of ["evidence_consumption", "edit", "check"]) assert.match(skill, new RegExp(`(?:${origin})`, "u"));
+  assert.match(skill, /targetId,kind,scope,requiredFact,origin/iu);
+  assert.match(skill, /Do not guess hidden fields or reenter for adjacent context/iu);
   assert.doesNotMatch(skill, /complete unresolved question|same-unit|same gaps|Acceptance receipt|private acceptance receipt/iu);
 
   assert.match(metadata, /^  allow_implicit_invocation: true$/mu);

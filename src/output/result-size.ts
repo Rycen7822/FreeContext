@@ -22,6 +22,62 @@ function resultFits(result: Readonly<FreeContextResult>): boolean {
   }
 }
 
+function compactNextActionReason(result: Readonly<FreeContextResult>): string {
+  if (result.nextAction.kind === "exact_probe") {
+    return result.nextAction.recovery
+      ? "Make one exact probe, then send the structured not_found_recovery request bound to the prior session and work unit."
+      : "Make one exact probe; call FreeContext before broader discovery.";
+  }
+  if ((result.handoff?.blockingGaps.length ?? 0) > 0) {
+    return "Consume inline Evidence; execute the handoff; reenter only if it exposes a new typed blocking gap.";
+  }
+  return "Consume inline Evidence, then execute the handoff edit/check.";
+}
+
+function linkCoverageGaps(
+  result: Readonly<FreeContextResult>,
+  request: Readonly<FreeContextRequest>,
+): Readonly<FreeContextResult> {
+  const incomplete = (result.coverage ?? []).filter((item) => item.gaps.length > 0 || item.omittedMembers > 0);
+  if (incomplete.length === 0) return result;
+  const gaps = [...result.gaps];
+  const blockingGaps = [...(result.handoff?.blockingGaps ?? [])];
+  for (const coverage of incomplete) {
+    const question = request.evidenceQuestions.find((item) => item.coverageTargets.some((target) => target.id === coverage.targetId));
+    const target = question?.coverageTargets.find((item) => item.id === coverage.targetId);
+    if (!question || !target) continue;
+    if (!gaps.some((gap) => gap.targetId === coverage.targetId)) {
+      gaps.push({
+        questionId: question.id,
+        targetId: coverage.targetId,
+        reason: coverage.gaps[0] ?? "Exhaustive coverage remains incomplete.",
+      });
+    }
+    if (result.handoff && !blockingGaps.some((gap) => gap.targetId === coverage.targetId)) {
+      blockingGaps.push(handoffGapFor(question, target));
+    }
+  }
+  const status = result.status === "ready" ? "partial" : result.status;
+  const linked = FreeContextResultSchema.parse({
+    ...result,
+    status,
+    gaps: gaps.slice(0, RESULT_LIMITS.evidence),
+    handoff: result.handoff
+      ? {
+          ...result.handoff,
+          blockingGaps: blockingGaps.slice(0, RESULT_LIMITS.evidence),
+          outcome: status === "partial" && result.status === "ready"
+            ? { ...result.handoff.outcome, instruction: "Use returned Evidence; execute the handoff, and reenter only for a new typed blocking gap." }
+            : result.handoff.outcome,
+        }
+      : result.handoff,
+  });
+  return FreeContextResultSchema.parse({
+    ...linked,
+    nextAction: { ...linked.nextAction, reason: compactNextActionReason(linked) },
+  });
+}
+
 function oversizeFailure(
   invocation: Readonly<FreeContextInvocationContext>,
   request: Readonly<FreeContextRequest>,
@@ -67,9 +123,7 @@ export function fitCompiledResult(
     })),
     nextAction: {
       ...result.nextAction,
-      reason: clipSingleLine(result.nextAction.reason, 60) || (result.nextAction.kind === "consume_evidence"
-        ? "Use inline Evidence for the next edit or check."
-        : "Make one exact non-broad probe."),
+      reason: compactNextActionReason(result),
     },
   });
   if (resultFits(result)) return Object.freeze(result);
@@ -107,7 +161,7 @@ export function fitCompiledResult(
     const gaps = needsGap && removed
       ? [...result.gaps, { questionId: removed.questionId, targetId, reason: "Evidence was omitted rather than truncated to fit the model-visible result." }]
       : result.gaps;
-    result = FreeContextResultSchema.parse({
+    result = linkCoverageGaps(FreeContextResultSchema.parse({
       ...result,
       status: (needsGap || coverage.some((item) => item.gaps.length > 0)) && result.status === "ready" ? "partial" : result.status,
       evidence,
@@ -125,10 +179,10 @@ export function fitCompiledResult(
       nextAction: evidence.length > 0
         ? {
             kind: "consume_evidence",
-            reason: result.nextAction.reason,
+            reason: compactNextActionReason(result),
           }
         : result.nextAction,
-    });
+    }), request);
   }
   if (resultFits(result)) return Object.freeze(result);
   while (!resultFits(result) && (result.coverage ?? []).some((item) => item.members.length > 0)) {
@@ -136,7 +190,7 @@ export function fitCompiledResult(
     const coverageTarget = result.coverage?.[index]?.targetId;
     const question = request.evidenceQuestions.find((item) => item.coverageTargets.some((target) => target.id === coverageTarget));
     const target = question?.coverageTargets.find((item) => item.id === coverageTarget);
-    result = FreeContextResultSchema.parse({
+    result = linkCoverageGaps(FreeContextResultSchema.parse({
       ...result,
       status: result.status === "ready" ? "partial" : result.status,
       coverage: (result.coverage ?? []).map((item, itemIndex) => itemIndex === index
@@ -152,7 +206,7 @@ export function fitCompiledResult(
       handoff: result.handoff && question && target && !result.handoff.blockingGaps.some((gap) => gap.targetId === target.id)
         ? { ...result.handoff, blockingGaps: [...result.handoff.blockingGaps, handoffGapFor(question, target)] }
         : result.handoff,
-    });
+    }), request);
   }
   if (resultFits(result)) return Object.freeze(result);
   return oversizeFailure(invocation, request);

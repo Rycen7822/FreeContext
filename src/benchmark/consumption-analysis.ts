@@ -1,4 +1,5 @@
 import type { FreeContextResult } from "../mcp/contracts.js";
+import path from "node:path";
 import { isRecord } from "./delivery-observation.js";
 import type { FreeContextInvocationKind } from "./invocation-window.js";
 
@@ -56,6 +57,8 @@ export interface FreeContextConsumptionAudit {
   readonly editCount: number;
   readonly checkCount: number;
   readonly followedByReentrant: boolean;
+  readonly followedByRecovery: boolean;
+  readonly recoveryProbeAccepted: boolean | null;
   readonly editOrCheckObserved: boolean;
   readonly exactDuplicate: boolean;
   readonly externalSourceCommandCount: number;
@@ -76,6 +79,9 @@ export interface FreeContextConsumptionAuditContext {
   readonly exactDuplicate: boolean;
   readonly windowFailureReasons?: readonly string[];
   readonly followedByReentrant?: boolean;
+  readonly followedByRecovery?: boolean;
+  readonly recoveryProbePath?: string | null;
+  readonly hasFollowupInvocation?: boolean;
   readonly reentryOrigin?: "evidence_consumption" | "edit" | "check" | null;
 }
 
@@ -161,7 +167,8 @@ export function collectParentRepositoryActions(
 }
 
 function normalizePath(value: string): string {
-  return value.replace(/\\/gu, "/").replace(/^\.\//u, "");
+  const normalized = path.posix.normalize(value.trim().replace(/\\/gu, "/").replace(/^\.\//u, ""));
+  return normalized === "" ? "." : normalized;
 }
 
 function hitsEvidenceItem(
@@ -237,7 +244,9 @@ export function analyzeFreeContextConsumption(
   const edits = actions.filter(({ action }) => action.kind === "edit");
   const checks = actions.filter(({ action }) => action.kind === "check");
   const followedByReentrant = context.followedByReentrant === true;
+  const followedByRecovery = context.followedByRecovery === true;
   const editOrCheckObserved = edits.length > 0 || checks.length > 0;
+  let recoveryProbeAccepted: boolean | null = null;
   const editedPaths = new Set(edits.flatMap(({ action }) => action.path === null ? [] : [normalizePath(action.path)]));
   const distinctNonEvidenceReadPaths = new Set(actions.flatMap(({ action }) =>
     action.kind === "read" && action.path !== null && !hitsAnyEvidence(action, result) &&
@@ -256,6 +265,26 @@ export function analyzeFreeContextConsumption(
   const addReason = (reason: string): void => {
     if (!failures.includes(reason)) failures.push(reason);
   };
+  if (followedByRecovery) {
+    recoveryProbeAccepted = false;
+    if (result.status !== "not_found") {
+      addReason(result.status === "failed" ? "recovery_after_failure" : "recovery_after_handoff");
+    } else {
+      const probe = actions.length === 1 ? actions[0]?.action : undefined;
+      const declaredProbePath = context.recoveryProbePath ? normalizePath(context.recoveryProbePath) : null;
+      if (!declaredProbePath) {
+        addReason("not_found_recovery_probe_path_missing");
+      } else if (!probe || (probe.kind !== "read" && probe.kind !== "search") || probe.path === null || probe.broad || editOrCheckObserved) {
+        addReason(actions.length === 0 ? "not_found_recovery_probe_missing" : "not_found_recovery_probe_scope_exceeded");
+      } else if (normalizePath(probe.path) !== declaredProbePath) {
+        addReason("not_found_recovery_probe_path_mismatch");
+      } else {
+        recoveryProbeAccepted = true;
+      }
+    }
+  } else if (context.hasFollowupInvocation && result.status === "not_found") {
+    addReason("not_found_recovery_required");
+  }
   if (!context.windowObserved) addReason("unobserved_window");
   if (context.exactDuplicate) addReason("exact_request_replay");
   if (!inlineEvidenceProvenanceComplete) addReason("inline_evidence_provenance_missing");
@@ -272,7 +301,9 @@ export function analyzeFreeContextConsumption(
   const preReadExceeded = result.nextAction.kind === "consume_evidence"
     ? preAdjacentEvidenceReadCount > 1 || preDiscoveredReadPaths.size > 0
     : preDiscoveredReadPaths.size > 1;
-  if (preBroadSearchCount > 0 || preSearchExceeded || preReadExceeded) addReason("pre_edit_handoff_scope_exceeded");
+  if (!followedByRecovery && (preBroadSearchCount > 0 || preSearchExceeded || preReadExceeded)) {
+    addReason("pre_edit_handoff_scope_exceeded");
+  }
   const postSearches = postEditActions.filter(({ action }) => action.kind === "search");
   const postDiagnosticPaths = new Set(postEditActions.flatMap(({ action }) =>
     action.kind === "read" && action.path !== null && !hitsAnyEvidence(action, result)
@@ -318,6 +349,8 @@ export function analyzeFreeContextConsumption(
     editCount: edits.length,
     checkCount: checks.length,
     followedByReentrant,
+    followedByRecovery,
+    recoveryProbeAccepted,
     editOrCheckObserved,
     exactDuplicate: context.exactDuplicate,
     externalSourceCommandCount,

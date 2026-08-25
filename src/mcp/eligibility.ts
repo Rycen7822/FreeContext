@@ -8,6 +8,8 @@ import type {
   FreeContextEligibilityOutcome,
   KnownReference,
   FreeContextRequest,
+  CoverageTarget,
+  FreeContextRecoveryRequest,
 } from "./contracts.js";
 
 export type ForbiddenFreeContextAction = "edit" | "test" | "git" | "package_manager" | "web" | "credentials";
@@ -38,42 +40,84 @@ export interface FreeContextReentryDecision {
   readonly reason: string;
 }
 
+export interface FreeContextRecoveryDecision {
+  readonly accepted: boolean;
+  readonly reason: string;
+}
+
+export function validateFreeContextRecovery(
+  request: Readonly<FreeContextRequest>,
+): Readonly<FreeContextRecoveryDecision> {
+  const recovery: Readonly<FreeContextRecoveryRequest> | undefined = request.recovery;
+  if (!recovery) return Object.freeze({ accepted: true, reason: "Initial invocation." });
+  if (request.reentry) {
+    return Object.freeze({ accepted: false, reason: "Recovery cannot be combined with typed reentry." });
+  }
+  if (!isDeepStrictEqual(request.workUnit, recovery.priorWorkUnit)) {
+    return Object.freeze({ accepted: false, reason: "Recovery request.workUnit must exactly equal recovery.priorWorkUnit." });
+  }
+  if (recovery.probe.kind !== "exact_probe" || !recovery.probe.path.trim()) {
+    return Object.freeze({ accepted: false, reason: "Recovery requires one exact probe path." });
+  }
+  return Object.freeze({ accepted: true, reason: "Recovery shape is bound to the prior not_found session and exact work unit." });
+}
+
+function declaredTargetFor(
+  request: Readonly<FreeContextRequest>,
+  targetId: string,
+): Readonly<CoverageTarget> | undefined {
+  return request.evidenceQuestions
+    .flatMap((question) => question.coverageTargets)
+    .find((target) => target.id === targetId);
+}
+
 export function validateFreeContextReentry(
   request: Readonly<FreeContextRequest>,
 ): Readonly<FreeContextReentryDecision> {
   const reentry = request.reentry;
   if (!reentry) return Object.freeze({ accepted: true, reason: "Initial invocation." });
   const { priorHandoff, blockingGap } = reentry;
-  if (priorHandoff.workUnit.outcome !== priorHandoff.outcome.kind || !isDeepStrictEqual(priorHandoff.workUnit, request.workUnit)) {
-    return Object.freeze({ accepted: false, reason: "Reentry must preserve the prior work unit and outcome." });
+  if (priorHandoff.workUnit.outcome !== priorHandoff.outcome.kind) {
+    return Object.freeze({ accepted: false, reason: "Reentry priorHandoff outcome must match its workUnit." });
   }
-  if (!request.evidenceQuestions.some((question) => question.coverageTargets.some((target) => target.id === blockingGap.targetId))) {
+  if (!isDeepStrictEqual(priorHandoff.workUnit, request.workUnit)) {
+    return Object.freeze({ accepted: false, reason: "Reentry request.workUnit must exactly equal priorHandoff.workUnit." });
+  }
+  const target = declaredTargetFor(request, blockingGap.targetId);
+  if (!target) {
     return Object.freeze({ accepted: false, reason: "Reentry blocking gap must bind to a current declared target." });
   }
+  if (!isDeepStrictEqual(target.subject, blockingGap.scope)) {
+    return Object.freeze({ accepted: false, reason: "Reentry blocking gap scope must match its declared target." });
+  }
   if (blockingGap.id === priorHandoff.id || priorHandoff.blockingGaps.some((gap) => gap.id === blockingGap.id)) {
-    return Object.freeze({ accepted: false, reason: "Reentry requires a new blocking gap id." });
+    return Object.freeze({ accepted: false, reason: "Reentry blocking gap id must be new; it cannot repeat the prior handoff." });
   }
   const sameTypedScope = priorHandoff.blockingGaps.some((gap) => isDeepStrictEqual(
     { targetId: gap.targetId, scope: gap.scope },
     { targetId: blockingGap.targetId, scope: blockingGap.scope },
   ));
   if (sameTypedScope) {
-    return Object.freeze({ accepted: false, reason: "Rewording an existing typed scope does not create a new blocking gap." });
+    return Object.freeze({ accepted: false, reason: "Reentry blocking gap duplicates an existing target and scope." });
   }
   if (blockingGap.origin.kind === "evidence_consumption") {
     const origin = blockingGap.origin;
     if (origin.evidenceIds.some((id) => !priorHandoff.evidenceIds.includes(id))) {
-      return Object.freeze({ accepted: false, reason: "Evidence-consumption reentry must cite delivered Evidence IDs." });
+      return Object.freeze({ accepted: false, reason: "Evidence-origin reentry must cite Evidence returned in priorHandoff." });
     }
     if (origin.priorGapId && !priorHandoff.blockingGaps.some((gap) => gap.id === origin.priorGapId)) {
-      return Object.freeze({ accepted: false, reason: "Evidence-consumption reentry cited an unknown prior gap." });
+      return Object.freeze({ accepted: false, reason: "Evidence-origin reentry cited an unknown prior gap." });
     }
   }
   if (blockingGap.origin.kind === "edit" && blockingGap.scope.kind === "path"
       && blockingGap.origin.changedPaths.includes(blockingGap.scope.path)) {
-    return Object.freeze({ accepted: false, reason: "Changed-file adjacent context is a bounded direct read, not a reentry gap." });
+    return Object.freeze({ accepted: false, reason: "Edit-origin reentry targets a changed path; read that path directly instead." });
   }
-  return Object.freeze({ accepted: true, reason: "A new typed blocking gap is linked to Evidence consumption, an edit, or a check." });
+  if (blockingGap.origin.kind === "check" && blockingGap.scope.kind === "path"
+      && blockingGap.origin.failureLocation === blockingGap.scope.path) {
+    return Object.freeze({ accepted: false, reason: "Check-origin reentry targets the exact failure path; use a bounded direct diagnostic instead." });
+  }
+  return Object.freeze({ accepted: true, reason: "Accepted: a new typed blocking gap is linked to Evidence consumption, an edit, or a check." });
 }
 
 function gate(order: FreeContextEligibilityGate["order"]): FreeContextEligibilityGate {

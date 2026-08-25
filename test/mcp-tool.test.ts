@@ -223,6 +223,90 @@ test("invalid input fails before reservation or provider execution", async () =>
   }
 });
 
+test("typed reentry returns the specific safe work-unit mismatch reason", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "freecontext-mcp-tool-"));
+  const workspace = path.join(root, "workspace");
+  const sessions = path.join(root, "sessions");
+  try {
+    await mkdir(workspace);
+    let calls = 0;
+    const priorHandoff = {
+      id: "handoff:previous",
+      workUnit: request.workUnit,
+      evidenceIds: ["e1"],
+      outcome: { kind: request.workUnit.outcome, instruction: "Use the prior Evidence." },
+      blockingGaps: [],
+    };
+    const reentryRequest = {
+      ...request,
+      workUnit: { ...request.workUnit, goal: "A different work unit." },
+      reentry: {
+        priorHandoff,
+        blockingGap: {
+          id: "gap:new-contract",
+          targetId: "implementation-owner",
+          kind: "contract_unknown" as const,
+          scope: { kind: "topic" as const, topic: "implementation owner" },
+          requiredFact: "Locate the newly exposed contract.",
+          origin: { kind: "evidence_consumption" as const, evidenceIds: ["e1"] },
+        },
+      },
+    } satisfies FreeContextCallerRequest;
+    const call = await createGatherContextHandler({
+      tokenCounter,
+      sessionDirectory: sessions,
+      runExplorer: async (options) => {
+        calls += 1;
+        return readyResult(options);
+      },
+    })(reentryRequest, callContext(workspace));
+    const output = outputOf(call);
+    assert.equal(calls, 0);
+    assert.equal(output.errorCode, "INVALID_REQUEST");
+    assert.equal(output.nextAction.reason, "Reentry request.workUnit must exactly equal priorHandoff.workUnit.");
+    assert.deepEqual(output.gaps.map((gap) => gap.reason), [
+      "Reentry request.workUnit must exactly equal priorHandoff.workUnit.",
+      "Reentry request.workUnit must exactly equal priorHandoff.workUnit.",
+    ]);
+    assert.doesNotMatch(JSON.stringify(call), /different work unit|implementation owner/u);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("not_found recovery returns a specific work-unit mismatch reason", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "freecontext-mcp-recovery-"));
+  const workspace = path.join(root, "workspace");
+  const sessions = path.join(root, "sessions");
+  try {
+    await mkdir(workspace);
+    let calls = 0;
+    const recoveryRequest = {
+      ...request,
+      recovery: {
+        requestKind: "not_found_recovery" as const,
+        priorSessionId: "session-not-found",
+        priorWorkUnit: { ...request.workUnit, goal: "A different recovery work unit." },
+        probe: { kind: "exact_probe" as const, path: "document.md" },
+      },
+    } satisfies FreeContextCallerRequest;
+    const call = await createGatherContextHandler({
+      tokenCounter,
+      sessionDirectory: sessions,
+      runExplorer: async (options) => {
+        calls += 1;
+        return readyResult(options);
+      },
+    })(recoveryRequest, callContext(workspace));
+    const output = outputOf(call);
+    assert.equal(calls, 0);
+    assert.equal(output.errorCode, "INVALID_REQUEST");
+    assert.equal(output.nextAction.reason, "Recovery request.workUnit must exactly equal recovery.priorWorkUnit.");
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test("invocation context failures preserve a safe typed reason before reservation", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "freecontext-mcp-tool-"));
   const sessions = path.join(root, "sessions");

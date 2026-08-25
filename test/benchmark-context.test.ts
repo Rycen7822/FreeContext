@@ -384,6 +384,9 @@ test("master context exporter joins an aliased v3 call and ignores its late diag
     const document = JSON.parse(await readFile(outputPath, "utf8")) as BenchmarkMasterAgentContext;
     const call = document.freeContextCalls[0];
     assert.equal(document.schemaVersion, "freecontext-master-agent-context-v4");
+    assert.equal(document.invocationProvenance.schemaVersion, "freecontext-invocation-provenance-v2");
+    assert.equal(document.invocationProvenance.freshGate.schemaVersion, "freecontext-fresh-invocation-gate-v2");
+    assert.equal("semanticallyAcceptedCalls" in (document.invocationProvenance.counts ?? {}), false);
     assert.deepEqual(document.freeContextTransport, [{
       schemaVersion: "freecontext-transport-observation-v1",
       turnId: "turn-001",
@@ -635,6 +638,37 @@ test("historical v2 sessions are read without rewriting their identity schema", 
       fixture.sessionRaw,
     );
     assert.match(fixture.sessionRaw, /"freecontext-mcp-session-v2"/u);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("historical not_found sessions without recovery are explicitly legacy", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "freecontext-master-legacy-not-found-"));
+  try {
+    const base = historicalV2Session();
+    const legacyResult = {
+      ...base.result,
+      status: "not_found" as const,
+      evidence: [],
+      gaps: [{ questionId: "implementation", reason: "No observed evidence." }],
+      handoff: null,
+      nextAction: { kind: "exact_probe" as const, reason: "Probe the exact path." },
+      errorCode: null,
+      sessionFile: null,
+    };
+    const session = { ...base, result: legacyResult } as ReturnType<typeof historicalV2Session>;
+    const fixture = await createFixture(root, session, null);
+    const outputPath = await exportMasterAgentContext({
+      agentDir: fixture.agentDir,
+      taskName: "legacy-not-found",
+      allowUnreferencedSessions: true,
+    });
+    const document = JSON.parse(await readFile(outputPath, "utf8")) as BenchmarkMasterAgentContext;
+    assert.equal(document.freeContextCalls[0]?.status, "not_found");
+    assert.equal(document.freeContextCalls[0]?.deliveryStatus, "missing");
+    assert.equal(document.invocationProvenance.availability, "evidence_unavailable");
+    assert.deepEqual(document.invocationProvenance.freshGate.failures.map(({ code }) => code), ["evidence_unavailable", "counts_unavailable"]);
   } finally {
     await rm(root, { recursive: true, force: true });
   }

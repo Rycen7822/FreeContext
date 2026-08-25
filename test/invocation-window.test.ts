@@ -172,6 +172,128 @@ test("ordered invocations produce disjoint initial and reentrant windows", () =>
   }
 });
 
+test("not_found exact probe round-trips through recovery into typed reentry", () => {
+  const initial = request("missing");
+  const missing = result(initial, "not_found");
+  const recovery = {
+    ...request("missing-recovery"),
+    workUnit: initial.workUnit,
+    recovery: {
+      requestKind: "not_found_recovery" as const,
+      priorSessionId: missing.sessionId,
+      priorWorkUnit: initial.workUnit,
+      probe: { kind: "exact_probe" as const, path: "src/missing.ts" },
+    },
+  };
+  const recovered = result(recovery, "partial", ["missing-recovery-target"]);
+  const reentry = {
+    ...request("verification"),
+    workUnit: initial.workUnit,
+    reentry: {
+      priorHandoff: recovered.handoff!,
+      blockingGap: {
+        id: "gap:verification-target",
+        targetId: "verification-target",
+        kind: "verification_unknown" as const,
+        scope: { kind: "symbol" as const, symbol: "verification" },
+        requiredFact: "Locate the verification exposed by the recovery result.",
+        origin: { kind: "evidence_consumption" as const, evidenceIds: ["e1"] },
+      },
+    },
+  };
+  const windows = buildFreeContextInvocationWindows(
+    [
+      input("call-initial", initial, missing),
+      input("call-recovery", recovery, recovered),
+      input("call-reentry", reentry, result(reentry)),
+    ],
+    [
+      transport("hash-call-initial", "2026-08-21T00:00:00.000Z", "2026-08-21T00:00:10.000Z"),
+      transport("hash-call-recovery", "2026-08-21T00:00:20.000Z", "2026-08-21T00:00:30.000Z"),
+      transport("hash-call-reentry", "2026-08-21T00:00:40.000Z", "2026-08-21T00:00:50.000Z"),
+    ],
+  );
+  assert.deepEqual(windows.map(({ invocationKind, attemptAccepted }) => ({ invocationKind, attemptAccepted })), [
+    { invocationKind: "initial", attemptAccepted: true },
+    { invocationKind: "recovery", attemptAccepted: true },
+    { invocationKind: "reentrant", attemptAccepted: true },
+  ]);
+  assert.deepEqual(windows[2]?.failureReasons, []);
+});
+
+test("not_found recovery is one-shot and cannot follow a handoff", () => {
+  const initial = request("missing");
+  const missing = result(initial, "not_found");
+  const recovery = {
+    ...request("recovery"),
+    workUnit: initial.workUnit,
+    recovery: {
+      requestKind: "not_found_recovery" as const,
+      priorSessionId: missing.sessionId,
+      priorWorkUnit: initial.workUnit,
+      probe: { kind: "exact_probe" as const, path: "src/missing.ts" },
+    },
+  };
+  const repeated = buildFreeContextInvocationWindows(
+    [input("initial", initial, missing), input("recovery-1", recovery, missing), input("recovery-2", recovery, missing)],
+    [
+      transport("hash-initial", "2026-08-21T00:00:00.000Z", "2026-08-21T00:00:10.000Z"),
+      transport("hash-recovery-1", "2026-08-21T00:00:20.000Z", "2026-08-21T00:00:30.000Z"),
+      transport("hash-recovery-2", "2026-08-21T00:00:40.000Z", "2026-08-21T00:00:50.000Z"),
+    ],
+  );
+  assert.deepEqual(repeated[2]?.failureReasons, ["recovery_already_used"]);
+
+  const recovered = result(recovery, "ready");
+  const afterHandoff = buildFreeContextInvocationWindows(
+    [input("initial", initial, missing), input("recovery", recovery, recovered), input("recovery-2", recovery, missing)],
+    [
+      transport("hash-initial", "2026-08-21T00:00:00.000Z", "2026-08-21T00:00:10.000Z"),
+      transport("hash-recovery", "2026-08-21T00:00:20.000Z", "2026-08-21T00:00:30.000Z"),
+      transport("hash-recovery-2", "2026-08-21T00:00:40.000Z", "2026-08-21T00:00:50.000Z"),
+    ],
+  );
+  assert.deepEqual(afterHandoff[2]?.failureReasons, ["recovery_requires_prior_not_found_without_handoff"]);
+});
+
+test("a legal typed reentry stays accepted after an invalid ancestor", () => {
+  const initial = request("implementation");
+  const initialResult = result(initial);
+  const invalid = request("invalid");
+  const reentrant = {
+    ...request("tests"),
+    workUnit: initial.workUnit,
+    reentry: {
+      priorHandoff: initialResult.handoff!,
+      blockingGap: {
+        id: "gap:tests-target",
+        targetId: "tests-target",
+        kind: "verification_unknown" as const,
+        scope: { kind: "symbol" as const, symbol: "tests" },
+        requiredFact: "Locate the verification exposed by the edit.",
+        origin: { kind: "edit" as const, changedPaths: ["src/implementation-target.ts"] },
+      },
+    },
+  };
+  const windows = buildFreeContextInvocationWindows(
+    [
+      input("call-initial", initial, initialResult),
+      input("call-invalid", invalid, result(invalid)),
+      input("call-reentry", reentrant, result(reentrant)),
+    ],
+    [
+      transport("hash-call-initial", "2026-08-21T00:00:00.000Z", "2026-08-21T00:00:10.000Z"),
+      transport("hash-call-invalid", "2026-08-21T00:00:20.000Z", "2026-08-21T00:00:30.000Z"),
+      transport("hash-call-reentry", "2026-08-21T00:00:40.000Z", "2026-08-21T00:00:50.000Z"),
+    ],
+  );
+  assert.equal(windows[1]?.attemptAccepted, false);
+  assert.equal(windows[2]?.invocationKind, "reentrant");
+  assert.equal(windows[2]?.attemptAccepted, true);
+  assert.deepEqual(windows[2]?.failureReasons, []);
+  assert.deepEqual(windows[2]?.chainFailureReasons, ["prior_invocation_invalid"]);
+});
+
 test("missing or rewritten reentry contracts fail closed", () => {
   const initialRequest = request("implementation");
   const initialResult = result(initialRequest, "partial", ["implementation-target"]);

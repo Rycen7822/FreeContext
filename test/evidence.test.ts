@@ -432,7 +432,14 @@ test("normal empty evidence is not_found while malformed output is failed", asyn
   assert.equal(notFound.status, "not_found");
   assert.equal(notFound.errorCode, null);
   assert.equal(notFound.nextAction.kind, "exact_probe");
+  assert.deepEqual(notFound.nextAction.recovery, {
+    requestKind: "not_found_recovery",
+    priorSessionId: "session-1",
+    workUnit: request().workUnit,
+    requiredProbe: "exact_probe",
+  });
   assert.match(serializeForModel(notFound), /one exact non-broad path or symbol probe and read at most one candidate path/iu);
+  assert.match(serializeForModel(notFound), /Recovery contract: after the exact probe/iu);
 
   const failed = await compileFreeContextResult(
     request(),
@@ -496,7 +503,8 @@ test("compiler keeps the canonical text within 8 KiB", async () => withWorkspace
   assert.ok(Buffer.byteLength(serializeForModel(result), "utf8") <= 8_192);
 }));
 
-test("compiler downgrades exhaustive coverage when the full member list cannot fit", async () => withWorkspace(async (root) => {
+test("compiler preserves post-link reentry action when exhaustive basis evidence cannot fit", async () => withWorkspace(async (root) => {
+  await writeFile(path.join(root, "test/router.test.ts"), `${"coverage-boundary ".repeat(200)}\n`);
   const exhaustiveRequest: FreeContextRequest = {
     ...request(),
     evidenceQuestions: [{
@@ -507,7 +515,7 @@ test("compiler downgrades exhaustive coverage when the full member list cannot f
       coverageTargets: [topicTarget("members-target", "registered members", "presence", "exhaustive")],
     }],
   };
-  const members = Array.from({ length: 64 }, (_, index) => `member-${index.toString().padStart(2, "0")}-${"x".repeat(105)}`);
+  const members = Array.from({ length: 64 }, (_, index) => `member-${index.toString().padStart(2, "0")}-${"x".repeat(80)}`);
   const result = await compileFreeContextResult(
     exhaustiveRequest,
     invocation(root),
@@ -519,14 +527,30 @@ test("compiler downgrades exhaustive coverage when the full member list cannot f
       startLine: 1,
       endLine: 20,
       focusLine: 10,
+      why: "Provides a retained member implementation span.",
+    }, {
+      role: "implementation",
+      questionId: "members",
+      targetId: "members-target",
+      path: "test/router.test.ts",
+      startLine: 1,
+      endLine: 1,
+      focusLine: 1,
       coverageBasis: true,
-      why: "Enumerates the complete registry.",
+      why: "Enumerates the complete registry boundary.",
     }], [], [{ targetId: "members-target", members, gaps: [] }]),
     { errorCode: null },
-    [observed("src/router.ts", 1, 20)],
+    [observed("src/router.ts", 1, 20), observed("test/router.test.ts", 1, 1)],
   );
   assert.equal(result.status, "partial");
-  assert.ok((result.coverage?.[0]?.omittedMembers ?? 0) > 0);
-  assert.match(result.coverage?.[0]?.gaps[0] ?? "", /omitted to fit/u);
+  assert.ok(result.evidence.some((item) => item.path === "src/router.ts"));
+  assert.ok(result.coverage?.[0]?.basisEvidenceIds.length === 0);
+  assert.equal(result.coverage?.[0]?.omittedMembers, 0);
+  assert.match(result.coverage?.[0]?.gaps[0] ?? "", /Enumeration-boundary Evidence was omitted/u);
+  assert.ok(result.gaps.some((gap) => gap.targetId === "members-target"));
+  assert.ok(result.handoff?.blockingGaps.some((gap) => gap.targetId === "members-target"));
+  assert.equal(result.nextAction.reason, "Consume inline Evidence; execute the handoff; reenter only if it exposes a new typed blocking gap.");
+  assert.equal(result.handoff?.workUnit.outcome, exhaustiveRequest.workUnit.outcome);
+  assert.equal(result.handoff?.workUnit.goal, exhaustiveRequest.workUnit.goal);
   assert.ok(Buffer.byteLength(serializeForModel(result), "utf8") <= 8_192);
 }));

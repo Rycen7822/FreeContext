@@ -43,7 +43,16 @@ function evaluateFixture(candidate: Readonly<ExplorerCandidate>): Readonly<FreeC
       summary: candidate.summary,
       evidence: [],
       gaps: [...candidate.gaps],
-      nextAction: { kind: "exact_probe", reason: "Continue the fixture exploration." },
+      nextAction: {
+        kind: "exact_probe",
+        reason: "Continue the fixture exploration.",
+        recovery: {
+          requestKind: "not_found_recovery",
+          priorSessionId: "test-session",
+          workUnit: baseRequest().workUnit,
+          requiredProbe: "exact_probe",
+        },
+      },
       errorCode: null,
       sessionId: "test-session",
       sessionFile: null,
@@ -739,6 +748,78 @@ test("ordinary search output requires repeated no progress before soft-budget fi
   assert.equal(result.metrics.toolCalls, 2);
   assert.equal(result.metrics.finalizationInjected, true);
   assert.equal(result.metrics.finalizationReason, "stagnation");
+});
+
+test("knownRef-first blocks root search until an observed read exists", async () => {
+  const config = baseConfig({ maxTurns: 3 });
+  let decisions: Array<boolean | undefined> = [];
+  const bindings = bindingsWith(async (_prompts, context, loopConfig, emit) => {
+    type TestCall = { type: "toolCall"; id: string; name: string; arguments: Record<string, unknown> };
+    const rootCall: TestCall = { type: "toolCall", id: "root", name: "rg", arguments: { pattern: "entry" } };
+    const rootGlobCall: TestCall = { type: "toolCall", id: "root-glob", name: "glob", arguments: { pattern: "**/*" } };
+    const exactCall: TestCall = { type: "toolCall", id: "exact", name: "rg", arguments: { pattern: "entry", path: "src/index.ts" } };
+    const deepParentCall: TestCall = { type: "toolCall", id: "deep-parent", name: "rg", arguments: { pattern: "entry", path: "src" } };
+    const deepBoundedParentCall: TestCall = { type: "toolCall", id: "deep-bounded-parent", name: "rg", arguments: { pattern: "entry", path: "src/deep", literal: true, glob: ["*.ts"], max_results: 20 } };
+    const deepGlobCall: TestCall = { type: "toolCall", id: "deep-glob", name: "glob", arguments: { pattern: ["**/*"], path: "src/deep" } };
+    const deepBoundedGlobCall: TestCall = { type: "toolCall", id: "deep-bounded-glob", name: "glob", arguments: { pattern: ["*.ts"], path: "src/deep", max_results: 20 } };
+    const readCall: TestCall = { type: "toolCall", id: "read", name: "read", arguments: { path: "src/index.ts" } };
+    const rootAfterRead: TestCall = { type: "toolCall", id: "root-after", name: "rg", arguments: { pattern: "entry" } };
+    const message = (call: TestCall) => assistantText("", { content: [call as never], stopReason: "toolUse" });
+    decisions.push((await loopConfig.beforeToolCall?.({ assistantMessage: message(rootCall), toolCall: rootCall, args: rootCall.arguments, context }))?.block);
+    decisions.push((await loopConfig.beforeToolCall?.({ assistantMessage: message(rootGlobCall), toolCall: rootGlobCall, args: rootGlobCall.arguments, context }))?.block);
+    decisions.push((await loopConfig.beforeToolCall?.({ assistantMessage: message(exactCall), toolCall: exactCall, args: exactCall.arguments, context }))?.block);
+    decisions.push((await loopConfig.beforeToolCall?.({ assistantMessage: message(deepParentCall), toolCall: deepParentCall, args: deepParentCall.arguments, context }))?.block);
+    decisions.push((await loopConfig.beforeToolCall?.({ assistantMessage: message(deepBoundedParentCall), toolCall: deepBoundedParentCall, args: deepBoundedParentCall.arguments, context }))?.block);
+    decisions.push((await loopConfig.beforeToolCall?.({ assistantMessage: message(deepGlobCall), toolCall: deepGlobCall, args: deepGlobCall.arguments, context }))?.block);
+    decisions.push((await loopConfig.beforeToolCall?.({ assistantMessage: message(deepBoundedGlobCall), toolCall: deepBoundedGlobCall, args: deepBoundedGlobCall.arguments, context }))?.block);
+    decisions.push((await loopConfig.beforeToolCall?.({ assistantMessage: message(readCall), toolCall: readCall, args: readCall.arguments, context }))?.block);
+    await emit({ type: "tool_execution_end", toolCallId: "read", toolName: "read", result: observedReadResult, isError: false });
+    decisions.push((await loopConfig.beforeToolCall?.({ assistantMessage: message(rootAfterRead), toolCall: rootAfterRead, args: rootAfterRead.arguments, context }))?.block);
+    return [assistantText("done")];
+  });
+  await runPiSession({
+    bindings,
+    model: createModel(config),
+    requestOptions: createRequestOptions(config),
+    config,
+    systemPrompt: "system",
+    promptText: "prompt",
+    tools: [readTool],
+    finalizationRequest: {
+      ...baseRequest(),
+      knownRefs: [
+        { kind: "path", path: "src/index.ts" },
+        { kind: "path", path: "src/deep/file.ts" },
+      ],
+    },
+  });
+  assert.deepEqual(decisions.map((value) => value === true), [true, true, false, true, false, true, false, false, false]);
+});
+
+test("knownRef-first keeps pathless exact symbol probes available", async () => {
+  const config = baseConfig({ maxTurns: 2 });
+  let blocked: boolean | undefined;
+  const bindings = bindingsWith(async (_prompts, context, loopConfig) => {
+    const call = { type: "toolCall" as const, id: "symbol", name: "rg", arguments: { pattern: "entry", literal: true, max_results: 10 } };
+    blocked = (await loopConfig.beforeToolCall?.({
+      assistantMessage: assistantText("", { content: [call], stopReason: "toolUse" }),
+      toolCall: call,
+      args: call.arguments,
+      context,
+    }))?.block;
+    return [assistantText("done")];
+  });
+  await runPiSession({
+    bindings,
+    model: createModel(config),
+    requestOptions: createRequestOptions(config),
+    config,
+    systemPrompt: "system",
+    promptText: "prompt",
+    tools: [],
+    finalizationRequest: { ...baseRequest(), knownRefs: [{ kind: "symbol", symbol: "entry" }] },
+  });
+  assert.notEqual(blocked, true);
 });
 
 test("a repeated no-progress search batch is blocked before execution and redirected to a read", async () => {

@@ -1,9 +1,9 @@
 import { isDeepStrictEqual } from "node:util";
 import type { FreeContextRequest, FreeContextResult } from "../mcp/contracts.js";
-import { validateFreeContextReentry } from "../mcp/eligibility.js";
+import { validateFreeContextRecovery, validateFreeContextReentry } from "../mcp/eligibility.js";
 import type { FreeContextTransportObservation } from "./delivery-observation.js";
 
-export type FreeContextInvocationKind = "initial" | "reentrant" | "invalid" | "unknown";
+export type FreeContextInvocationKind = "initial" | "recovery" | "reentrant" | "invalid" | "unknown";
 
 export interface FreeContextInvocationWindowInput {
   readonly callId: string;
@@ -21,7 +21,9 @@ export interface FreeContextInvocationWindow {
   readonly windowEndedBefore: string | null;
   readonly windowObserved: boolean;
   readonly exactDuplicate: boolean;
+  readonly attemptAccepted: boolean;
   readonly failureReasons: readonly string[];
+  readonly chainFailureReasons: readonly string[];
 }
 
 interface CorrelatedInvocation {
@@ -51,6 +53,7 @@ function sameRequest(current: Readonly<FreeContextRequest>, previous: Readonly<F
   return current.taskText === previous.taskText && sameWorkUnit(current, previous) &&
     isDeepStrictEqual(current.knownRefs, previous.knownRefs) &&
     isDeepStrictEqual(current.reentry, previous.reentry) &&
+    isDeepStrictEqual(current.recovery, previous.recovery) &&
     current.evidenceQuestions.length === previous.evidenceQuestions.length &&
     current.evidenceQuestions.every((question, index) => {
       const prior = previous.evidenceQuestions[index];
@@ -72,7 +75,9 @@ function invalidWindows(
     windowObserved: false,
     exactDuplicate: inputs.some((candidate, candidateIndex) =>
       candidateIndex !== inputIndex && sameRequest(candidate.request, input.request)),
+    attemptAccepted: false,
     failureReasons: Object.freeze([...reasons]),
+    chainFailureReasons: Object.freeze([]),
   })));
 }
 
@@ -149,28 +154,61 @@ export function buildFreeContextInvocationWindows(
     const repeatedRequest = priorRequests.some((request) => sameRequest(request, invocation.input.request));
     let invocationKind: FreeContextInvocationKind = index === 0 ? "initial" : "invalid";
     const failureReasons: string[] = [];
+    const chainFailureReasons: string[] = [];
+    let attemptAccepted = index === 0;
 
     if (!previous && invocation.input.request.reentry) {
       invocationKind = "invalid";
+      attemptAccepted = false;
       failureReasons.push("unexpected_initial_reentry");
+    } else if (!previous && invocation.input.request.recovery) {
+      invocationKind = "invalid";
+      attemptAccepted = false;
+      failureReasons.push("unexpected_initial_recovery");
     } else if (previous) {
       const previousKind = windows[index - 1]?.invocationKind;
-      if (previousKind === "invalid" || previousKind === "unknown") {
-        invocationKind = "invalid";
-        failureReasons.push("prior_invocation_invalid");
+      const reentry = invocation.input.request.reentry;
+      const recovery = invocation.input.request.recovery;
+      const priorHandoffObserved = reentry !== undefined && correlated.slice(0, index)
+        .some((prior) => prior.input.result.handoff && isDeepStrictEqual(prior.input.result.handoff, reentry.priorHandoff));
+      if (recovery) {
+        const decision = validateFreeContextRecovery(invocation.input.request);
+        const previousResult = previous.input.result;
+        const recoveryUsed = correlated.slice(0, index).some((prior) => prior.input.request.recovery !== undefined);
+        if (previousResult.status !== "not_found" || previousResult.handoff !== null && previousResult.handoff !== undefined) {
+          failureReasons.push("recovery_requires_prior_not_found_without_handoff");
+        } else if (recoveryUsed) {
+          failureReasons.push("recovery_already_used");
+        } else if (recovery.priorSessionId !== previousResult.sessionId) {
+          failureReasons.push("recovery_prior_session_mismatch");
+        } else if (!decision.accepted) {
+          failureReasons.push("invalid_recovery_contract");
+        } else {
+          invocationKind = "recovery";
+          attemptAccepted = true;
+          episodeIndex += 1;
+        }
+      } else if (!reentry) {
+        const previousResult = previous.input.result;
+        if (previousResult.status === "not_found" && !previousResult.handoff) {
+          invocationKind = "initial";
+          attemptAccepted = true;
+          chainFailureReasons.push("missing_not_found_recovery");
+        } else {
+          failureReasons.push("missing_reentry_contract");
+        }
       } else {
-        const reentry = invocation.input.request.reentry;
-        const priorHandoffObserved = reentry !== undefined && correlated.slice(0, index)
-          .some((prior) => prior.input.result.handoff && isDeepStrictEqual(prior.input.result.handoff, reentry.priorHandoff));
         const decision = validateFreeContextReentry(invocation.input.request);
-        if (!reentry) failureReasons.push("missing_reentry_contract");
-        else if (!priorHandoffObserved) failureReasons.push("unknown_prior_handoff");
+        if (!priorHandoffObserved) failureReasons.push("unknown_prior_handoff");
         else if (!decision.accepted) failureReasons.push("invalid_reentry_contract");
         else {
           invocationKind = "reentrant";
+          attemptAccepted = true;
           episodeIndex += 1;
         }
       }
+      if (previousKind === "invalid" || previousKind === "unknown") chainFailureReasons.push("prior_invocation_invalid");
+      if (failureReasons.length > 0) attemptAccepted = false;
     }
 
     const next = correlated[index + 1];
@@ -184,7 +222,9 @@ export function buildFreeContextInvocationWindows(
       windowEndedBefore: next?.startedAt ?? (finalBoundaryObserved ? taskCompletedAt : null),
       windowObserved: next !== undefined || finalBoundaryObserved,
       exactDuplicate,
+      attemptAccepted,
       failureReasons: Object.freeze(failureReasons),
+      chainFailureReasons: Object.freeze(chainFailureReasons),
     }));
     priorRequests.push(invocation.input.request);
   }
