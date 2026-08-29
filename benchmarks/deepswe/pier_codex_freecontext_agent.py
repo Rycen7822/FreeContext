@@ -19,16 +19,16 @@ from pier_codex_noemaloom_agent import PierCodexBase
 
 _PROJECT_ROOT = Path(__file__).resolve().parents[2]
 _ARCHIVE_VALUE = os.environ.get("FREECONTEXT_RUNTIME_ARCHIVE")
-_BOOTSTRAP_PROFILE = Path(
+_PROVIDER_CONFIG = Path(
     os.environ.get(
-        "FREECONTEXT_PROVIDER_BOOTSTRAP_PROFILE", "/home/xu/.codex/ds.config.toml"
+        "FREECONTEXT_PROVIDER_CONFIG_PATH", "/home/xu/.codex/freecontext_config.toml"
     )
 )
-_FREECONTEXT_CONFIG = _PROJECT_ROOT / "benchmarks/deepswe/freecontext.toml"
+_BUNDLED_FREECONTEXT_CONFIG = _PROJECT_ROOT / "benchmarks/deepswe/freecontext.toml"
 _REMOTE_ROOT = PurePosixPath("/tmp/freecontext-runtime")
 _REMOTE_SKILLS_DIR = _REMOTE_ROOT / "skills"
-_REMOTE_SECRET_ROOT = PurePosixPath("/tmp/freecontext-secrets")
-_REMOTE_SECRET = _REMOTE_SECRET_ROOT / "tokenrhythm"
+_REMOTE_SECRET_ROOT = PurePosixPath("/tmp/freecontext-provider-secrets")
+_REMOTE_SECRET = _REMOTE_SECRET_ROOT / "api-key"
 _REMOTE_LAUNCHER = PurePosixPath("/tmp/freecontext-mcp-launcher")
 _REMOTE_NODE = _REMOTE_ROOT / "runtime-bin/node"
 _REMOTE_PYTHON = _REMOTE_ROOT / "runtime-bin/python3"
@@ -45,7 +45,7 @@ COMMON_TASK_EFFECT_POLICY = (
 )
 EXPLICIT_FC_FIRST_POLICY = (
     "[Benchmark arm policy: explicit_fc_first]\n"
-    "This treatment requires FreeContext. First read the installed skill; next call gather_context and await its terminal result with no native source exploration first. Preserve every upstream requirement and follow the skill, handoff, and nextAction for later exploration."
+    "This treatment requires FreeContext. First read the installed skill; next construct its legal caller args once, using workUnit.outcome=edit for edits and 2-4 concrete single targets by default. Call gather_context as the only tool call in that assistant batch/code cell; during dispatch do no native or other tool work and never parallelize. If a cell ID returns, exclusively call functions.wait with yield_time_ms=300000 until terminal. On terminal consume inline Evidence, handoff, and nextAction directly; before the first edit/check do not repeat Evidence-covered reads or broad discovery. Evidence should already be brief and self-contained (normally 8-24 lines); do not depend on post-hoc fitter trimming. Follow the skill and ask for the nearest existing owner/seam, caller, or test convention for new behavior."
 )
 EXPLICIT_NATIVE_ONLY_POLICY = (
     "[Benchmark arm policy: explicit_native_only]\n"
@@ -62,22 +62,44 @@ def _runtime_archive() -> Path:
     return _PROJECT_ROOT / ".work" / "freecontext-runtime.tar.gz"
 
 
-def _freecontext_api_key() -> str:
-    with _BOOTSTRAP_PROFILE.open("rb") as stream:
-        bootstrap = tomllib.load(stream)
-    provider = bootstrap.get("model_providers", {}).get("tokenrhythm", {})
-    bootstrap_url = provider.get("base_url")
-    token = provider.get("experimental_bearer_token")
-    with _FREECONTEXT_CONFIG.open("rb") as stream:
-        freecontext = tomllib.load(stream)
-    configured_url = freecontext.get("providers", {}).get("tokenrhythm", {}).get("base_url")
-    if not isinstance(bootstrap_url, str) or not bootstrap_url.startswith("https://"):
-        raise RuntimeError("missing TokenRhythm HTTPS URL in FreeContext bootstrap profile")
-    if not isinstance(configured_url, str) or bootstrap_url.rstrip("/") != configured_url.rstrip("/"):
-        raise RuntimeError("TokenRhythm bootstrap URL does not match FreeContext configuration")
-    if not isinstance(token, str) or not token:
-        raise RuntimeError("missing TokenRhythm API key in FreeContext bootstrap profile")
-    return token
+def _bundled_provider_base_url() -> str:
+    with _BUNDLED_FREECONTEXT_CONFIG.open("rb") as stream:
+        bundled = tomllib.load(stream)
+    default_route = bundled.get("default_route")
+    routes = bundled.get("routes")
+    if not isinstance(default_route, str) or not isinstance(routes, dict):
+        raise RuntimeError("bundled FreeContext configuration has no valid default route")
+    route = routes.get(default_route)
+    model_ids = route.get("models") if isinstance(route, dict) else None
+    if not isinstance(model_ids, list) or len(model_ids) != 1 or not isinstance(model_ids[0], str):
+        raise RuntimeError("bundled FreeContext default route must select one model")
+    models = bundled.get("models")
+    model = models.get(model_ids[0]) if isinstance(models, dict) else None
+    provider_id = model.get("provider") if isinstance(model, dict) else None
+    providers = bundled.get("providers")
+    provider = providers.get(provider_id) if isinstance(providers, dict) and isinstance(provider_id, str) else None
+    base_url = provider.get("base_url") if isinstance(provider, dict) else None
+    if not isinstance(base_url, str) or not base_url.startswith("https://"):
+        raise RuntimeError("bundled FreeContext default route has no valid HTTPS provider URL")
+    return base_url
+
+
+def _freecontext_provider_api_key() -> str:
+    with _PROVIDER_CONFIG.open("rb") as stream:
+        configured = tomllib.load(stream)
+    provider = configured.get("provider")
+    if not isinstance(configured, dict) or set(configured) != {"provider"}:
+        raise RuntimeError("provider config must contain only a [provider] table")
+    if not isinstance(provider, dict) or set(provider) != {"base_url", "api_key"}:
+        raise RuntimeError("provider config must contain base_url and api_key")
+    configured_url = provider.get("base_url") if isinstance(provider, dict) else None
+    api_key = provider.get("api_key") if isinstance(provider, dict) else None
+    bundled_url = _bundled_provider_base_url()
+    if not isinstance(configured_url, str) or configured_url.rstrip("/") != bundled_url.rstrip("/"):
+        raise RuntimeError("provider config URL does not match the bundled FreeContext default route")
+    if not isinstance(api_key, str) or not api_key:
+        raise RuntimeError("provider config is missing api_key")
+    return api_key
 
 
 class PierCodexFreeContext(PierCodexBase):
@@ -202,11 +224,11 @@ approval_mode = "approve"
         secret_dir.mkdir(mode=0o700, exist_ok=True)
         secret_path: Path | None = None
         try:
-            descriptor, raw_path = tempfile.mkstemp(prefix="tokenrhythm-", dir=secret_dir)
+            descriptor, raw_path = tempfile.mkstemp(prefix="provider-", dir=secret_dir)
             secret_path = Path(raw_path)
             os.fchmod(descriptor, 0o600)
             with os.fdopen(descriptor, "w", encoding="utf8") as stream:
-                stream.write(_freecontext_api_key())
+                stream.write(_freecontext_provider_api_key())
             await environment.upload_file(secret_path, _REMOTE_SECRET.as_posix())
         finally:
             if secret_path is not None:
@@ -230,9 +252,9 @@ approval_mode = "approve"
                 f"cat > {_REMOTE_LAUNCHER.as_posix()} <<'SH'\n"
                 "#!/usr/bin/env bash\n"
                 "set -euo pipefail\n"
-                f"TOKENRHYTHM_API_KEY=\"$(cat {_REMOTE_SECRET.as_posix()})\"\n"
+                f"FREECONTEXT_PROVIDER_API_KEY=\"$(cat {_REMOTE_SECRET.as_posix()})\"\n"
                 f"FREECONTEXT_PYTHON={_REMOTE_PYTHON.as_posix()}\n"
-                "export TOKENRHYTHM_API_KEY FREECONTEXT_PYTHON NODE_USE_ENV_PROXY=1\n"
+                "export FREECONTEXT_PROVIDER_API_KEY FREECONTEXT_PYTHON NODE_USE_ENV_PROXY=1\n"
                 f"exec {_REMOTE_NODE.as_posix()} {mcp_server} --config {config} "
                 f"--session-dir {_REMOTE_SESSION_DIR.as_posix()} \"$@\"\n"
                 "SH\n"

@@ -29,7 +29,7 @@ test("bundled TokenRhythm config produces the accepted Pi Chat Completions wire 
   const configFile = new URL("../benchmarks/deepswe/freecontext.toml", import.meta.url).pathname;
   const route = await resolveConfig({
     cli: { configFile },
-    processEnv: { TOKENRHYTHM_API_KEY: DUMMY_KEY },
+    processEnv: { FREECONTEXT_PROVIDER_API_KEY: DUMMY_KEY },
   });
   const config = route.targets[0];
   assert.ok(config);
@@ -128,7 +128,7 @@ test("the non-stream transport retries a TokenRhythm 200 SERVICE_BUSY body throu
   const configFile = new URL("../benchmarks/deepswe/freecontext.toml", import.meta.url).pathname;
   const route = await resolveConfig({
     cli: { configFile },
-    processEnv: { TOKENRHYTHM_API_KEY: DUMMY_KEY },
+    processEnv: { FREECONTEXT_PROVIDER_API_KEY: DUMMY_KEY },
   });
   const selected = route.targets[0];
   assert.ok(selected);
@@ -192,7 +192,7 @@ test("isolated finalization sends required submit_evidence without provider stri
   const configFile = new URL("../benchmarks/deepswe/freecontext.toml", import.meta.url).pathname;
   const route = await resolveConfig({
     cli: { configFile },
-    processEnv: { TOKENRHYTHM_API_KEY: DUMMY_KEY },
+    processEnv: { FREECONTEXT_PROVIDER_API_KEY: DUMMY_KEY },
   });
   const selected = route.targets[0];
   assert.ok(selected);
@@ -273,7 +273,7 @@ test("provider probe preserves one isolated context across a connection retry", 
   const configFile = new URL("../benchmarks/deepswe/freecontext.toml", import.meta.url).pathname;
   const route = await resolveConfig({
     cli: { configFile },
-    processEnv: { TOKENRHYTHM_API_KEY: DUMMY_KEY },
+    processEnv: { FREECONTEXT_PROVIDER_API_KEY: DUMMY_KEY },
   });
   const selected = route.targets[0];
   assert.ok(selected);

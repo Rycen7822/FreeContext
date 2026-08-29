@@ -1072,9 +1072,14 @@ test("canonical Pier adapter registers direct MCP without legacy CLI wrappers", 
     "COMMON_TASK_EFFECT_POLICY = (",
     "Do not use web search, curl, wget, raw GitHub, remote git clone/ls-remote/fetch, npm view/pack",
     "EXPLICIT_FC_FIRST_POLICY = (",
-    "First read the installed skill; next call gather_context",
-    "follow the skill, handoff, and nextAction for later exploration",
-    "Preserve every upstream requirement",
+    "First read the installed skill; next construct its legal caller args once",
+    "construct its legal caller args once, using workUnit.outcome=edit for edits and 2-4 concrete single targets by default",
+    "as the only tool call in that assistant batch/code cell",
+    "during dispatch do no native or other tool work and never parallelize",
+    "If a cell ID returns, exclusively call functions.wait with yield_time_ms=300000 until terminal",
+    "On terminal consume inline Evidence, handoff, and nextAction directly; before the first edit/check do not repeat Evidence-covered reads or broad discovery",
+    "Evidence should already be brief and self-contained (normally 8-24 lines); do not depend on post-hoc fitter trimming",
+    "nearest existing owner/seam, caller, or test convention",
     "base Codex config already owns developer_instructions",
     "EXPLICIT_NATIVE_ONLY_POLICY = (",
   ]) assert.equal(source.includes(fragment), true, `explicit arm policy fragment drifted: ${fragment}`);
@@ -1095,7 +1100,14 @@ test("canonical Pier adapter registers direct MCP without legacy CLI wrappers", 
     /--session-dir \{_REMOTE_SESSION_DIR\.as_posix\(\)\}/u,
     /--session-dir \{_REMOTE_SESSION_DIR\.as_posix\(\)\} \\"\$@\\"/u,
     /freecontext-benchmark-context\.mjs/u,
-    /FREECONTEXT_PROVIDER_BOOTSTRAP_PROFILE/u,
+    /FREECONTEXT_PROVIDER_CONFIG_PATH/u,
+    /freecontext_config\.toml/u,
+    /def _bundled_provider_base_url\(\) -> str:/u,
+    /default_route/u,
+    /model_ids = route\.get\("models"\)/u,
+    /provider_id = model\.get\("provider"\)/u,
+    /def _freecontext_provider_api_key\(\) -> str:/u,
+    /FREECONTEXT_PROVIDER_API_KEY/u,
     /return f"\{COMMON_TASK_EFFECT_POLICY\}\\n\\n\{policy\}\\n\\n\[Upstream task instruction\]\\n\{instruction\}"/u,
     /developer_instructions = \{json\.dumps\(EXPLICIT_FC_FIRST_POLICY\)\}/u,
     /def _freecontext_config_toml\(self, base_config: str \| None\) -> str:/u,
@@ -1118,5 +1130,6 @@ test("canonical Pier adapter registers direct MCP without legacy CLI wrappers", 
   }
   assert.match(freeContextConfig, /^api = "openai"$/mu);
   assert.match(freeContextConfig, /^model_id = "deepseek-v4-flash-0731"$/mu);
-  assert.match(freeContextConfig, /^credential_env = "TOKENRHYTHM_API_KEY"$/mu);
+  assert.match(freeContextConfig, /^credential_env = "FREECONTEXT_PROVIDER_API_KEY"$/mu);
+  assert.doesNotMatch(source, /model_providers/u);
 });

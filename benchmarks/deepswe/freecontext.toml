@@ -15,7 +15,7 @@ context_compaction_enabled = true
 api = "openai"
 base_url = "https://tokenrhythm.studio/v1"
 auth_mode = "auto"
-credential_env = "TOKENRHYTHM_API_KEY"
+credential_env = "FREECONTEXT_PROVIDER_API_KEY"
 
 [models.tokenrhythm]
 provider = "tokenrhythm"
