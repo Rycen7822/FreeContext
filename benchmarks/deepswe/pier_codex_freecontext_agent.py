@@ -53,8 +53,10 @@ EXPLICIT_NATIVE_ONLY_POLICY = (
     "FreeContext is disabled for this arm. Use native repository tools for exploration "
     "and do not invoke FreeContext."
 )
-def compose_benchmark_instruction(policy: str, instruction: str) -> str:
-    return f"{COMMON_TASK_EFFECT_POLICY}\n\n{policy}\n\n[Upstream task instruction]\n{instruction}"
+
+
+def _benchmark_developer_instructions(arm_policy: str) -> str:
+    return f"{COMMON_TASK_EFFECT_POLICY}\n\n{arm_policy}"
 
 
 def _runtime_archive() -> Path:
@@ -169,19 +171,32 @@ enabled_tools = ["gather_context"]
 approval_mode = "approve"
 '''
 
-    def _freecontext_config_toml(self, base_config: str | None) -> str:
+    def _benchmark_config_toml(
+        self,
+        base_config: str | None,
+        arm_policy: str,
+        *,
+        mcp_config: str | None = None,
+    ) -> str:
         base_text = base_config or ""
         parsed_base = tomllib.loads(base_text) if base_text.strip() else {}
         if "developer_instructions" in parsed_base:
             raise RuntimeError("base Codex config already owns developer_instructions")
         layers = [
-            f"developer_instructions = {json.dumps(EXPLICIT_FC_FIRST_POLICY)}",
+            f"developer_instructions = {json.dumps(_benchmark_developer_instructions(arm_policy))}",
             base_text.strip(),
-            self._freecontext_mcp_config_toml().strip(),
+            mcp_config.strip() if mcp_config else "",
         ]
         combined = "\n\n".join(layer for layer in layers if layer)
         tomllib.loads(combined)
         return f"{combined}\n"
+
+    def _freecontext_config_toml(self, base_config: str | None) -> str:
+        return self._benchmark_config_toml(
+            base_config,
+            EXPLICIT_FC_FIRST_POLICY,
+            mcp_config=self._freecontext_mcp_config_toml(),
+        )
 
     async def run(
         self, instruction: str, environment: BaseEnvironment, context: AgentContext
@@ -196,7 +211,8 @@ approval_mode = "approve"
             self.skills_dir = _REMOTE_SKILLS_DIR.as_posix()
             self._config_toml = self._freecontext_config_toml(original_config_toml)
             run_started = True
-            await super().run(
+            await PierCodexBase.run(
+                self,
                 instruction,
                 environment,
                 context,
@@ -328,15 +344,21 @@ class PierCodexControl(PierCodexFreeContext):
         self, instruction: str, environment: BaseEnvironment, context: AgentContext
     ) -> None:
         await self._upload_control_runtime(environment)
+        original_config_toml = self._config_toml
         try:
             await self._configure_benchmark_git_identity(environment)
+            self._config_toml = self._benchmark_config_toml(
+                original_config_toml,
+                EXPLICIT_NATIVE_ONLY_POLICY,
+            )
             await PierCodexBase.run(
                 self,
-                compose_benchmark_instruction(EXPLICIT_NATIVE_ONLY_POLICY, instruction),
+                instruction,
                 environment,
                 context,
             )
         finally:
+            self._config_toml = original_config_toml
             await self._cleanup_control_runtime(environment)
 
     async def _upload_control_runtime(self, environment: BaseEnvironment) -> None:

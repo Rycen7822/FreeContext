@@ -1113,18 +1113,29 @@ test("canonical Pier adapter registers direct MCP without legacy CLI wrappers", 
     /provider_id = model\.get\("provider"\)/u,
     /def _freecontext_provider_api_key\(\) -> str:/u,
     /FREECONTEXT_PROVIDER_API_KEY/u,
-    /return f"\{COMMON_TASK_EFFECT_POLICY\}\\n\\n\{policy\}\\n\\n\[Upstream task instruction\]\\n\{instruction\}"/u,
-    /developer_instructions = \{json\.dumps\(EXPLICIT_FC_FIRST_POLICY\)\}/u,
+    /return f"\{COMMON_TASK_EFFECT_POLICY\}\\n\\n\{arm_policy\}"/u,
+    /developer_instructions = \{json\.dumps\(_benchmark_developer_instructions\(arm_policy\)\)\}/u,
+    /def _benchmark_config_toml\(/u,
     /def _freecontext_config_toml\(self, base_config: str \| None\) -> str:/u,
     /base_text = base_config or ""/u,
     /parsed_base = tomllib\.loads\(base_text\) if base_text\.strip\(\) else \{\}/u,
     /tomllib\.loads\(combined\)/u,
     /self\._config_toml = self\._freecontext_config_toml\(original_config_toml\)/u,
-    /await super\(\)\.run\(\s+instruction,/u,
-    /compose_benchmark_instruction\(EXPLICIT_NATIVE_ONLY_POLICY, instruction\)/u,
+    /self\._benchmark_config_toml\(\s+base_config,\s+EXPLICIT_FC_FIRST_POLICY,\s+mcp_config=self\._freecontext_mcp_config_toml\(\),/u,
+    /await PierCodexBase\.run\(\s+self,\s+instruction,/u,
+    /self\._benchmark_config_toml\(\s+original_config_toml,\s+EXPLICIT_NATIVE_ONLY_POLICY,/u,
     /command="git config --local user\.name 'DeepSWE Benchmark Agent'"/u,
     /command="git config --local user\.email 'benchmark-agent@local\.invalid'"/u,
   ]) assert.match(source, pattern);
+  const rawTaskRuns = source.match(/await PierCodexBase\.run\(\s+self,\s+instruction,\s+environment,\s+context,\s+\)/gu) ?? [];
+  assert.equal(rawTaskRuns.length, 2, "both arms must pass the raw upstream task to PierCodexBase");
+  assert.doesNotMatch(source, /\[Upstream task instruction\]|compose_benchmark_instruction/u);
+  const controlRun = source.match(/class PierCodexControl[\s\S]*?    async def run\([\s\S]*?(?=\n    async def _upload_control_runtime)/u)?.[0] ?? "";
+  assert.doesNotMatch(controlRun, /_freecontext_mcp_config_toml|_upload_freecontext|mcp_servers\.freecontext/u);
+  assert.match(controlRun, /_benchmark_config_toml\(\s+original_config_toml,\s+EXPLICIT_NATIVE_ONLY_POLICY,/u);
+  const treatmentRun = source.match(/    async def run\([\s\S]*?(?=\n    async def _upload_freecontext)/u)?.[0] ?? "";
+  assert.match(treatmentRun, /_upload_freecontext/u);
+  assert.match(treatmentRun, /_freecontext_config_toml\(original_config_toml\)/u);
   assert.doesNotMatch(source, /tokenrhythm\.studio/u);
   assert.doesNotMatch(source, /compose_benchmark_instruction\(EXPLICIT_FC_FIRST_POLICY, instruction\)/u);
   assert.equal(source.includes("git reset --mixed"), false);

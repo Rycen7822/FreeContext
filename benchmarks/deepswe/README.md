@@ -4,7 +4,7 @@
 
 The router is only initially visible selection metadata and selected-skill instructions. It does not explore files, wrap the CLI, change the task instruction, or implement shell polling; exploration remains one atomic `gather_context` MCP call, followed by bounded decisive reads in the parent.
 
-Both arms upload the same local Codex runtime and pass the original DeepSWE instruction unchanged to the same `PierCodexBase`. Keep task revision, image/cache state, model, reasoning effort, service tier, Fast setting, timeout, authentication, Codex CLI version, and any caller-supplied TOML identical. Changing one of those settings is a separate experiment, not a matched pair.
+Both arms upload the same local Codex runtime, put the identical common task-effect policy plus the arm-specific policy in Codex `developer_instructions`, and pass the original DeepSWE instruction unchanged to the same `PierCodexBase`. The only arm differences are the FreeContext policy/MCP/provider/skill capabilities. Keep task revision, image/cache state, model, reasoning effort, service tier, Fast setting, timeout, authentication, Codex CLI version, and any caller-supplied TOML identical. Changing one of those settings is a separate experiment, not a matched pair.
 
 ## Bound Pier integration
 
