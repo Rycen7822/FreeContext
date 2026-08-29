@@ -9,6 +9,7 @@ import shlex
 import tempfile
 import tomllib
 from pathlib import Path, PurePosixPath
+from urllib.parse import urlparse
 
 from pier.environments.base import BaseEnvironment
 from pier.models.agent.context import AgentContext
@@ -79,9 +80,24 @@ def _bundled_provider_base_url() -> str:
     providers = bundled.get("providers")
     provider = providers.get(provider_id) if isinstance(providers, dict) and isinstance(provider_id, str) else None
     base_url = provider.get("base_url") if isinstance(provider, dict) else None
-    if not isinstance(base_url, str) or not base_url.startswith("https://"):
+    parsed_url = urlparse(base_url) if isinstance(base_url, str) else None
+    if (
+        not isinstance(base_url, str)
+        or parsed_url is None
+        or parsed_url.scheme != "https"
+        or not parsed_url.hostname
+        or parsed_url.username is not None
+        or parsed_url.password is not None
+    ):
         raise RuntimeError("bundled FreeContext default route has no valid HTTPS provider URL")
     return base_url
+
+
+def _bundled_provider_hostname() -> str:
+    hostname = urlparse(_bundled_provider_base_url()).hostname
+    if not hostname:
+        raise RuntimeError("bundled FreeContext default route has no provider hostname")
+    return hostname
 
 
 def _freecontext_provider_api_key() -> str:
@@ -111,7 +127,7 @@ class PierCodexFreeContext(PierCodexBase):
 
     def network_allowlist(self) -> NetworkAllowlist:
         base = super().network_allowlist()
-        return NetworkAllowlist(domains=[*base.domains, "tokenrhythm.studio"])
+        return NetworkAllowlist(domains=[*base.domains, _bundled_provider_hostname()])
 
     def install_spec(self) -> AgentInstallSpec:
         return AgentInstallSpec(

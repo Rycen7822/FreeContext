@@ -1,5 +1,8 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
 import { Type } from "@earendil-works/pi-ai";
 import { resolveConfig } from "../src/config.js";
 import { ProviderError } from "../src/errors.js";
@@ -9,23 +12,76 @@ import { runIsolatedFinalizer, runPiSession } from "../src/runtime/pi-session.js
 import { baseRequest } from "./helpers.js";
 
 const DUMMY_KEY = "offline-wire-contract-key";
+const SERVICE_BUSY_FIXTURE_TOML = `
+version = 1
+default_route = "default"
+
+[runtime]
+max_turns = 8
+max_tool_calls = 18
+provider_retry_delays_ms = [3000, 6000, 12000]
+
+[providers.tokenrhythm]
+api = "openai"
+base_url = "https://tokenrhythm.studio/v1"
+credential_env = "SERVICE_BUSY_API_KEY"
+
+[models.tokenrhythm]
+provider = "tokenrhythm"
+model_id = "deepseek-v4-flash-0731"
+context_window = 1000000
+max_output_tokens = 8192
+thinking_level = "low"
+
+[models.tokenrhythm.openai_compat]
+use_streaming = false
+supports_reasoning_effort = true
+supports_strict_mode = false
+supports_required_tool_choice = false
+max_tokens_field = "max_tokens"
+thinking_format = "deepseek"
+
+[routes.default]
+models = ["tokenrhythm"]
+`;
+
+async function withTomlFixture<T>(source: string, run: (configFile: string) => Promise<T>): Promise<T> {
+  const directory = await mkdtemp(path.join(os.tmpdir(), "freecontext-wire-fixture-"));
+  const configFile = path.join(directory, "freecontext.toml");
+  try {
+    await writeFile(configFile, source, "utf8");
+    return await run(configFile);
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+}
+
+function assertLowReasoningPayload(
+  payload: Record<string, unknown>,
+  expectedModel = "glm-5.3-flash",
+): void {
+  assert.equal(payload.model, expectedModel);
+  assert.deepEqual(payload.thinking, { type: "enabled" });
+  assert.equal(payload.reasoning_effort, "low");
+}
 
 function completionResponse(
   id: string,
   message: Readonly<Record<string, unknown>>,
   finishReason: "stop" | "tool_calls",
+  model = "glm-5.3-flash",
 ): Response {
   return new Response(JSON.stringify({
     id,
     object: "chat.completion",
     created: 1,
-    model: "deepseek-v4-flash-0731",
+    model,
     choices: [{ index: 0, message, finish_reason: finishReason }],
     usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 },
   }), { status: 200, headers: { "content-type": "application/json" } });
 }
 
-test("bundled TokenRhythm config produces the accepted Pi Chat Completions wire shape offline", async () => {
+test("bundled primary config produces the accepted Pi Chat Completions wire shape offline", async () => {
   const configFile = new URL("../benchmarks/deepswe/freecontext.toml", import.meta.url).pathname;
   const route = await resolveConfig({
     cli: { configFile },
@@ -33,6 +89,11 @@ test("bundled TokenRhythm config produces the accepted Pi Chat Completions wire 
   });
   const config = route.targets[0];
   assert.ok(config);
+  assert.equal(config.target, "primary");
+  assert.equal(config.provider, "primary");
+  assert.equal(config.model, "glm-5.3-flash");
+  assert.equal(config.thinkingLevel, "low");
+  assert.equal(config.openAICompat.supportsReasoningEffort, true);
   const model = createModel(config);
   assert.equal(model.api, "openai-completions");
   if (model.api !== "openai-completions") throw new Error("benchmark config selected a non-OpenAI model");
@@ -79,7 +140,7 @@ test("bundled TokenRhythm config produces the accepted Pi Chat Completions wire 
 
     assert.equal(result.stopReason, "error");
     assert.equal(fetchCalls, 1);
-    assert.equal(endpoint, "https://tokenrhythm.studio/v1/chat/completions");
+    assert.equal(endpoint, "https://ark.cn-beijing.volces.com/api/plan/v3/chat/completions");
   } finally {
     globalThis.fetch = originalFetch;
   }
@@ -90,16 +151,16 @@ test("bundled TokenRhythm config produces the accepted Pi Chat Completions wire 
     "max_tokens",
     "messages",
     "model",
+    "reasoning_effort",
     "stream",
     "temperature",
     "thinking",
     "tools",
   ]);
-  assert.equal(payload.model, "deepseek-v4-flash-0731");
+  assertLowReasoningPayload(payload, "glm-5.3-flash");
   assert.equal(payload.stream, false);
   assert.equal(payload.max_tokens, 8192);
   assert.equal(payload.temperature, 0);
-  assert.deepEqual(payload.thinking, { type: "disabled" });
 
   const messages = payload.messages as Array<Record<string, unknown>>;
   assert.deepEqual(messages.map((message) => message.role), ["system", "user"]);
@@ -116,7 +177,6 @@ test("bundled TokenRhythm config produces the accepted Pi Chat Completions wire 
     "stream_options",
     "developer",
     "reasoning",
-    "reasoning_effort",
     "store",
     "prompt_cache_key",
   ]) {
@@ -125,11 +185,10 @@ test("bundled TokenRhythm config produces the accepted Pi Chat Completions wire 
 });
 
 test("the non-stream transport retries a TokenRhythm 200 SERVICE_BUSY body through the harness", async () => {
-  const configFile = new URL("../benchmarks/deepswe/freecontext.toml", import.meta.url).pathname;
-  const route = await resolveConfig({
+  const route = await withTomlFixture(SERVICE_BUSY_FIXTURE_TOML, (configFile) => resolveConfig({
     cli: { configFile },
-    processEnv: { FREECONTEXT_PROVIDER_API_KEY: DUMMY_KEY },
-  });
+    processEnv: { SERVICE_BUSY_API_KEY: DUMMY_KEY },
+  }));
   const selected = route.targets[0];
   assert.ok(selected);
   const config = {
@@ -137,6 +196,7 @@ test("the non-stream transport retries a TokenRhythm 200 SERVICE_BUSY body throu
     contextCompactionEnabled: false,
     providerRetryDelaysMs: [1, 2, 4],
   };
+  const payloads: Record<string, unknown>[] = [];
   const originalFetch = globalThis.fetch;
   let fetchCalls = 0;
   globalThis.fetch = (async () => {
@@ -165,14 +225,19 @@ test("the non-stream transport retries a TokenRhythm 200 SERVICE_BUSY body throu
           }),
         },
       }],
-    }, "tool_calls");
+    }, "tool_calls", "deepseek-v4-flash-0731");
   }) as typeof fetch;
 
   try {
     const result = await runPiSession({
       bindings: await loadPiBindings("openai", null, config.openAICompat.useStreaming),
       model: createModel(config),
-      requestOptions: createRequestOptions(config),
+      requestOptions: {
+        ...createRequestOptions(config),
+        onPayload: (value) => {
+          payloads.push(JSON.parse(JSON.stringify(value)) as Record<string, unknown>);
+        },
+      },
       config,
       systemPrompt: "Reply briefly.",
       promptText: "Reply with ok.",
@@ -186,6 +251,8 @@ test("the non-stream transport retries a TokenRhythm 200 SERVICE_BUSY body throu
   } finally {
     globalThis.fetch = originalFetch;
   }
+  assert.equal(payloads.length, 2);
+  for (const payload of payloads) assertLowReasoningPayload(payload, "deepseek-v4-flash-0731");
 });
 
 test("isolated finalization sends required submit_evidence without provider strict mode", async () => {
@@ -250,12 +317,10 @@ test("isolated finalization sends required submit_evidence without provider stri
 
   assert.equal(fetchCalls, 4);
   assert.equal(payloads.length, 4);
+  for (const payload of payloads) assertLowReasoningPayload(payload);
   assert.equal(Object.hasOwn(payloads[0] ?? {}, "tool_choice"), false);
-  assert.deepEqual(payloads[0]?.thinking, { type: "disabled" });
   assert.equal(Object.hasOwn(payloads[1] ?? {}, "tool_choice"), false);
-  assert.deepEqual(payloads[1]?.thinking, { type: "disabled" });
   assert.equal(payloads[2]?.tool_choice, "required");
-  assert.deepEqual(payloads[2]?.thinking, { type: "disabled" });
   assert.equal(payloads[3]?.tool_choice, "required");
   assert.deepEqual(payloads[3]?.messages, payloads[2]?.messages);
   assert.deepEqual(payloads[3]?.tools, payloads[2]?.tools);
@@ -343,8 +408,8 @@ test("provider probe preserves one isolated context across a connection retry", 
 
   assert.equal(fetchCalls, 2);
   assert.equal(payloads.length, 2);
+  for (const payload of payloads) assertLowReasoningPayload(payload);
   assert.equal(payloads[0]?.tool_choice, "auto");
-  assert.deepEqual(payloads[0]?.thinking, { type: "disabled" });
   assert.equal(payloads[1]?.tool_choice, "auto");
   assert.deepEqual(payloads[1]?.messages, payloads[0]?.messages);
   assert.deepEqual(payloads[1]?.tools, payloads[0]?.tools);

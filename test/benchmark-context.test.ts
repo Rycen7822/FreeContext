@@ -1100,9 +1100,14 @@ test("canonical Pier adapter registers direct MCP without legacy CLI wrappers", 
     /--session-dir \{_REMOTE_SESSION_DIR\.as_posix\(\)\}/u,
     /--session-dir \{_REMOTE_SESSION_DIR\.as_posix\(\)\} \\"\$@\\"/u,
     /freecontext-benchmark-context\.mjs/u,
+    /from urllib\.parse import urlparse/u,
     /FREECONTEXT_PROVIDER_CONFIG_PATH/u,
     /freecontext_config\.toml/u,
     /def _bundled_provider_base_url\(\) -> str:/u,
+    /parsed_url = urlparse\(base_url\)/u,
+    /def _bundled_provider_hostname\(\) -> str:/u,
+    /hostname = urlparse\(_bundled_provider_base_url\(\)\)\.hostname/u,
+    /NetworkAllowlist\(domains=\[\*base\.domains, _bundled_provider_hostname\(\)\]\)/u,
     /default_route/u,
     /model_ids = route\.get\("models"\)/u,
     /provider_id = model\.get\("provider"\)/u,
@@ -1120,6 +1125,7 @@ test("canonical Pier adapter registers direct MCP without legacy CLI wrappers", 
     /command="git config --local user\.name 'DeepSWE Benchmark Agent'"/u,
     /command="git config --local user\.email 'benchmark-agent@local\.invalid'"/u,
   ]) assert.match(source, pattern);
+  assert.doesNotMatch(source, /tokenrhythm\.studio/u);
   assert.doesNotMatch(source, /compose_benchmark_instruction\(EXPLICIT_FC_FIRST_POLICY, instruction\)/u);
   assert.equal(source.includes("git reset --mixed"), false);
   for (const legacy of ["_GUIDANCE", "freecontext explore", "_REMOTE_WRAPPER", "write_stdin"]) {
@@ -1129,7 +1135,14 @@ test("canonical Pier adapter registers direct MCP without legacy CLI wrappers", 
     assert.equal(source.includes(implicitRoot), false, `implicit workspace root remains: ${implicitRoot}`);
   }
   assert.match(freeContextConfig, /^api = "openai"$/mu);
-  assert.match(freeContextConfig, /^model_id = "deepseek-v4-flash-0731"$/mu);
+  assert.match(freeContextConfig, /^\[providers\.primary\]$/mu);
+  assert.match(freeContextConfig, /^base_url = "https:\/\/ark\.cn-beijing\.volces\.com\/api\/plan\/v3"$/mu);
+  assert.match(freeContextConfig, /^\[models\.primary\]$/mu);
+  assert.match(freeContextConfig, /^provider = "primary"$/mu);
+  assert.match(freeContextConfig, /^model_id = "glm-5\.3-flash"$/mu);
+  assert.match(freeContextConfig, /^thinking_level = "low"$/mu);
+  assert.match(freeContextConfig, /^supports_reasoning_effort = true$/mu);
+  assert.match(freeContextConfig, /^models = \["primary"\]$/mu);
   assert.match(freeContextConfig, /^credential_env = "FREECONTEXT_PROVIDER_API_KEY"$/mu);
   assert.doesNotMatch(source, /model_providers/u);
 });

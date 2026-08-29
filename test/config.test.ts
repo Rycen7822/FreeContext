@@ -114,8 +114,8 @@ test("tracked TOML examples remain loadable without embedded credentials", async
     cli: { configFile: new URL("../benchmarks/deepswe/freecontext.toml", import.meta.url).pathname },
     processEnv: { FREECONTEXT_PROVIDER_API_KEY: "example-test-key" },
   });
-  assert.deepEqual(benchmark.targets.map((target) => target.target), ["tokenrhythm"]);
-  assert.equal(benchmark.targets[0]?.model, "deepseek-v4-flash-0731");
+  assert.deepEqual(benchmark.targets.map((target) => target.target), ["primary"]);
+  assert.equal(benchmark.targets[0]?.model, "glm-5.3-flash");
   assert.equal(benchmark.targets[0]?.openAICompat.useStreaming, false);
 });
 

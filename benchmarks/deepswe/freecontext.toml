@@ -11,23 +11,23 @@ max_tool_output_bytes = 65536
 max_parallel_tools = 8
 context_compaction_enabled = true
 
-[providers.tokenrhythm]
+[providers.primary]
 api = "openai"
-base_url = "https://tokenrhythm.studio/v1"
+base_url = "https://ark.cn-beijing.volces.com/api/plan/v3"
 auth_mode = "auto"
 credential_env = "FREECONTEXT_PROVIDER_API_KEY"
 
-[models.tokenrhythm]
-provider = "tokenrhythm"
-model_id = "deepseek-v4-flash-0731"
+[models.primary]
+provider = "primary"
+model_id = "glm-5.3-flash"
 context_window = 1000000
 max_output_tokens = 8192
-thinking_level = "off"
+thinking_level = "low"
 
-[models.tokenrhythm.openai_compat]
+[models.primary.openai_compat]
 use_streaming = false
 supports_developer_role = false
-supports_reasoning_effort = false
+supports_reasoning_effort = true
 supports_usage_in_streaming = false
 supports_strict_mode = false
 supports_required_tool_choice = false
@@ -35,4 +35,4 @@ max_tokens_field = "max_tokens"
 thinking_format = "deepseek"
 
 [routes.default]
-models = ["tokenrhythm"]
+models = ["primary"]
