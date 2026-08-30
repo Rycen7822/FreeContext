@@ -1,6 +1,6 @@
 {
   "name": "freecontext",
-  "version": "0.1.0",
+  "version": "0.1.0-rc.1",
   "description": "Read-only repository exploration subagent for Codex, built on the Pi agent loop.",
   "type": "module",
   "bin": {
