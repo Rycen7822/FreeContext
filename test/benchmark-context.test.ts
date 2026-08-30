@@ -1081,9 +1081,19 @@ test("canonical Pier adapter registers direct MCP without legacy CLI wrappers", 
     "If a cell ID returns, exclusively call functions.wait with yield_time_ms=300000 until terminal",
     "Ready/partial and listed gaps do not themselves authorize reentry",
     "only a distinct new typed blocker exposed by Evidence/edit/check may reenter",
+    "COMMON_DIAGNOSTIC_CHECKPOINT = (",
+    "TREATMENT_DIAGNOSTIC_ROUTE = (",
+    "CONTROL_DIAGNOSTIC_ROUTE = (",
     "base Codex config already owns developer_instructions",
     "EXPLICIT_NATIVE_ONLY_POLICY = (",
   ]) assert.equal(source.includes(fragment), true, `explicit arm policy fragment drifted: ${fragment}`);
+  const commonCheckpoint = source.match(/COMMON_DIAGNOSTIC_CHECKPOINT = \(([\s\S]*?)\n\)/u)?.[1] ?? "";
+  assert.match(commonCheckpoint, /After an edit or failed check[\s\S]*at most one direct read[\s\S]*exact failure location/iu);
+  assert.match(commonCheckpoint, /second non-adjacent file read[\s\S]*cross-module search[\s\S]*stop and classify/iu);
+  assert.match(commonCheckpoint, /single-file work[\s\S]*exact failures[\s\S]*routine checks[\s\S]*same handoff gap[\s\S]*remain native/iu);
+  assert.match(commonCheckpoint, /never force a second call/iu);
+  assert.match(source, /TREATMENT_DIAGNOSTIC_ROUTE = \([\s\S]*distinct new static cross-module relationship[\s\S]*prior handoff/iu);
+  assert.match(source, /CONTROL_DIAGNOSTIC_ROUTE = \([\s\S]*continue with native repository tools[\s\S]*FreeContext is disabled/iu);
   for (const retired of [
     "complete unresolved question",
     "same-work-unit follow-up",
@@ -1116,7 +1126,7 @@ test("canonical Pier adapter registers direct MCP without legacy CLI wrappers", 
     /provider_id = model\.get\("provider"\)/u,
     /def _freecontext_provider_api_key\(\) -> str:/u,
     /FREECONTEXT_PROVIDER_API_KEY/u,
-    /return f"\{COMMON_TASK_EFFECT_POLICY\}\\n\\n\{arm_policy\}"/u,
+    /return f"\{COMMON_TASK_EFFECT_POLICY\}\\n\\n\{COMMON_DIAGNOSTIC_CHECKPOINT\}\\n\\n\{arm_policy\}"/u,
     /developer_instructions = \{json\.dumps\(_benchmark_developer_instructions\(arm_policy\)\)\}/u,
     /def _benchmark_config_toml\(/u,
     /def _freecontext_config_toml\(self, base_config: str \| None\) -> str:/u,
@@ -1139,6 +1149,15 @@ test("canonical Pier adapter registers direct MCP without legacy CLI wrappers", 
   const treatmentRun = source.match(/    async def run\([\s\S]*?(?=\n    async def _upload_freecontext)/u)?.[0] ?? "";
   assert.match(treatmentRun, /_upload_freecontext/u);
   assert.match(treatmentRun, /_freecontext_config_toml\(original_config_toml\)/u);
+  assert.match(treatmentRun, /_write_global_agents\(environment, TREATMENT_DIAGNOSTIC_ROUTE\)/u);
+  assert.match(controlRun, /_write_global_agents\(environment, CONTROL_DIAGNOSTIC_ROUTE\)/u);
+  assert.match(source, /_REMOTE_CODEX_HOME = PurePosixPath\("\/tmp\/codex-home"\)/u);
+  assert.match(source, /_REMOTE_GLOBAL_AGENTS = _REMOTE_CODEX_HOME \/ "AGENTS\.md"/u);
+  assert.match(source, /def _global_agents_content\(final_route: str\) -> str:/u);
+  assert.match(source, /mkdir -p \{_REMOTE_CODEX_HOME\.as_posix\(\)\}/u);
+  assert.match(source, /printf '%s'[\s\S]*_REMOTE_GLOBAL_AGENTS\.as_posix\(\)/u);
+  assert.match(source, /rm -rf \{_REMOTE_CODEX_HOME\.as_posix\(\)\}/u);
+  assert.doesNotMatch(source, /AGENTS\.md.*_REMOTE_WORKSPACE_ROOT|_REMOTE_WORKSPACE_ROOT.*AGENTS\.md/u);
   assert.doesNotMatch(source, /tokenrhythm\.studio/u);
   assert.doesNotMatch(source, /compose_benchmark_instruction\(CONDITIONAL_FC_TREATMENT_POLICY, instruction\)/u);
   assert.equal(source.includes("git reset --mixed"), false);

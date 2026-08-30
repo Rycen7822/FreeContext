@@ -39,24 +39,43 @@ _REMOTE_RG = _REMOTE_ROOT / "runtime-bin/rg"
 _REMOTE_AGENT_DIR = PurePosixPath("/logs/agent")
 _REMOTE_SESSION_DIR = _REMOTE_AGENT_DIR / "freecontext-sessions"
 _REMOTE_WORKSPACE_ROOT = PurePosixPath("/app")
+_REMOTE_CODEX_HOME = PurePosixPath("/tmp/codex-home")
+_REMOTE_GLOBAL_AGENTS = _REMOTE_CODEX_HOME / "AGENTS.md"
 
 COMMON_TASK_EFFECT_POLICY = (
     "[Benchmark common task-effect policy]\n"
     "Solve only from the workspace and existing local caches. Do not use web search, curl, wget, raw GitHub, remote git clone/ls-remote/fetch, npm view/pack, remote module or package queries, or any other upstream source discovery for the task solution or patch. Provider, Pier, and benchmark-controller network traffic is infrastructure and does not authorize task-solution network access."
 )
+COMMON_DIAGNOSTIC_CHECKPOINT = (
+    "[Benchmark common diagnostic checkpoint]\n"
+    "After an edit or failed check, make at most one direct read of the exact failure location. Before a second non-adjacent file read or cross-module search for that diagnosis, stop and classify the remaining gap. Single-file work, exact failures, routine checks, and the same handoff gap remain native. Never force a second call."
+)
+TREATMENT_DIAGNOSTIC_ROUTE = (
+    "At this checkpoint, call gather_context only when the classified remaining gap is a distinct new static cross-module relationship not covered by the prior handoff."
+)
+CONTROL_DIAGNOSTIC_ROUTE = (
+    "At this checkpoint, continue with native repository tools because FreeContext is disabled."
+)
 CONDITIONAL_FC_TREATMENT_POLICY = (
     "[Benchmark arm policy: conditional_fc_treatment]\n"
     "FreeContext is available in this treatment but arm enablement does not make a call automatic. Follow the installed skill and route the current evidence gap, whether initial or exposed after Evidence, an edit, or a check. Call gather_context only when that gap meets the skill conditions; otherwise handle bounded reads and ordinary edit/check/diff work directly. When called, gather_context is the only tool in that assistant batch/code cell: never parallelize, and do no native or other tool work during dispatch. If a cell ID returns, exclusively call functions.wait with yield_time_ms=300000 until terminal. Consume inline Evidence, handoff, and nextAction directly. Ready/partial and listed gaps do not themselves authorize reentry; only a distinct new typed blocker exposed by Evidence/edit/check may reenter under the skill contract."
+    "\n"
+    + TREATMENT_DIAGNOSTIC_ROUTE
 )
 EXPLICIT_NATIVE_ONLY_POLICY = (
     "[Benchmark arm policy: explicit_native_only]\n"
     "FreeContext is disabled for this arm. Use native repository tools for exploration "
-    "and do not invoke FreeContext."
+    "and do not invoke FreeContext.\n"
+    + CONTROL_DIAGNOSTIC_ROUTE
 )
 
 
 def _benchmark_developer_instructions(arm_policy: str) -> str:
-    return f"{COMMON_TASK_EFFECT_POLICY}\n\n{arm_policy}"
+    return f"{COMMON_TASK_EFFECT_POLICY}\n\n{COMMON_DIAGNOSTIC_CHECKPOINT}\n\n{arm_policy}"
+
+
+def _global_agents_content(final_route: str) -> str:
+    return f"{COMMON_DIAGNOSTIC_CHECKPOINT}\n\n{final_route}\n"
 
 
 def _runtime_archive() -> Path:
@@ -198,6 +217,18 @@ approval_mode = "approve"
             mcp_config=self._freecontext_mcp_config_toml(),
         )
 
+    async def _write_global_agents(
+        self, environment: BaseEnvironment, final_route: str
+    ) -> None:
+        await self.exec_as_agent(
+            environment,
+            command=(
+                f"mkdir -p {_REMOTE_CODEX_HOME.as_posix()} && "
+                f"printf '%s' {shlex.quote(_global_agents_content(final_route))} "
+                f"> {_REMOTE_GLOBAL_AGENTS.as_posix()}"
+            ),
+        )
+
     async def run(
         self, instruction: str, environment: BaseEnvironment, context: AgentContext
     ) -> None:
@@ -210,6 +241,7 @@ approval_mode = "approve"
             await self._configure_benchmark_git_identity(environment)
             self.skills_dir = _REMOTE_SKILLS_DIR.as_posix()
             self._config_toml = self._freecontext_config_toml(original_config_toml)
+            await self._write_global_agents(environment, TREATMENT_DIAGNOSTIC_ROUTE)
             run_started = True
             await PierCodexBase.run(
                 self,
@@ -323,7 +355,8 @@ approval_mode = "approve"
                 environment,
                 command=(
                     f"rm -f {_REMOTE_SECRET.as_posix()} {_REMOTE_LAUNCHER.as_posix()}; "
-                    f"rmdir {_REMOTE_SECRET_ROOT.as_posix()} 2>/dev/null || true"
+                    f"rmdir {_REMOTE_SECRET_ROOT.as_posix()} 2>/dev/null || true; "
+                    f"rm -rf {_REMOTE_CODEX_HOME.as_posix()}"
                 ),
             )
         except Exception:
@@ -351,6 +384,7 @@ class PierCodexControl(PierCodexFreeContext):
                 original_config_toml,
                 EXPLICIT_NATIVE_ONLY_POLICY,
             )
+            await self._write_global_agents(environment, CONTROL_DIAGNOSTIC_ROUTE)
             await PierCodexBase.run(
                 self,
                 instruction,
@@ -397,7 +431,7 @@ class PierCodexControl(PierCodexFreeContext):
                     f"\"{_REMOTE_CODEX.as_posix()}\" ]; then rm -f /usr/local/bin/codex; fi; "
                     "if [ \"$(readlink /usr/local/bin/rg 2>/dev/null || true)\" = "
                     f"\"{_REMOTE_RG.as_posix()}\" ]; then rm -f /usr/local/bin/rg; fi; "
-                    f"rm -rf {_REMOTE_ROOT.as_posix()}"
+                    f"rm -rf {_REMOTE_ROOT.as_posix()} {_REMOTE_CODEX_HOME.as_posix()}"
                 ),
             )
         except Exception:

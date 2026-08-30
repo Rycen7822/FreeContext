@@ -14,7 +14,7 @@ test("implicit discovery routes each current gap while preserving the atomic cal
     /^---\nname: freecontext\ndescription: (?<description>[^\n]+)\n---\n/u,
   )?.groups?.description;
   assert.ok(description);
-  assert.ok(Buffer.byteLength(skill, "utf8") <= 4_800);
+  assert.ok(Buffer.byteLength(skill, "utf8") <= 5_400);
   assert.ok([...description].length <= 420);
   for (const gate of FREECONTEXT_ELIGIBILITY_POLICY.gates) assert.equal(skill.includes(gate.instruction), false);
   for (const trigger of ["current evidence gap", "cross-module", "multi-role", "long-document", "source-bound"]) {
@@ -58,6 +58,14 @@ test("implicit discovery routes each current gap while preserving the atomic cal
   assert.doesNotMatch(skill, /\bworkspace_root\b/u);
   assert.match(skill, /A listed partial gap is not permission to replay/iu);
   assert.match(skill, /Ordinary edit\/check\/read\/diff work does not call FreeContext/iu);
+  assert.match(skill, /After an edit or failed check, use a diagnostic checkpoint/iu);
+  assert.match(skill, /at most one direct read of the exact failure location is allowed/iu);
+  assert.match(skill, /Before a second non-adjacent file read or cross-module search for that diagnosis, stop and classify the remaining gap/iu);
+  assert.match(skill, /distinct new static cross-module relationship not covered by the prior handoff/iu);
+  for (const nativeCase of ["Single-file work", "exact failures", "routine checks", "same handoff gap"]) {
+    assert.match(skill, new RegExp(`${nativeCase}.*remain native`, "iu"));
+  }
+  assert.match(skill, /Never force a second call/iu);
   assert.match(skill, /Copy `priorHandoff` verbatim/iu);
   assert.match(skill, /`workUnit` exactly equal to `priorHandoff\.workUnit`/iu);
   for (const origin of ["evidence_consumption", "edit", "check"]) assert.match(skill, new RegExp(`(?:${origin})`, "u"));
