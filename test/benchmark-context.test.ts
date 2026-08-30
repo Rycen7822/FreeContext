@@ -1064,22 +1064,23 @@ test("two-call export assigns each completed host cell to one disjoint invocatio
 test("canonical Pier adapter registers direct MCP without legacy CLI wrappers", async () => {
   const source = await readFile(new URL("../benchmarks/deepswe/pier_codex_freecontext_agent.py", import.meta.url), "utf8");
   const freeContextConfig = await readFile(new URL("../benchmarks/deepswe/freecontext.toml", import.meta.url), "utf8");
-  const treatmentPolicy = source.match(/EXPLICIT_FC_FIRST_POLICY = \(([\s\S]*?)\n\)/u)?.[1] ?? "";
+  const treatmentPolicy = source.match(/CONDITIONAL_FC_TREATMENT_POLICY = \(([\s\S]*?)\n\)/u)?.[1] ?? "";
   const controlPolicy = source.match(/EXPLICIT_NATIVE_ONLY_POLICY = \(([\s\S]*?)\n\)/u)?.[1] ?? "";
   assert.doesNotMatch(treatmentPolicy, /curl|wget|raw GitHub|npm view|npm pack/iu);
   assert.doesNotMatch(controlPolicy, /curl|wget|raw GitHub|npm view|npm pack/iu);
   for (const fragment of [
     "COMMON_TASK_EFFECT_POLICY = (",
     "Do not use web search, curl, wget, raw GitHub, remote git clone/ls-remote/fetch, npm view/pack",
-    "EXPLICIT_FC_FIRST_POLICY = (",
-    "First read the installed skill; next construct its legal caller args once",
-    "construct its legal caller args once, using workUnit.outcome=edit for edits and 2-4 concrete single targets by default",
-    "as the only tool call in that assistant batch/code cell",
-    "during dispatch do no native or other tool work and never parallelize",
+    "CONDITIONAL_FC_TREATMENT_POLICY = (",
+    "arm enablement does not make a call automatic",
+    "route the current evidence gap, whether initial or exposed after Evidence, an edit, or a check",
+    "Call gather_context only when that gap meets the skill conditions",
+    "handle bounded reads and ordinary edit/check/diff work directly",
+    "is the only tool in that assistant batch/code cell",
+    "never parallelize, and do no native or other tool work during dispatch",
     "If a cell ID returns, exclusively call functions.wait with yield_time_ms=300000 until terminal",
-    "On terminal consume inline Evidence, handoff, and nextAction directly; before the first edit/check do not repeat Evidence-covered reads or broad discovery",
-    "Evidence should already be brief and self-contained (normally 8-24 lines); do not depend on post-hoc fitter trimming",
-    "nearest existing owner/seam, caller, or test convention",
+    "Ready/partial and listed gaps do not themselves authorize reentry",
+    "only a distinct new typed blocker exposed by Evidence/edit/check may reenter",
     "base Codex config already owns developer_instructions",
     "EXPLICIT_NATIVE_ONLY_POLICY = (",
   ]) assert.equal(source.includes(fragment), true, `explicit arm policy fragment drifted: ${fragment}`);
@@ -1088,6 +1089,8 @@ test("canonical Pier adapter registers direct MCP without legacy CLI wrappers", 
     "same-work-unit follow-up",
     "private acceptance receipt",
     "Do not search, list, or open an uncited path first",
+    "This treatment requires FreeContext",
+    "2-4 concrete single targets",
   ]) assert.equal(source.includes(retired), false);
   for (const gate of FREECONTEXT_ELIGIBILITY_POLICY.gates) assert.equal(source.includes(gate.instruction), false);
   for (const pattern of [
@@ -1121,7 +1124,7 @@ test("canonical Pier adapter registers direct MCP without legacy CLI wrappers", 
     /parsed_base = tomllib\.loads\(base_text\) if base_text\.strip\(\) else \{\}/u,
     /tomllib\.loads\(combined\)/u,
     /self\._config_toml = self\._freecontext_config_toml\(original_config_toml\)/u,
-    /self\._benchmark_config_toml\(\s+base_config,\s+EXPLICIT_FC_FIRST_POLICY,\s+mcp_config=self\._freecontext_mcp_config_toml\(\),/u,
+    /self\._benchmark_config_toml\(\s+base_config,\s+CONDITIONAL_FC_TREATMENT_POLICY,\s+mcp_config=self\._freecontext_mcp_config_toml\(\),/u,
     /await PierCodexBase\.run\(\s+self,\s+instruction,/u,
     /self\._benchmark_config_toml\(\s+original_config_toml,\s+EXPLICIT_NATIVE_ONLY_POLICY,/u,
     /command="git config --local user\.name 'DeepSWE Benchmark Agent'"/u,
@@ -1137,7 +1140,7 @@ test("canonical Pier adapter registers direct MCP without legacy CLI wrappers", 
   assert.match(treatmentRun, /_upload_freecontext/u);
   assert.match(treatmentRun, /_freecontext_config_toml\(original_config_toml\)/u);
   assert.doesNotMatch(source, /tokenrhythm\.studio/u);
-  assert.doesNotMatch(source, /compose_benchmark_instruction\(EXPLICIT_FC_FIRST_POLICY, instruction\)/u);
+  assert.doesNotMatch(source, /compose_benchmark_instruction\(CONDITIONAL_FC_TREATMENT_POLICY, instruction\)/u);
   assert.equal(source.includes("git reset --mixed"), false);
   for (const legacy of ["_GUIDANCE", "freecontext explore", "_REMOTE_WRAPPER", "write_stdin"]) {
     assert.equal(source.includes(legacy), false, `legacy adapter surface remains: ${legacy}`);

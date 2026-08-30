@@ -159,28 +159,28 @@ export function decideFreeContextEligibility(
   }
 
   const roles = requiredRoles(facts.evidenceQuestions);
+  if (hasPreciseReference(facts.knownRefs) && facts.boundedReadSufficient) {
+    const selected = gate(1);
+    return Object.freeze({ outcome: "direct_read", gate: selected.order, reason: selected.instruction });
+  }
+
   const complex = roles.size >= 2 || facts.crossModuleCallChain || facts.jointConfigCount >= 2 ||
     facts.crossDocumentSynthesis || facts.longDocumentMultiFact || facts.sourceBoundPurpose !== null;
   if (complex) {
-    const selected = gate(1);
+    const selected = gate(2);
     return Object.freeze({ outcome: "call", gate: selected.order, reason: selected.instruction });
   }
 
   const nativeExpansionObserved = facts.nativeSearchBatchCount > 0 || facts.distinctNonEvidenceReadPathCount > 0;
   if (nativeExpansionObserved && !facts.boundedReadSufficient) {
-    const selected = gate(2);
+    const selected = gate(3);
     return Object.freeze({ outcome: "call", gate: selected.order, reason: selected.instruction });
   }
 
   if (facts.exactCandidateCount !== null &&
       !(hasPreciseReference(facts.knownRefs) && facts.boundedReadSufficient)) {
-    const selected = gate(3);
-    return Object.freeze({ outcome: selected.outcome, gate: selected.order, reason: selected.instruction });
-  }
-
-  if (hasPreciseReference(facts.knownRefs) && facts.boundedReadSufficient) {
     const selected = gate(4);
-    return Object.freeze({ outcome: "direct_read", gate: selected.order, reason: selected.instruction });
+    return Object.freeze({ outcome: selected.outcome, gate: selected.order, reason: selected.instruction });
   }
 
   const selected = gate(5);

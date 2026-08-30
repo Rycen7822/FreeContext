@@ -127,11 +127,11 @@ test("no-network MCP loopback awaits one terminal Promise and never emits an int
     assert.equal(tool?.title, "Gather context with FreeContext");
     assert.equal(tool?.description, TOOL_DESCRIPTION);
     assert.ok(tool?.description?.startsWith(
-      "Use gather_context as the first read-only exploration action for an eligible initial or mid-task episode. ",
+      "Route each current evidence gap independently; gather_context is available for an eligible initial or mid-task episode but is not automatic. ",
     ));
     let previousGateIndex = -1;
     for (const gate of FREECONTEXT_ELIGIBILITY_POLICY.gates) {
-      const gateIndex = tool?.description?.indexOf(`Gate ${gate.order}: ${gate.instruction}`) ?? -1;
+      const gateIndex: number = tool?.description?.indexOf(`Gate ${gate.order}: ${gate.instruction}`) ?? -1;
       assert.ok(gateIndex > previousGateIndex);
       previousGateIndex = gateIndex;
     }

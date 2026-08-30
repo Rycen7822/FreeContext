@@ -275,7 +275,7 @@ export async function compileFreeContextResult(
           kind: "consume_evidence",
           reason: clipSingleLine(status === "ready"
             ? "Use inline Evidence for the next edit/check; call FreeContext when edit/check exposes a new source-bound gap."
-            : "Use supported Evidence now; if a listed gap blocks the next edit/check, call FreeContext for that gap.", RESULT_LIMITS.detailCodePoints),
+            : "Use Evidence; listed gaps do not authorize replay. Reenter only for a distinct blocker exposed by Evidence/edit/check.", RESULT_LIMITS.detailCodePoints),
         }
       : {
           kind: "exact_probe",

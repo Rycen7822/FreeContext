@@ -12,32 +12,32 @@ export interface FreeContextEligibilityGate {
 }
 
 export const FREECONTEXT_ELIGIBILITY_POLICY = Object.freeze({
-  id: "freecontext-eligibility-v3",
+  id: "freecontext-eligibility-v4",
   toolName: "gather_context",
   gates: Object.freeze([
     Object.freeze({
       order: 1,
-      id: "delegated_scope",
-      outcome: "call",
-      instruction: "Call before native exploration at task start or for a new mid-task issue needing two evidence roles, a cross-module chain, two joint configs, cross-document synthesis, long-document facts, or source-bound planning, review, or diagnosis.",
+      id: "bounded_direct_action",
+      outcome: "direct_read",
+      instruction: "Handle one precise path, path-bound symbol, stack location, changed hunk, exact failure location, Git diff or status, or test directly when bounded evidence or action can close the current gap.",
     }),
     Object.freeze({
       order: 2,
-      id: "native_escalation",
+      id: "delegated_scope",
       outcome: "call",
-      instruction: "Call before broader native exploration when the current evidence or one bounded read cannot close the active coverage gap.",
+      instruction: "Call for the current gap when it needs two evidence roles, a cross-module chain, two joint configs, cross-document synthesis, long-document facts, or source-bound planning, review, or diagnosis.",
     }),
     Object.freeze({
       order: 3,
-      id: "candidate_scope",
+      id: "native_escalation",
       outcome: "call",
-      instruction: "After one exact probe, read one candidate path only when it can close the active gap; if multiple paths are needed or scope expands, call gather_context before broader exploration.",
+      instruction: "After bounded orientation, call before broader native exploration when current evidence or one bounded read cannot close the active gap.",
     }),
     Object.freeze({
       order: 4,
-      id: "bounded_direct_action",
-      outcome: "direct_read",
-      instruction: "Without a probe, directly read only a changed hunk or exact failure location when one bounded read suffices; Git status or diff and tests stay direct.",
+      id: "candidate_scope",
+      outcome: "call",
+      instruction: "After one exact probe, read one candidate path only when it can close the active gap; if multiple paths are needed or scope expands, call gather_context before broader exploration.",
     }),
     Object.freeze({
       order: 5,
@@ -47,12 +47,12 @@ export const FREECONTEXT_ELIGIBILITY_POLICY = Object.freeze({
     }),
   ] satisfies readonly FreeContextEligibilityGate[]),
   invariants: Object.freeze([
-    "Familiarity, known files, or keywords never weaken cross-document, cross-section, impact-map, or multi-role eligibility.",
+    "Route the current evidence gap rather than task-level complexity or familiarity: a gap that truly needs cross-document or multi-role synthesis is not bounded-read sufficient and calls FreeContext, while an overall multi-file task does not call automatically.",
     "FreeContext is read-only: no edits, tests, Git, packages, web, or credentials.",
-    "Read the skill once at task start; later episodes call gather_context directly without catalog discovery.",
+    "Read the selected skill before constructing a call; later eligible episodes call gather_context directly without catalog discovery.",
     "Question role is an evidence category, not an agent persona: use only implementation, caller, test, or contract.",
-    "Each request names one current edit, check, answer, or decision work unit and binds every question to one structured path, symbol, or topic fact target; target IDs are stable handles, not semantic proof.",
-    "The first call is not a repository map: ask only atomic source-bound facts that directly unblock the current work unit. For requested new behavior, ask for the nearest existing extension seam and confirmed presence or absence rather than presupposing a new symbol exists.",
+    "Each request names one stable outer edit, check, answer, or decision work unit and binds every question to one structured path, symbol, or topic fact target; target IDs are stable handles, not semantic proof.",
+    "An invocation is not a repository map: normally ask for the one atomic source-bound fact that directly unblocks the current work unit. For requested new behavior, ask for the nearest existing extension seam and confirmed presence or absence rather than presupposing a new symbol exists.",
     "Use supported partial Evidence immediately. Execute the handoff; only a new typed blocker exposed while consuming Evidence or by edit/check may start another invocation.",
     "A typed reentry copies priorHandoff verbatim, keeps request.workUnit exactly equal to priorHandoff.workUnit, and binds blockingGap.targetId and scope to a current declared target.",
     "Reentry origin is structured as evidence_consumption with evidenceIds and optional priorGapId, edit with changedPaths, or check with check and optional failureLocation; do not guess hidden fields.",
@@ -73,11 +73,11 @@ function renderEligibilityPolicy(): string {
   const gates = FREECONTEXT_ELIGIBILITY_POLICY.gates
     .map((gate) => `Gate ${gate.order}: ${gate.instruction}`)
     .join(" ");
-  return `Use gather_context as the first read-only exploration action for an eligible initial or mid-task episode. ${gates} ${FREECONTEXT_ELIGIBILITY_POLICY.invariants.join(" ")}`;
+  return `Route each current evidence gap independently; gather_context is available for an eligible initial or mid-task episode but is not automatic. ${gates} ${FREECONTEXT_ELIGIBILITY_POLICY.invariants.join(" ")}`;
 }
 
 export const TOOL_DESCRIPTION = renderEligibilityPolicy();
-export const SERVER_INSTRUCTIONS = `FreeContext exposes one read-only ${FREECONTEXT_ELIGIBILITY_POLICY.toolName} tool governed by ${FREECONTEXT_ELIGIBILITY_POLICY.id}. Each invocation binds to the public MCP request id and either an operator-configured absolute workspace root or one public MCP file root; the caller sends one current work unit and one structured fact target per evidence question. A typed reentry copies the priorHandoff verbatim, preserves request.workUnit exactly, binds its new blocking gap to a declared target, and uses evidence_consumption, edit, or check origin fields; no hidden continuation fields are required. The invocation is atomic, awaits one terminal outer result, and never replays a pending or terminal request. Follow the returned nextAction; use supported partial Evidence immediately, execute the handoff, and start another invocation only for a new typed blocking or newly exposed source-bound issue. Ready is invocation-scoped. Never send credentials or source dumps.`;
+export const SERVER_INSTRUCTIONS = `FreeContext exposes one read-only ${FREECONTEXT_ELIGIBILITY_POLICY.toolName} tool governed by ${FREECONTEXT_ELIGIBILITY_POLICY.id}. Each invocation binds to the public MCP request id and either an operator-configured absolute workspace root or one public MCP file root; the caller sends one stable outer work unit and one structured fact target per evidence question. A typed reentry copies the priorHandoff verbatim, preserves request.workUnit exactly, binds its distinct new blocking gap to a declared target, and uses evidence_consumption, edit, or check origin fields; no hidden continuation fields are required. The invocation is atomic, awaits one terminal outer result, and never replays a pending or terminal request. Follow the returned nextAction; use supported partial Evidence immediately and execute the handoff. A listed gap or ready/partial status does not authorize replay; only a distinct new typed blocker exposed by Evidence consumption, an edit, or a check can reenter. Ready is invocation-scoped. Never send credentials or source dumps.`;
 
 export const MODEL_RESULT_MAX_BYTES = 8_192;
 export const RESULT_LIMITS = Object.freeze({
@@ -584,7 +584,7 @@ export function serializeForModel(rawResult: Readonly<FreeContextResult>): strin
   if (!result.handoff) lines.push("-");
   else lines.push(`- prior_handoff=${JSON.stringify(result.handoff)}`);
   if (result.nextAction.kind === "consume_evidence") {
-    lines.push(`Follow nextAction: consume inline Evidence and proceed to edit/check. If change-critical context is omitted, one necessary adjacent read on an Evidence path is allowed; broader discovery calls FreeContext. ${result.nextAction.reason}`);
+    lines.push(`Follow nextAction: consume inline Evidence and proceed to edit/check. If change-critical context is omitted, one necessary adjacent read on an Evidence path is allowed. A listed gap is not replay authorization; reenter only for a distinct new typed blocker exposed by Evidence consumption, an edit, or a check. ${result.nextAction.reason}`);
   } else {
     lines.push(`Follow nextAction: make one exact non-broad path or symbol probe and read at most one candidate path; broader discovery calls FreeContext. ${result.nextAction.reason}`);
     if (result.nextAction.recovery) {

@@ -4,7 +4,7 @@ import { runInNewContext } from "node:vm";
 import test from "node:test";
 import { FREECONTEXT_ELIGIBILITY_POLICY, FreeContextCallerRequestSchema } from "../src/mcp/contracts.js";
 
-test("implicit discovery routes complex reads to one MCP tool without copying eligibility policy", async () => {
+test("implicit discovery routes each current gap while preserving the atomic caller contract", async () => {
   const [skill, metadata] = await Promise.all([
     readFile(new URL("../skills/freecontext/SKILL.md", import.meta.url), "utf8"),
     readFile(new URL("../skills/freecontext/agents/openai.yaml", import.meta.url), "utf8"),
@@ -14,20 +14,15 @@ test("implicit discovery routes complex reads to one MCP tool without copying el
     /^---\nname: freecontext\ndescription: (?<description>[^\n]+)\n---\n/u,
   )?.groups?.description;
   assert.ok(description);
-  assert.ok(Buffer.byteLength(skill, "utf8") <= 3_200);
+  assert.ok(Buffer.byteLength(skill, "utf8") <= 4_800);
   assert.ok([...description].length <= 420);
-  assert.equal(
-    description,
-    "Delegate multi-file, cross-module, long-document, multi-document, or source-bound exploration to gather_context; follow its structured nextAction and continuation contract.",
-  );
   for (const gate of FREECONTEXT_ELIGIBILITY_POLICY.gates) assert.equal(skill.includes(gate.instruction), false);
-  assert.match(skill, /read this file first; the next cell calls `tools\.mcp__freecontext__gather_context`/iu);
-  for (const trigger of ["multi-file", "cross-module", "long-document", "source-bound"]) {
+  for (const trigger of ["current evidence gap", "cross-module", "multi-role", "long-document", "source-bound"]) {
     assert.ok(description.includes(trigger));
   }
-  assert.match(description, /structured nextAction and continuation contract/iu);
-  assert.doesNotMatch(description, /second search batch|third unrelated path/iu);
-  assert.doesNotMatch(skill, /never auto-trigger|only (?:after )?an explicit user request/iu);
+  assert.match(description, /Use initially or after Evidence, an edit, or a check/iu);
+  assert.match(description, /exact path.*changed hunk.*diff or status.*test.*exact failure location/iu);
+  assert.doesNotMatch(skill, /call FC before native work|at task start|first read-only exploration action/iu);
   assert.match(skill, /```js\n\/\/ @exec: \{"yield_time_ms": 300000, "max_output_tokens": 10000\}/u);
   const codeStart = skill.indexOf("```js\n");
   const pragma = skill.indexOf("// @exec: {\"yield_time_ms\": 300000, \"max_output_tokens\": 10000}");
@@ -35,10 +30,9 @@ test("implicit discovery routes complex reads to one MCP tool without copying el
   const gatherCall = skill.indexOf("const result = await tools.mcp__freecontext__gather_context(args);");
   assert.equal(pragma, codeStart + "```js\n".length);
   assert.ok(pragma < argsCue && argsCue < gatherCall);
-  assert.doesNotMatch(skill, /Use after constructing `args`/u);
   assert.match(skill, /gather_context` alone/u);
   assert.match(skill, /Never parallelize or batch/u);
-  assert.match(skill, /During dispatch do no native or other tool work/u);
+  assert.match(skill, /do other work during dispatch/u);
   assert.match(skill, /typeof tools\.mcp__freecontext__gather_context !== "function"/u);
   assert.doesNotMatch(skill, /ALL_TOOLS/u);
   assert.equal(skill.match(/await tools\.mcp__freecontext__gather_context\(args\)/gu)?.length, 1);
@@ -48,31 +42,28 @@ test("implicit discovery routes complex reads to one MCP tool without copying el
   assert.match(skill, /terminalTexts\.length !== 1/u);
   assert.doesNotMatch(skill, /JSON\.stringify/u);
   assert.match(skill, /No waiting Hook/u);
-  assert.match(skill, /Caller fields: `taskText`, `workUnit`, `evidenceQuestions`/u);
   const template = skill.match(/`(?<template>const args=\{[\s\S]+?\};)`/u)?.groups?.template;
   assert.ok(template);
   const templateArgs = runInNewContext(`${template}\nargs`, Object.create(null), { timeout: 100 });
   const parsedTemplate = FreeContextCallerRequestSchema.parse(templateArgs);
   assert.equal(parsedTemplate.workUnit.outcome, "edit");
-  assert.equal(parsedTemplate.workUnit.goal, "Change goal.");
+  assert.match(parsedTemplate.workUnit.goal, /conditional routing/iu);
   assert.equal(parsedTemplate.evidenceQuestions.length, 1);
+  assert.equal(parsedTemplate.evidenceQuestions[0]?.role, "implementation");
   assert.equal(parsedTemplate.evidenceQuestions[0]?.target.coverageMode, "single");
-  assert.match(skill, /Default 2–4 concrete `single` targets/u);
-  assert.match(skill, /`exhaustive` only for an explicit complete enumeration/u);
-  assert.match(skill, /nearest owner\/seam\/caller\/test/u);
-  assert.match(skill, /knownRefs\(path\/symbol\/stack\)/u);
-  assert.match(skill, /Main agent owns edits, checks, Git, packages, and web/u);
+  assert.match(skill, /Roles are only `implementation`, `caller`, `test`, or `contract`/u);
+  assert.match(skill, /Usually ask for the one concrete `single` target actually needed/u);
+  assert.match(skill, /`knownRefs` shapes are exactly/u);
+  assert.match(skill, /stable outer implementation goal/u);
   assert.doesNotMatch(skill, /\bworkspace_root\b/u);
-  assert.match(skill, /Consume inline Evidence\/`nextAction` directly/u);
-  assert.match(skill, /Before first edit\/check do not reread covered content/u);
-  assert.match(skill, /`ready`\/`partial` include a handoff/u);
-  assert.match(skill, /one cited-adjacent read only if critical context is omitted/iu);
-  assert.match(skill, /Broader discovery calls FC/iu);
+  assert.match(skill, /A listed partial gap is not permission to replay/iu);
+  assert.match(skill, /Ordinary edit\/check\/read\/diff work does not call FreeContext/iu);
   assert.match(skill, /Copy `priorHandoff` verbatim/iu);
-  assert.match(skill, /its `workUnit` exactly/iu);
+  assert.match(skill, /`workUnit` exactly equal to `priorHandoff\.workUnit`/iu);
   for (const origin of ["evidence_consumption", "edit", "check"]) assert.match(skill, new RegExp(`(?:${origin})`, "u"));
   assert.match(skill, /targetId,kind,scope,requiredFact,origin/iu);
-  assert.match(skill, /Do not guess fields or reenter for adjacent context/iu);
+  assert.match(skill, /Never target a changed path or exact failure path/iu);
+  assert.match(skill, /Recovery is once-only/iu);
   assert.doesNotMatch(skill, /complete unresolved question|same-unit|same gaps|Acceptance receipt|private acceptance receipt/iu);
 
   assert.match(metadata, /^  allow_implicit_invocation: true$/mu);
@@ -80,7 +71,10 @@ test("implicit discovery routes complex reads to one MCP tool without copying el
   assert.match(metadata, /^    - type: "mcp"$/mu);
   assert.equal(metadata.match(/^      value: "freecontext"$/gmu)?.length, 1);
   const shortDescription = metadata.match(/^  short_description: "([^"]+)"$/mu)?.[1];
-  assert.equal(shortDescription, "First cell reads skill only; next calls gather_context");
+  assert.ok(shortDescription);
+  assert.ok([...shortDescription].length >= 25 && [...shortDescription].length <= 64);
+  assert.match(shortDescription, /current evidence gaps/iu);
+  assert.doesNotMatch(shortDescription, /first|next/iu);
 
   const routingSurface = `${skill}\n${metadata}`;
   for (const forbidden of [

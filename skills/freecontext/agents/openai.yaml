@@ -1,6 +1,6 @@
 interface:
   display_name: "FreeContext"
-  short_description: "First cell reads skill only; next calls gather_context"
+  short_description: "Route current evidence gaps with gather_context"
 policy:
   allow_implicit_invocation: true
 dependencies:

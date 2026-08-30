@@ -44,9 +44,9 @@ COMMON_TASK_EFFECT_POLICY = (
     "[Benchmark common task-effect policy]\n"
     "Solve only from the workspace and existing local caches. Do not use web search, curl, wget, raw GitHub, remote git clone/ls-remote/fetch, npm view/pack, remote module or package queries, or any other upstream source discovery for the task solution or patch. Provider, Pier, and benchmark-controller network traffic is infrastructure and does not authorize task-solution network access."
 )
-EXPLICIT_FC_FIRST_POLICY = (
-    "[Benchmark arm policy: explicit_fc_first]\n"
-    "This treatment requires FreeContext. First read the installed skill; next construct its legal caller args once, using workUnit.outcome=edit for edits and 2-4 concrete single targets by default. Call gather_context as the only tool call in that assistant batch/code cell; during dispatch do no native or other tool work and never parallelize. If a cell ID returns, exclusively call functions.wait with yield_time_ms=300000 until terminal. On terminal consume inline Evidence, handoff, and nextAction directly; before the first edit/check do not repeat Evidence-covered reads or broad discovery. Evidence should already be brief and self-contained (normally 8-24 lines); do not depend on post-hoc fitter trimming. Follow the skill and ask for the nearest existing owner/seam, caller, or test convention for new behavior."
+CONDITIONAL_FC_TREATMENT_POLICY = (
+    "[Benchmark arm policy: conditional_fc_treatment]\n"
+    "FreeContext is available in this treatment but arm enablement does not make a call automatic. Follow the installed skill and route the current evidence gap, whether initial or exposed after Evidence, an edit, or a check. Call gather_context only when that gap meets the skill conditions; otherwise handle bounded reads and ordinary edit/check/diff work directly. When called, gather_context is the only tool in that assistant batch/code cell: never parallelize, and do no native or other tool work during dispatch. If a cell ID returns, exclusively call functions.wait with yield_time_ms=300000 until terminal. Consume inline Evidence, handoff, and nextAction directly. Ready/partial and listed gaps do not themselves authorize reentry; only a distinct new typed blocker exposed by Evidence/edit/check may reenter under the skill contract."
 )
 EXPLICIT_NATIVE_ONLY_POLICY = (
     "[Benchmark arm policy: explicit_native_only]\n"
@@ -194,7 +194,7 @@ approval_mode = "approve"
     def _freecontext_config_toml(self, base_config: str | None) -> str:
         return self._benchmark_config_toml(
             base_config,
-            EXPLICIT_FC_FIRST_POLICY,
+            CONDITIONAL_FC_TREATMENT_POLICY,
             mcp_config=self._freecontext_mcp_config_toml(),
         )
 

@@ -143,7 +143,7 @@ test("compiler cannot mark a required multi-span question ready after one narrow
   assert.equal(partial.gaps.find((gap) => gap.questionId === "implementation")?.reason,
     "Only 1 of 2 required coverage slots were validated.");
   assert.equal(partial.nextAction.reason,
-    "Use supported Evidence now; if a listed gap blocks the next edit/check, call FreeContext for that gap.");
+    "Use Evidence; listed gaps do not authorize replay. Reenter only for a distinct blocker exposed by Evidence/edit/check.");
   assert.deepEqual(partial.handoff?.evidenceIds, ["e1", "e2"]);
   assert.deepEqual(partial.handoff?.blockingGaps.map((gap) => gap.targetId), ["implementation-target"]);
 
@@ -399,7 +399,7 @@ test("compiler turns role mismatch and rejected generated paths into explicit ga
   assert.equal(result.errorCode, null);
   assert.deepEqual(result.evidence.map((item) => item.questionId), ["implementation"]);
   assert.deepEqual(result.gaps, [{ questionId: "tests", targetId: "tests-target", reason: "Test evidence remains unresolved." }]);
-  assert.equal(result.nextAction.reason, "Use supported Evidence now; if a listed gap blocks the next edit/check, call FreeContext for that gap.");
+  assert.equal(result.nextAction.reason, "Use Evidence; listed gaps do not authorize replay. Reenter only for a distinct blocker exposed by Evidence/edit/check.");
 }));
 
 test("compiler does not treat a trailing newline as an extra citable line", async () => withWorkspace(async (root) => {

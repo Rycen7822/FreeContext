@@ -149,7 +149,7 @@ test("serializeForModel is text-first and contains every canonical evidence fiel
     "-",
     "Handoff:",
     "- prior_handoff={\"id\":\"handoff:session-1\",\"workUnit\":{\"outcome\":\"answer\",\"goal\":\"Use the verified routing evidence.\"},\"evidenceIds\":[\"e1\"],\"outcome\":{\"kind\":\"answer\",\"instruction\":\"Answer from the verified routing evidence.\"},\"blockingGaps\":[]}",
-    "Follow nextAction: consume inline Evidence and proceed to edit/check. If change-critical context is omitted, one necessary adjacent read on an Evidence path is allowed; broader discovery calls FreeContext. Read the decisive implementation span.",
+    "Follow nextAction: consume inline Evidence and proceed to edit/check. If change-critical context is omitted, one necessary adjacent read on an Evidence path is allowed. A listed gap is not replay authorization; reenter only for a distinct new typed blocker exposed by Evidence consumption, an edit, or a check. Read the decisive implementation span.",
     "Gaps:",
     "-",
     "Summary: The implementation and test locations are verified.",
