@@ -864,6 +864,68 @@ test("delivery matches a recovery-only caller payload to its restored committed 
   assert.equal(delivery.deliveryStatus, "matched");
 });
 
+test("delivery matches a compact continuation caller payload and rejects a changed origin", () => {
+  const base = v3Session();
+  const target = {
+    id: "next",
+    subject: { kind: "symbol" as const, symbol: "next" },
+    factKind: "behavior" as const,
+    coverageMode: "single" as const,
+  };
+  const question = "Where is the next seam?";
+  const request = FreeContextRequestSchema.parse({
+    ...base.request,
+    evidenceQuestions: [{
+      id: "child-question",
+      role: "implementation" as const,
+      question,
+      required: true,
+      coverageTargets: [target],
+    }],
+    reentry: {
+      priorSessionId: base.invocation.sessionId,
+      priorHandoff: base.result.handoff!,
+      blockingGap: {
+        id: "gap:child:next",
+        questionId: "child-question",
+        targetId: target.id,
+        kind: "cross_file_unknown" as const,
+        scope: target.subject,
+        requiredFact: question,
+        derivation: { kind: "handoff_child" as const, parentHandoffId: base.result.handoff!.id },
+        origin: { kind: "edit" as const, changedPaths: ["src/changed.ts"] },
+      },
+    },
+  });
+  const compact = {
+    reentry: {
+      priorSessionId: base.invocation.sessionId,
+      question: { role: "implementation" as const, question, target },
+      origin: { kind: "edit" as const, changedPaths: ["src/changed.ts"] },
+    },
+  };
+  const text = serializeForModel(base.result);
+  const observed = [{
+    source: "direct_mcp" as const,
+    callId: base.invocation.callId,
+    startedSeen: true,
+    arguments: compact,
+    text,
+    structuredContent: base.result,
+  }];
+  const hash = createHash("sha256").update(text).digest("hex");
+  const delivery = evaluateDelivery(observed, base.invocation.callId, request, base.result, hash);
+  assert.equal(delivery.requestMatches, true);
+  assert.equal(delivery.deliveryStatus, "matched");
+
+  const mismatched = evaluateDelivery([{
+    ...observed[0]!,
+    arguments: { ...compact, reentry: { ...compact.reentry, origin: { kind: "edit" as const, changedPaths: ["src/other.ts"] } } },
+  }], base.invocation.callId, request, base.result, hash);
+  assert.equal(mismatched.requestMatches, false);
+  assert.equal(mismatched.deliveryStatus, "mismatch");
+});
+
 test("fast code-await transport completes without a reminder or wait", () => {
   const metadata = { turn_id: "turn-fast" };
   const raw = [{
@@ -1234,12 +1296,11 @@ test("canonical Pier adapter registers direct MCP without legacy CLI wrappers", 
     "EXPLICIT_NATIVE_ONLY_POLICY = (",
   ]) assert.equal(source.includes(fragment), true, `explicit arm policy fragment drifted: ${fragment}`);
   const commonCheckpoint = source.match(/COMMON_DIAGNOSTIC_CHECKPOINT = \(([\s\S]*?)\n\)/u)?.[1] ?? "";
-  assert.match(commonCheckpoint, /After an edit or failed check[\s\S]*at most one direct read[\s\S]*exact failure location/iu);
-  assert.match(commonCheckpoint, /second non-adjacent file read[\s\S]*cross-module search[\s\S]*stop and classify/iu);
-  assert.match(commonCheckpoint, /single-file work[\s\S]*accurate stack or location[\s\S]*routine checks[\s\S]*same handoff gap[\s\S]*remain native/iu);
-  assert.match(commonCheckpoint, /never force a second call/iu);
-  assert.match(source, /TREATMENT_DIAGNOSTIC_ROUTE = \([\s\S]*concrete local fix clear[\s\S]*runtime, type, data, or control flow[\s\S]*owner relationship[\s\S]*second non-adjacent module/iu);
-  assert.match(source, /CONTROL_DIAGNOSTIC_ROUTE = \([\s\S]*continue with native repository tools[\s\S]*FreeContext is disabled/iu);
+  assert.match(commonCheckpoint, /During task execution[\s\S]*repo-wide search or substantial reading[\s\S]*roughly 30% likely/iu);
+  assert.match(commonCheckpoint, /unknown[\s\S]*runtime, type, data, or control flow[\s\S]*second non-adjacent module[\s\S]*call gather_context/iu);
+  assert.match(commonCheckpoint, /one exact read makes a concrete local fix clear[\s\S]*continue natively/iu);
+  assert.match(source, /TREATMENT_DIAGNOSTIC_ROUTE = \([\s\S]*common prospective checkpoint[\s\S]*eligible[\s\S]*never mechanically forced/iu);
+  assert.match(source, /CONTROL_DIAGNOSTIC_ROUTE = \([\s\S]*native repository tools[\s\S]*do not invoke FreeContext/iu);
   for (const retired of [
     "complete unresolved question",
     "same-work-unit follow-up",

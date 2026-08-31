@@ -68,6 +68,12 @@ function readyResult(options: RunExplorerOptions): Readonly<FreeContextResult> {
       workUnit: options.request.workUnit,
       evidenceIds: ["e1"],
       outcome: { kind: options.request.workUnit.outcome, instruction: "Use the validated fixture evidence." },
+      addressedFacts: options.request.evidenceQuestions.flatMap((question) => question.coverageTargets.map((target) => ({
+        questionId: question.id,
+        targetId: target.id,
+        scope: target.subject,
+        requiredFact: question.question,
+      }))),
       blockingGaps: [],
     },
     nextAction: {
@@ -100,6 +106,31 @@ function notFoundResult(options: RunExplorerOptions): Readonly<FreeContextResult
 
 function outputOf(result: Awaited<ReturnType<ReturnType<typeof createGatherContextHandler>>>) {
   return FreeContextResultSchema.parse(result.structuredContent);
+}
+
+function compactReentry(
+  priorSessionId: string,
+  question = "Where is the next continuation seam?",
+  origin: Readonly<Record<string, unknown>> = { kind: "edit", changedPaths: ["src/other.ts"] },
+  parentGapId?: string,
+): Readonly<Record<string, unknown>> {
+  return {
+    reentry: {
+      priorSessionId,
+      question: {
+        role: "implementation",
+        question,
+        target: {
+          id: "continuation-target",
+          subject: { kind: "symbol", symbol: "ContinuationSeam" },
+          factKind: "behavior",
+          coverageMode: "single",
+        },
+      },
+      origin,
+      ...(parentGapId ? { parentGapId } : {}),
+    },
+  };
 }
 
 function manualDeadline(): Readonly<{ clock: DeadlineClock; expire: () => void }> {
@@ -215,6 +246,117 @@ test("gather_context normalizes an omitted knownRefs field to an empty array", a
   }
 });
 
+test("compact continuation restores the prior session for edit and check origins", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "freecontext-mcp-compact-continuation-"));
+  const workspace = path.join(root, "workspace");
+  const sessions = path.join(root, "sessions");
+  try {
+    await mkdir(workspace);
+    const providerRequests: FreeContextRequest[] = [];
+    const handler = createGatherContextHandler({
+      tokenCounter,
+      sessionDirectory: sessions,
+      runExplorer: async (options) => {
+        providerRequests.push(options.request);
+        return readyResult(options);
+      },
+    });
+    const initial = outputOf(await handler(request, callContext(workspace, "initial-compact", "initial-compact-call")));
+    const edit = outputOf(await handler(
+      compactReentry(initial.sessionId, "Where is the edited continuation seam?"),
+      callContext(workspace, "edit-compact", "edit-compact-call"),
+    ));
+    assert.equal(edit.status, "ready");
+    assert.equal(providerRequests.length, 2);
+    assert.equal(providerRequests[1]?.taskText, request.taskText);
+    assert.deepEqual(providerRequests[1]?.workUnit, request.workUnit);
+    assert.deepEqual(providerRequests[1]?.knownRefs, [{ kind: "path", path: "document.md" }]);
+    assert.equal(providerRequests[1]?.reentry?.priorSessionId, initial.sessionId);
+    assert.equal(providerRequests[1]?.reentry?.blockingGap.origin.kind, "edit");
+    assert.equal(providerRequests[1]?.reentry?.blockingGap.derivation.kind, "handoff_child");
+
+    const check = outputOf(await handler(
+      compactReentry(edit.sessionId, "Where is the checked continuation seam?", { kind: "check", check: "Run the focused continuation check." }),
+      callContext(workspace, "check-compact", "check-compact-call"),
+    ));
+    assert.equal(check.status, "ready");
+    assert.equal(providerRequests.length, 3);
+    assert.equal(providerRequests[2]?.reentry?.priorSessionId, edit.sessionId);
+    assert.equal(providerRequests[2]?.reentry?.blockingGap.origin.kind, "check");
+
+    const evidence = outputOf(await handler(
+      compactReentry(check.sessionId, "Where is the evidence-derived seam?", { kind: "evidence", evidenceIds: ["e1"] }),
+      callContext(workspace, "evidence-compact", "evidence-compact-call"),
+    ));
+    assert.equal(evidence.status, "ready");
+    assert.equal(providerRequests.length, 4);
+    assert.equal(providerRequests[3]?.reentry?.blockingGap.origin.kind, "evidence_consumption");
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("compact continuation rejects replay, stale, foreign, and mismatched parents before provider", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "freecontext-mcp-compact-rejections-"));
+  const workspace = path.join(root, "workspace");
+  const otherWorkspace = path.join(root, "other-workspace");
+  const sessions = path.join(root, "sessions");
+  try {
+    await Promise.all([mkdir(workspace), mkdir(otherWorkspace)]);
+    let calls = 0;
+    const handler = createGatherContextHandler({
+      tokenCounter,
+      sessionDirectory: sessions,
+      runExplorer: async (options) => { calls += 1; return readyResult(options); },
+    });
+    const initial = outputOf(await handler(request, callContext(workspace, "initial-rejections", "initial-rejections-call")));
+    const newer = outputOf(await handler(request, callContext(workspace, "newer-rejections", "newer-rejections-call")));
+    const stale = outputOf(await handler(
+      compactReentry(initial.sessionId),
+      callContext(workspace, "stale-rejections", "stale-rejections-call"),
+    ));
+    assert.equal(stale.errorCode, "INVALID_REQUEST");
+    assert.equal(stale.nextAction.reason, "Continuation prior session is not the immediately eligible session.");
+    assert.equal(newer.status, "ready");
+
+    const foreign = outputOf(await handler(
+      compactReentry(newer.sessionId),
+      callContext(otherWorkspace, "foreign-rejections", "foreign-rejections-call"),
+    ));
+    assert.equal(foreign.errorCode, "INVALID_REQUEST");
+    assert.equal(foreign.nextAction.reason, "Continuation prior session is not a committed session in this workspace.");
+
+    const firstChild = outputOf(await handler(
+      compactReentry(newer.sessionId, "Where is the child seam?"),
+      callContext(workspace, "child-rejections", "child-rejections-call"),
+    ));
+    assert.equal(firstChild.status, "ready");
+    const replayed = outputOf(await handler(
+      compactReentry(newer.sessionId, "Where is the child seam?"),
+      callContext(workspace, "replay-rejections", "replay-rejections-call"),
+    ));
+    assert.equal(replayed.errorCode, "INVALID_REQUEST");
+    assert.equal(replayed.nextAction.reason, "Continuation prior session has already been consumed.");
+
+    const invalidOrigin = outputOf(await handler(
+      compactReentry(firstChild.sessionId, "Where is the invalid-origin seam?", { kind: "bogus" }),
+      callContext(workspace, "invalid-origin-rejections", "invalid-origin-rejections-call"),
+    ));
+    assert.equal(invalidOrigin.errorCode, "INVALID_REQUEST");
+    assert.match(invalidOrigin.nextAction.reason, /Request schema rejected/u);
+
+    const parentMismatch = outputOf(await handler(
+      compactReentry(firstChild.sessionId, "Where is the concretized seam?", { kind: "check", check: "Run the focused check." }, "missing-parent-gap"),
+      callContext(workspace, "parent-rejections", "parent-rejections-call"),
+    ));
+    assert.equal(parentMismatch.errorCode, "INVALID_REQUEST");
+    assert.equal(parentMismatch.nextAction.reason, "Gap concretization must name a gap in the copied prior handoff.");
+    assert.equal(calls, 3);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test("invalid input fails before reservation or provider execution", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "freecontext-mcp-tool-"));
   const workspace = path.join(root, "workspace");
@@ -241,7 +383,7 @@ test("invalid input fails before reservation or provider execution", async () =>
   }
 });
 
-test("typed reentry returns the specific safe work-unit mismatch reason", async () => {
+test("legacy copied continuation state is rejected at the public caller boundary", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "freecontext-mcp-tool-"));
   const workspace = path.join(root, "workspace");
   const sessions = path.join(root, "sessions");
@@ -277,7 +419,7 @@ test("typed reentry returns the specific safe work-unit mismatch reason", async 
           origin: { kind: "evidence_consumption" as const, evidenceIds: ["e1"] },
         },
       },
-    } satisfies FreeContextCallerRequest;
+    };
     const call = await createGatherContextHandler({
       tokenCounter,
       sessionDirectory: sessions,
@@ -289,11 +431,8 @@ test("typed reentry returns the specific safe work-unit mismatch reason", async 
     const output = outputOf(call);
     assert.equal(calls, 0);
     assert.equal(output.errorCode, "INVALID_REQUEST");
-    assert.equal(output.nextAction.reason, "Reentry request.workUnit must exactly equal priorHandoff.workUnit.");
-    assert.deepEqual(output.gaps.map((gap) => gap.reason), [
-      "Reentry request.workUnit must exactly equal priorHandoff.workUnit.",
-      "Reentry request.workUnit must exactly equal priorHandoff.workUnit.",
-    ]);
+    assert.match(output.nextAction.reason, /Request schema rejected/u);
+    assert.deepEqual(output.gaps, []);
     assert.doesNotMatch(JSON.stringify(call), /different work unit|implementation owner/u);
   } finally {
     await rm(root, { recursive: true, force: true });

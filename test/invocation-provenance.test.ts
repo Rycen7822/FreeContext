@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { adaptHistoricalInvocationProvenanceV1, collectInvocationProvenance, evaluateFreshInvocationGate } from "../src/benchmark/invocation-provenance.js";
 import type { ObservedMcpCall } from "../src/benchmark/delivery-observation.js";
-import { FreeContextRequestSchema, normalizeFreeContextRequest, serializeForModel } from "../src/mcp/contracts.js";
+import { FreeContextRequestSchema, normalizeFreeContextContinuationRequest, normalizeFreeContextRequest, serializeForModel } from "../src/mcp/contracts.js";
 import type { FreeContextRequest, FreeContextResult } from "../src/mcp/contracts.js";
 
 function request(targetId: string, reentry?: FreeContextRequest["reentry"]): FreeContextRequest {
@@ -201,6 +201,45 @@ test("fresh invocation gate accepts a clean initial and typed reentry chain", ()
   assert.equal(provenance.freshGate.accepted, true);
   assert.deepEqual(provenance.freshGate.failures, []);
   assert.equal(provenance.attempts[0]?.correlation.status, "accepted");
+});
+
+test("provenance accepts an initial call followed by a compact continuation", () => {
+  const initial = request("owner");
+  const partial = result(initial, "partial", true);
+  const compact = {
+    reentry: {
+      priorSessionId: partial.sessionId,
+      question: {
+        role: "implementation" as const,
+        question: "Find the next owner.",
+        target: {
+          id: "next",
+          subject: { kind: "symbol" as const, symbol: "next" },
+          factKind: "behavior" as const,
+          coverageMode: "single" as const,
+        },
+      },
+      origin: { kind: "edit" as const, changedPaths: ["src/owner.ts"] },
+    },
+  };
+  const continuation = normalizeFreeContextContinuationRequest(compact.reentry, initial, partial.handoff!);
+  const ready = result(continuation, "ready");
+  const provenance = collectInvocationProvenance({
+    calls: [call("initial", caller(initial), partial), call("compact", compact, ready)],
+    sessions: [
+      { callId: "initial", request: initial, result: partial, capture: { primary: { metrics: { providerAttempts: 1 } } } },
+      { callId: "compact", request: continuation, result: ready, capture: { primary: { metrics: { providerAttempts: 1 } } } },
+    ],
+  });
+  const second = provenance.attempts[1];
+  assert.equal(second?.schema.status, "accepted");
+  assert.equal(second?.intrinsic.status, "accepted");
+  assert.equal(second?.chain.status, "accepted");
+  assert.equal(second?.correlation.status, "accepted");
+  assert.equal(second?.committed.status, "accepted");
+  assert.equal(second?.providerExecuted.status, "accepted");
+  assert.equal(second?.invocationKind, "reentrant");
+  assert.equal(second?.continuationRelation, "handoff_child");
 });
 
 test("synthetic call ids require structured or unique exact session correlation evidence", () => {

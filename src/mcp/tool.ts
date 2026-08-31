@@ -17,7 +17,7 @@ import {
 import type { DeadlineClock, TerminalStore } from "./lifecycle.js";
 import { executeSingleCall } from "./single-call.js";
 import type { SingleCallDependencies } from "./single-call.js";
-import { restoreCommittedRecovery } from "./session.js";
+import { restoreCommittedContinuation, restoreCommittedRecovery } from "./session.js";
 
 export interface SingleFlightExecutor {
   run<T>(task: () => Promise<T>): Promise<T>;
@@ -149,6 +149,21 @@ export function createGatherContextHandler(
       }
       const resolution = await restoreCommittedRecovery({
         recovery,
+        workspaceRoot: callContext.workspaceRoot,
+        ...(dependencies.sessionDirectory ? { sessionDirectory: dependencies.sessionDirectory } : {}),
+      });
+      if (!resolution.accepted) {
+        return callResult(failedResult({
+          code: "INVALID_REQUEST",
+          reason: resolution.reason,
+          sessionId: callContext.invocationId,
+          sessionFile: null,
+        }));
+      }
+      request = resolution.request;
+    } else if ("reentry" in callerRequest) {
+      const resolution = await restoreCommittedContinuation({
+        reentry: callerRequest.reentry,
         workspaceRoot: callContext.workspaceRoot,
         ...(dependencies.sessionDirectory ? { sessionDirectory: dependencies.sessionDirectory } : {}),
       });

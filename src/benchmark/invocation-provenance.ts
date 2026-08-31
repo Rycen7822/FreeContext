@@ -1,8 +1,10 @@
 import { isDeepStrictEqual } from "node:util";
 import {
   FreeContextCallerRequestSchema,
+  FreeContextRequestSchema,
   FreeContextResultSchema,
   LegacyFreeContextResultSchema,
+  normalizeFreeContextContinuationRequest,
   normalizeFreeContextRequest,
 } from "../mcp/contracts.js";
 import { validateFreeContextRecovery, validateFreeContextReentry } from "../mcp/eligibility.js";
@@ -316,7 +318,21 @@ export function collectInvocationProvenance({
   ]));
   const attempts: FreeContextInvocationAttempt[] = [];
   for (const [index, call] of directCalls.entries()) {
-    const parsed = FreeContextCallerRequestSchema.safeParse(call.arguments);
+    const parsedCaller = FreeContextCallerRequestSchema.safeParse(call.arguments);
+    const parsedHistorical = FreeContextRequestSchema.safeParse(call.arguments);
+    let historicalRequest: FreeContextRequest | null = null;
+    if (!parsedCaller.success && !parsedHistorical.success) {
+      try {
+        historicalRequest = normalizeFreeContextRequest(call.arguments);
+      } catch { /* Malformed historical caller arguments remain schema-rejected. */ }
+    }
+    const parsed = parsedCaller.success
+      ? parsedCaller
+      : parsedHistorical.success
+        ? parsedHistorical
+        : historicalRequest
+          ? { success: true as const, data: historicalRequest }
+          : parsedCaller;
     const resolvedCorrelation = sessionCorrelations[index];
     const session = resolvedCorrelation?.session;
     const result = session?.result ?? resultFromObservedCall(call);
@@ -340,14 +356,24 @@ export function collectInvocationProvenance({
     } else {
       schema = layer("accepted");
       try {
-        if (parsed.data.recovery) {
+        if ("recovery" in parsed.data && parsed.data.recovery) {
           if (!session || !isDeepStrictEqual(session.request.recovery, parsed.data.recovery)) {
             throw new Error("Committed recovery request is unavailable or mismatched.");
           }
           request = session.request;
+        } else if (historicalRequest) {
+          request = historicalRequest;
+        } else if (parsedHistorical.success) {
+          request = parsedHistorical.data;
+        } else if ("reentry" in parsed.data && parsed.data.reentry) {
+          const compactReentry = parsed.data.reentry;
+          const priorSession = sessions.find((candidate) => candidate.result.sessionId === compactReentry.priorSessionId);
+          if (!priorSession?.result.handoff) throw new Error("Committed continuation parent is unavailable.");
+          request = normalizeFreeContextContinuationRequest(compactReentry, priorSession.request, priorSession.result.handoff);
         } else {
           request = normalizeFreeContextRequest(parsed.data);
         }
+        if (!request) throw new Error("Request normalization did not produce a canonical request.");
         if (request.recovery) {
           const decision = validateFreeContextRecovery(request);
           intrinsic = decision.accepted ? layer("accepted") : layer("rejected", [decision.reason]);
@@ -372,7 +398,7 @@ export function collectInvocationProvenance({
           const recovery = request.recovery;
           const recoveryUsed = directCalls.slice(0, index).some((prior) => {
             const priorParsed = FreeContextCallerRequestSchema.safeParse(prior.arguments);
-            return priorParsed.success && priorParsed.data.recovery !== undefined;
+            return priorParsed.success && "recovery" in priorParsed.data && priorParsed.data.recovery !== undefined;
           });
           if (!previousResult || previousResult.status !== "not_found" || previousResult.handoff) {
             chainReasons.push("recovery_requires_prior_not_found_without_handoff");

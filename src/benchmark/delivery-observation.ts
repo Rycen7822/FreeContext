@@ -1,10 +1,13 @@
 import { createHash } from "node:crypto";
 import { isDeepStrictEqual } from "node:util";
 import {
+  FreeContextCallerReentryRequestSchema,
   FreeContextCallerRecoveryRequestSchema,
   FreeContextRequestSchema,
+  normalizeKnownReferences,
   normalizeFreeContextRequest,
   type FreeContextCallerRecoveryRequest,
+  type FreeContextCallerReentry,
   type FreeContextRequest,
   type FreeContextResult,
 } from "../mcp/contracts.js";
@@ -123,14 +126,52 @@ function canonicalRequest(value: unknown): Readonly<FreeContextRequest> | null {
 function callerArgumentsMatch(value: unknown, request: Readonly<FreeContextRequest>): boolean {
   const recoveryOnly = FreeContextCallerRecoveryRequestSchema.safeParse(value);
   if (recoveryOnly.success) return isDeepStrictEqual(recoveryOnly.data.recovery, request.recovery);
+  const continuation = FreeContextCallerReentryRequestSchema.safeParse(value);
+  if (continuation.success) return compactContinuationMatchesCanonical(continuation.data.reentry, request);
   return isDeepStrictEqual(canonicalRequest(value), request);
 }
 
-function semanticRequest(value: unknown): Readonly<FreeContextRequest> | Readonly<FreeContextCallerRecoveryRequest> | null {
+function compactContinuationMatchesCanonical(
+  compact: Readonly<FreeContextCallerReentry>,
+  request: Readonly<FreeContextRequest>,
+): boolean {
+  const reentry = request.reentry;
+  const question = request.evidenceQuestions[0];
+  const target = question?.coverageTargets[0];
+  if (!reentry || !reentry.priorSessionId || !question || !target || reentry.priorSessionId !== compact.priorSessionId) return false;
+  if (question.role !== compact.question.role || question.question !== compact.question.question || question.required !== compact.question.required) return false;
+  const inferredFactKind = compact.question.role === "test"
+    ? "verification"
+    : compact.question.role === "contract"
+      ? "contract"
+      : compact.question.role === "caller"
+        ? "relationship"
+        : "behavior";
+  const compactTarget = compact.question.target;
+  if (compactTarget) {
+    if (compactTarget.id !== undefined && compactTarget.id !== target.id) return false;
+    if (!isDeepStrictEqual(compactTarget.subject, target.subject)) return false;
+    if ((compactTarget.factKind ?? inferredFactKind) !== target.factKind || compactTarget.coverageMode !== target.coverageMode) return false;
+  }
+  if (compact.knownRefs !== undefined && !isDeepStrictEqual(normalizeKnownReferences(compact.knownRefs), request.knownRefs)) return false;
+  const expectedOrigin = reentry.blockingGap.origin;
+  const compactOrigin = compact.origin;
+  if (expectedOrigin.kind === "evidence_consumption") {
+    if (compactOrigin.kind !== "evidence" || !isDeepStrictEqual(compactOrigin.evidenceIds, expectedOrigin.evidenceIds)) return false;
+  } else if (!isDeepStrictEqual(compactOrigin, expectedOrigin)) {
+    return false;
+  }
+  if (reentry.blockingGap.derivation.kind === "handoff_child") return compact.parentGapId === undefined;
+  return compact.parentGapId === reentry.blockingGap.derivation.parentGapId;
+}
+
+function semanticRequest(value: unknown): Readonly<FreeContextRequest> | Readonly<FreeContextCallerRecoveryRequest> | Readonly<FreeContextCallerReentry> | null {
   const canonical = canonicalRequest(value);
   if (canonical) return canonical;
   const recoveryOnly = FreeContextCallerRecoveryRequestSchema.safeParse(value);
-  return recoveryOnly.success ? recoveryOnly.data : null;
+  if (recoveryOnly.success) return recoveryOnly.data;
+  const continuation = FreeContextCallerReentryRequestSchema.safeParse(value);
+  return continuation.success ? continuation.data.reentry : null;
 }
 
 function isFreeContextExec(event: Record<string, unknown>): boolean {
@@ -345,7 +386,7 @@ export function collectDuplicateSemanticCalls(
   taskId: string,
 ): readonly Readonly<DuplicateSemanticCall>[] {
   const semanticCalls = calls.filter((call) => call.source === "direct_mcp");
-  const firstCalls: { call: ObservedMcpCall; request: Readonly<FreeContextRequest> | Readonly<FreeContextCallerRecoveryRequest> }[] = [];
+  const firstCalls: { call: ObservedMcpCall; request: Readonly<FreeContextRequest> | Readonly<FreeContextCallerRecoveryRequest> | Readonly<FreeContextCallerReentry> }[] = [];
   const duplicateCounts = new Map<string, number>();
   const duplicates: DuplicateSemanticCall[] = [];
   for (const call of semanticCalls) {

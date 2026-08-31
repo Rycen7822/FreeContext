@@ -47,14 +47,17 @@ COMMON_TASK_EFFECT_POLICY = (
     "Solve only from the workspace and existing local caches. Do not use web search, curl, wget, raw GitHub, remote git clone/ls-remote/fetch, npm view/pack, remote module or package queries, or any other upstream source discovery for the task solution or patch. Provider, Pier, and benchmark-controller network traffic is infrastructure and does not authorize task-solution network access."
 )
 COMMON_DIAGNOSTIC_CHECKPOINT = (
-    "[Benchmark common diagnostic checkpoint]\n"
-    "After an edit or failed check, make at most one direct read of the exact failure location. Before a second non-adjacent file read or cross-module search for that diagnosis, stop and classify the remaining gap. Single-file work, an accurate stack or location, routine checks, and the same handoff gap remain native. Never force a second call."
+    "[Benchmark common prospective FreeContext checkpoint]\n"
+    "During task execution, keep noticing whether the next step may require a repo-wide search or substantial reading. "
+    "If that seems roughly 30% likely, call FreeContext without hesitation; this is prospective judgment, not a mechanical trigger or a prediction from final file counts. "
+    "Before repo-wide search, when an owner/caller/implementation is unknown, when tracing runtime, type, data, or control flow, or after one exact read still leaves a need for a second non-adjacent module, call gather_context before continuing discovery. "
+    "If one exact read makes a concrete local fix clear, continue natively."
 )
 TREATMENT_DIAGNOSTIC_ROUTE = (
-    "At this checkpoint, continue natively when the exact failure read makes a concrete local fix clear. Otherwise, reenter gather_context with a new parented child blocker only when diagnosis still requires tracing runtime, type, data, or control flow, or an owner relationship, into a second non-adjacent module. Do not call for single-file work, an accurate stack or location, or a routine check; never force a second call."
+    "FreeContext is available in this treatment. Follow the common prospective checkpoint and call gather_context when the remaining gap is eligible; otherwise continue with bounded native reads and ordinary edits, checks, or diffs. A later call is never mechanically forced."
 )
 CONTROL_DIAGNOSTIC_ROUTE = (
-    "At this checkpoint, continue with native repository tools because FreeContext is disabled."
+    "FreeContext is unavailable in this control arm. Apply the common prospective checkpoint as a fair counterfactual, but continue with native repository tools whenever it would call and do not invoke FreeContext."
 )
 CONDITIONAL_FC_TREATMENT_POLICY = (
     "[Benchmark arm policy: conditional_fc_treatment]\n"

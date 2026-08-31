@@ -15,13 +15,14 @@ test("implicit discovery routes each current gap while preserving the atomic cal
   )?.groups?.description;
   assert.ok(description);
   assert.ok(Buffer.byteLength(skill, "utf8") <= 5_400);
-  assert.ok([...description].length <= 420);
+  assert.ok([...description].length <= 560);
   for (const gate of FREECONTEXT_ELIGIBILITY_POLICY.gates) assert.equal(skill.includes(gate.instruction), false);
   for (const trigger of ["current evidence gap", "cross-module", "multi-role", "long-document", "source-bound"]) {
     assert.ok(description.includes(trigger));
   }
   assert.match(description, /Use initially or after Evidence, an edit, or a check/iu);
   assert.match(description, /exact path.*changed hunk.*diff or status.*test.*exact failure location/iu);
+  assert.match(description, /During execution.*roughly 30% likely.*repo-wide search.*substantial reading.*call FreeContext/iu);
   assert.doesNotMatch(skill, /call FC before native work|at task start|first read-only exploration action/iu);
   assert.match(skill, /```js\n\/\/ @exec: \{"yield_time_ms": 300000, "max_output_tokens": 10000\}/u);
   const codeStart = skill.indexOf("```js\n");
@@ -60,19 +61,19 @@ test("implicit discovery routes each current gap while preserving the atomic cal
   assert.doesNotMatch(skill, /\bworkspace_root\b/u);
   assert.match(skill, /A listed partial gap is not permission to replay/iu);
   assert.match(skill, /ordinary edit\/check\/read\/diff work stays direct/iu);
-  assert.match(skill, /After an edit or failed check, read the exact failure location at most once/iu);
-  assert.match(skill, /Before reading a second non-adjacent module or searching across modules, classify the gap/iu);
-  assert.match(skill, /concrete local fix clear.*continue natively/isu);
-  assert.match(skill, /runtime, type, data, or control flow, or an owner relationship/iu);
+  assert.match(skill, /After an edit or failed check, one exact failure read remains native/iu);
+  assert.match(skill, /classify before a second non-adjacent module or cross-module search/iu);
+  assert.match(skill, /local fix clear/iu);
+  assert.match(skill, /runtime\/type\/data\/control-flow or owner tracing/iu);
   assert.match(skill, /second non-adjacent module/iu);
-  for (const nativeCase of ["Single-file work", "accurate stack or location", "routine checks", "same handoff gap"]) {
+  for (const nativeCase of ["Single-file work", "accurate locations", "routine checks", "same handoff gap"]) {
     assert.match(skill, new RegExp(`${nativeCase}.*remain native`, "iu"));
   }
   assert.match(skill, /Never force a second call/iu);
-  assert.match(skill, /Copy `priorHandoff` verbatim/iu);
-  assert.match(skill, /keep `workUnit` exactly equal/iu);
-  for (const origin of ["evidence_consumption", "edit", "check"]) assert.match(skill, new RegExp(`(?:${origin})`, "u"));
-  assert.match(skill, /questionId,targetId,kind,scope,requiredFact,derivation,origin/iu);
+  assert.match(skill, /Send only `reentry:\{priorSessionId,question:\{role,question,target\?\},origin:/iu);
+  assert.match(skill, /server restores the prior task, work unit, handoff, and request context/iu);
+  for (const origin of ["evidence", "edit", "check"]) assert.match(skill, new RegExp(`(?:${origin})`, "u"));
+  assert.match(skill, /Omit `parentGapId` for a handoff child.*exact prior gap id for gap concretization/iu);
   assert.match(skill, /Never target a changed path or exact failure path/iu);
   assert.match(skill, /Recovery is once-only/iu);
   assert.match(skill, /call `gather_context` with only `\{recovery/iu);
@@ -80,13 +81,15 @@ test("implicit discovery routes each current gap while preserving the atomic cal
   assert.doesNotMatch(skill, /complete unresolved question|same-unit|same gaps|Acceptance receipt|private acceptance receipt/iu);
 
   assert.match(metadata, /^  allow_implicit_invocation: true$/mu);
+  assert.deepEqual([...metadata.matchAll(/^([a-z_]+):/gmu)].map((match) => match[1]), ["interface", "policy", "dependencies"]);
+  assert.deepEqual([...metadata.matchAll(/^  ([a-z_]+):/gmu)].map((match) => match[1]), ["display_name", "short_description", "allow_implicit_invocation", "tools"]);
   assert.equal(metadata.match(/^    - type:/gmu)?.length, 1);
   assert.match(metadata, /^    - type: "mcp"$/mu);
   assert.equal(metadata.match(/^      value: "freecontext"$/gmu)?.length, 1);
   const shortDescription = metadata.match(/^  short_description: "([^"]+)"$/mu)?.[1];
   assert.ok(shortDescription);
   assert.ok([...shortDescription].length >= 25 && [...shortDescription].length <= 64);
-  assert.match(shortDescription, /current evidence gaps/iu);
+  assert.match(shortDescription, /prospective|broad|search/iu);
   assert.doesNotMatch(shortDescription, /first|next/iu);
 
   const routingSurface = `${skill}\n${metadata}`;

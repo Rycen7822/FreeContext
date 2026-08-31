@@ -1,6 +1,6 @@
 interface:
   display_name: "FreeContext"
-  short_description: "Route current evidence gaps with gather_context"
+  short_description: "Prospective routing for broad evidence searches"
 policy:
   allow_implicit_invocation: true
 dependencies:

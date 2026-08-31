@@ -127,7 +127,7 @@ test("no-network MCP loopback awaits one terminal Promise and never emits an int
     assert.equal(tool?.title, "Gather context with FreeContext");
     assert.equal(tool?.description, TOOL_DESCRIPTION);
     assert.ok(tool?.description?.startsWith(
-      "Route each current evidence gap independently; gather_context is available for an eligible initial or mid-task episode but is not automatic. ",
+      "During execution, if the next step seems roughly 30% likely to need a broad search or substantial reading, call FreeContext without hesitation; this is prospective judgment, not a mechanical trigger or a prediction from final file counts. Route each current evidence gap independently; gather_context is available for an eligible initial or mid-task episode but is not automatic. ",
     ));
     let previousGateIndex = -1;
     for (const gate of FREECONTEXT_ELIGIBILITY_POLICY.gates) {

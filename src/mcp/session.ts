@@ -5,9 +5,11 @@ import {
   FreeContextInvocationContextSchema,
   FreeContextRequestSchema,
   FreeContextResultSchema,
+  normalizeFreeContextContinuationRequest,
 } from "./contracts.js";
 import type {
   FreeContextInvocationContext,
+  FreeContextCallerReentry,
   FreeContextRecoveryRequest,
   FreeContextRequest,
   FreeContextResult,
@@ -64,6 +66,53 @@ export type CommittedRecoveryResolution = Readonly<{
   accepted: false;
   reason: string;
 }>;
+
+export type CommittedContinuationResolution = Readonly<{
+  accepted: true;
+  reason: string;
+  request: Readonly<FreeContextRequest>;
+}> | Readonly<{
+  accepted: false;
+  reason: string;
+}>;
+
+async function committedSessions(
+  sessionDirectory: string,
+): Promise<Array<{ document: McpSessionDocument; committedAt: number }>> {
+  let names: string[];
+  try {
+    names = (await readdir(sessionDirectory)).filter((name) => name.endsWith(".json"));
+  } catch {
+    return [];
+  }
+  const sessions: Array<{ document: McpSessionDocument; committedAt: number }> = [];
+  for (const name of names) {
+    try {
+      const sessionPath = path.join(sessionDirectory, name);
+      const [text, fileStat] = await Promise.all([readFile(sessionPath, "utf8"), stat(sessionPath)]);
+      const value: unknown = JSON.parse(text);
+      if (!value || typeof value !== "object" || (value as { schemaVersion?: unknown }).schemaVersion !== "freecontext-mcp-session-v3") continue;
+      const document = value as McpSessionDocument;
+      if (document.transport !== "mcp" || !document.invocation || !document.request || !document.result ||
+          typeof document.finishedAt !== "string" || Number.isNaN(Date.parse(document.finishedAt)) ||
+          !FreeContextInvocationContextSchema.safeParse(document.invocation).success ||
+          !FreeContextRequestSchema.safeParse(document.request).success ||
+          !FreeContextResultSchema.safeParse(document.result).success) continue;
+      sessions.push({ document, committedAt: fileStat.mtimeMs });
+    } catch { /* Unrelated or historical session files cannot establish current continuation eligibility. */ }
+  }
+  return sessions;
+}
+
+function sortWorkspaceSessions(
+  sessions: readonly { document: McpSessionDocument; committedAt: number }[],
+  canonicalWorkspace: string,
+): Array<{ document: McpSessionDocument; committedAt: number }> {
+  return sessions.filter(({ document }) => path.resolve(document.invocation.workspaceRoot) === canonicalWorkspace)
+    .sort((left, right) => left.committedAt - right.committedAt ||
+      Date.parse(left.document.finishedAt) - Date.parse(right.document.finishedAt) ||
+      left.document.invocation.sessionId.localeCompare(right.document.invocation.sessionId));
+}
 
 export async function restoreCommittedRecovery({
   recovery,
@@ -129,6 +178,42 @@ export async function restoreCommittedRecovery({
     reason: "Recovery restored the immediately eligible committed not_found request facts.",
     request: Object.freeze(request),
   });
+}
+
+export async function restoreCommittedContinuation({
+  reentry,
+  workspaceRoot,
+  sessionDirectory = defaultSessionDirectory(),
+}: Readonly<{
+  reentry: Readonly<FreeContextCallerReentry>;
+  workspaceRoot: string;
+  sessionDirectory?: string;
+}>): Promise<CommittedContinuationResolution> {
+  const canonicalWorkspace = await realpath(workspaceRoot).catch(() => null);
+  if (!canonicalWorkspace) return Object.freeze({ accepted: false, reason: "Continuation workspace is not available." });
+  const sameWorkspace = sortWorkspaceSessions(await committedSessions(sessionDirectory), canonicalWorkspace);
+  const priorEntry = sameWorkspace.find(({ document }) => document.invocation.sessionId === reentry.priorSessionId);
+  const prior = priorEntry?.document;
+  if (!prior) return Object.freeze({ accepted: false, reason: "Continuation prior session is not a committed session in this workspace." });
+  if (sameWorkspace.some(({ document }) => document.request.reentry?.priorSessionId === reentry.priorSessionId)) {
+    return Object.freeze({ accepted: false, reason: "Continuation prior session has already been consumed." });
+  }
+  if (sameWorkspace.at(-1) !== priorEntry) {
+    return Object.freeze({ accepted: false, reason: "Continuation prior session is not the immediately eligible session." });
+  }
+  if (prior.result.status !== "ready" && prior.result.status !== "partial" || !prior.result.handoff) {
+    return Object.freeze({ accepted: false, reason: "Continuation prior session must have a committed ready or partial handoff." });
+  }
+  try {
+    const request = normalizeFreeContextContinuationRequest(reentry, prior.request, prior.result.handoff);
+    return Object.freeze({
+      accepted: true,
+      reason: "Continuation restored the immediately eligible committed handoff and request facts.",
+      request: Object.freeze(request),
+    });
+  } catch {
+    return Object.freeze({ accepted: false, reason: "Continuation child question or origin is invalid." });
+  }
 }
 
 export async function reserveMcpSession({

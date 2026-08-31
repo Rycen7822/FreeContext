@@ -48,14 +48,15 @@ export const FREECONTEXT_ELIGIBILITY_POLICY = Object.freeze({
   ] satisfies readonly FreeContextEligibilityGate[]),
   invariants: Object.freeze([
     "Route the current evidence gap rather than task-level complexity or familiarity: a gap that truly needs cross-document or multi-role synthesis is not bounded-read sufficient and calls FreeContext, while an overall multi-file task does not call automatically.",
+    "During task execution, keep noticing whether the next step may need repo-wide search or substantial reading; at roughly 30% confidence, call FreeContext without hesitation. This is prospective judgment, not a mechanical trigger or a prediction from final file counts. Before repo-wide search, an unknown owner/caller/implementation, runtime/type/data/control-flow tracing, or a second non-adjacent module after one exact read, call before continuing discovery; when one exact read makes a concrete local fix clear, continue natively.",
     "FreeContext is read-only: no edits, tests, Git, packages, web, or credentials.",
     "Read the selected skill before constructing a call; later eligible episodes call gather_context directly without catalog discovery.",
     "Question role is an evidence category, not an agent persona: use only implementation, caller, test, or contract.",
     "Each request names one stable outer edit, check, answer, or decision work unit and binds every question to one structured path, symbol, or topic fact target; target IDs are stable handles, not semantic proof.",
     "An invocation is not a repository map: normally ask for the one atomic source-bound fact that directly unblocks the current work unit. For requested new behavior, ask for the nearest existing extension seam and confirmed presence or absence rather than presupposing a new symbol exists.",
     "Use supported partial Evidence immediately. Execute the handoff; only a typed child blocker exposed while consuming Evidence or by edit/check may start another invocation.",
-    "A typed reentry copies priorHandoff verbatim, keeps request.workUnit exactly equal to priorHandoff.workUnit, binds blockingGap questionId, targetId, scope, and requiredFact to one current question, and declares whether the child derives from the handoff or concretizes one named prior gap.",
-    "Reentry origin is structured as evidence_consumption with evidenceIds, edit with changedPaths, or check with check and optional failureLocation; do not guess hidden fields.",
+    "A continuation sends only priorSessionId, one new child question, and a typed edit, check, or evidence origin; optional knownRefs and parentGapId are allowed only when needed. The server restores the committed handoff, work unit, and request context, treating an omitted parentGapId as a handoff child and a supplied one as gap concretization.",
+    "Continuation origin is structured as evidence with evidenceIds, edit with changedPaths, or check with check and optional failureLocation; do not guess hidden fields.",
     "Each gather_context invocation is atomic and non-replayable; a later invocation addresses a blocking or newly exposed issue without a fixed call-count rule.",
     "Inline Evidence excerpts are verified successful repository reads and may be used directly; one exact cited or adjacent read is allowed only when an excerpt omits change-critical context.",
     "After not_found, make the one exact probe and send only recovery with the returned priorSessionId and a workspace-relative probePath; committed prior request facts are restored by the server and cannot be overridden by the caller.",
@@ -74,11 +75,11 @@ function renderEligibilityPolicy(): string {
   const gates = FREECONTEXT_ELIGIBILITY_POLICY.gates
     .map((gate) => `Gate ${gate.order}: ${gate.instruction}`)
     .join(" ");
-  return `Route each current evidence gap independently; gather_context is available for an eligible initial or mid-task episode but is not automatic. ${gates} ${FREECONTEXT_ELIGIBILITY_POLICY.invariants.join(" ")}`;
+  return `During execution, if the next step seems roughly 30% likely to need a broad search or substantial reading, call FreeContext without hesitation; this is prospective judgment, not a mechanical trigger or a prediction from final file counts. Route each current evidence gap independently; gather_context is available for an eligible initial or mid-task episode but is not automatic. ${gates} ${FREECONTEXT_ELIGIBILITY_POLICY.invariants.join(" ")}`;
 }
 
 export const TOOL_DESCRIPTION = renderEligibilityPolicy();
-export const SERVER_INSTRUCTIONS = `FreeContext exposes one read-only ${FREECONTEXT_ELIGIBILITY_POLICY.toolName} tool governed by ${FREECONTEXT_ELIGIBILITY_POLICY.id}. Each invocation binds to the public MCP request id and either an operator-configured absolute workspace root or one public MCP file root; an initial or typed-reentry caller sends one stable outer work unit and one structured fact target per evidence question. Caller target ids, fact kinds, required flags, and single coverage default internally. A typed reentry copies the priorHandoff verbatim, preserves request.workUnit exactly, binds its child blocking gap to one current question and target, and explicitly derives it from the handoff or one named prior gap. After not_found, the caller sends only recovery.priorSessionId and a workspace-relative recovery.probePath; the server restores the committed prior request facts and rejects caller overrides. The invocation is atomic, awaits one terminal outer result, and never replays a pending or terminal request. Follow the returned nextAction; use supported partial Evidence immediately and execute the handoff. A listed gap or ready/partial status does not authorize replay; only a child blocker exposed by Evidence consumption, an edit, or a check can reenter. Reusing an addressed target, scope, and fact after whitespace/case normalization or changing only an id remains replay. Ready is invocation-scoped. Never send credentials or source dumps.`;
+export const SERVER_INSTRUCTIONS = `FreeContext exposes one read-only ${FREECONTEXT_ELIGIBILITY_POLICY.toolName} tool governed by ${FREECONTEXT_ELIGIBILITY_POLICY.id}. Each invocation binds to the public MCP request id and either an operator-configured absolute workspace root or one public MCP file root; an initial caller sends one stable outer work unit and one structured fact target per evidence question. Caller target ids, fact kinds, required flags, and single coverage default internally. During task execution, keep noticing whether the next step may need repo-wide search or substantial reading; at roughly 30% confidence, call FreeContext without hesitation, while a concrete local fix from one exact read may continue natively. A continuation caller sends only reentry.priorSessionId, one new reentry.question, one typed reentry.origin (evidence, edit, or check), and optional knownRefs or parentGapId; the server restores the committed task, work unit, handoff, and prior result, with omitted parentGapId meaning handoff child and supplied parentGapId meaning gap concretization. Before provider execution it rejects identical replay, stale or foreign sessions, non-latest or reused parents, invalid origins, and incorrect parent gaps. After not_found, the caller sends only recovery.priorSessionId and a workspace-relative recovery.probePath; the server restores the committed prior request facts and rejects caller overrides. The invocation is atomic, awaits one terminal outer result, and never replays a pending or terminal request. Follow the returned nextAction; use supported partial Evidence immediately and execute the handoff. Ready is invocation-scoped. Never send credentials or source dumps.`;
 
 export const MODEL_RESULT_MAX_BYTES = 8_192;
 export const RESULT_LIMITS = Object.freeze({
@@ -165,6 +166,8 @@ export const PriorHandoffSchema = z.object({
 }).strict().describe("The complete prior handoff returned by the preceding invocation; pass it verbatim on reentry.");
 
 export const FreeContextReentrySchema = z.object({
+  // This field is internal provenance used to enforce one-time public continuation consumption.
+  priorSessionId: identifier.optional(),
   priorHandoff: PriorHandoffSchema,
   blockingGap: ReentryBlockingGapSchema,
 }).strict().describe("A later invocation preserves the prior handoff and exact work unit while addressing one new typed blocking gap.");
@@ -308,12 +311,25 @@ export const FreeContextCallerEvidenceQuestionSchema = z.object({
     .describe("Optional precise subject override; otherwise the question becomes a normalized topic target."),
 }).strict();
 
+export const FreeContextCallerReentryOriginSchema = z.discriminatedUnion("kind", [
+  z.object({ kind: z.literal("evidence"), evidenceIds: z.array(identifier).min(1).max(RESULT_LIMITS.evidence) }).strict(),
+  z.object({ kind: z.literal("edit"), changedPaths: z.array(relativePath).min(1).max(12) }).strict(),
+  z.object({ kind: z.literal("check"), check: singleLine(RESULT_LIMITS.detailCodePoints), failureLocation: singleLine(RESULT_LIMITS.detailCodePoints).optional() }).strict(),
+]).describe("The compact continuation cause: evidence consumption, an edit, or a check.");
+
+export const FreeContextCallerReentrySchema = z.object({
+  priorSessionId: identifier,
+  question: FreeContextCallerEvidenceQuestionSchema,
+  origin: FreeContextCallerReentryOriginSchema,
+  knownRefs: z.array(KnownReferenceSchema).max(12).optional(),
+  parentGapId: identifier.optional(),
+}).strict().describe("Compact continuation: the server restores the prior committed request and handoff from priorSessionId.");
+
 export const FreeContextCallerFullRequestSchema = z.object({
   taskText: canonicalRequestFields.taskText,
   workUnit: WorkUnitSchema,
   knownRefs: z.array(KnownReferenceSchema).max(12).default([]),
   evidenceQuestions: z.array(FreeContextCallerEvidenceQuestionSchema).min(1).max(RESULT_LIMITS.evidence),
-  reentry: FreeContextReentrySchema.optional(),
 }).strict().superRefine((request, context) => {
   const { evidenceQuestions } = request;
   const targetIds = new Set<string>();
@@ -334,17 +350,27 @@ export const FreeContextCallerRecoveryRequestSchema = z.object({
   recovery: FreeContextRecoveryRequestSchema,
 }).strict().describe("Recovery-only call; prior request facts are restored from the committed not_found session.");
 
+export const FreeContextCallerReentryRequestSchema = z.object({
+  reentry: FreeContextCallerReentrySchema,
+}).strict();
+
 export const FreeContextCallerRequestSchema = z.object({
   taskText: canonicalRequestFields.taskText.optional(),
   workUnit: WorkUnitSchema.optional(),
   knownRefs: z.array(KnownReferenceSchema).max(12).optional(),
   evidenceQuestions: z.array(FreeContextCallerEvidenceQuestionSchema).min(1).max(RESULT_LIMITS.evidence).optional(),
-  reentry: FreeContextReentrySchema.optional(),
+  reentry: FreeContextCallerReentrySchema.optional(),
   recovery: FreeContextRecoveryRequestSchema.optional(),
 }).strict().superRefine((request, context) => {
   if (request.recovery) {
     for (const key of ["taskText", "workUnit", "knownRefs", "evidenceQuestions", "reentry"] as const) {
       if (request[key] !== undefined) context.addIssue({ code: "custom", path: [key], message: "Recovery must be the only caller field." });
+    }
+    return;
+  }
+  if (request.reentry) {
+    for (const key of ["taskText", "workUnit", "knownRefs", "evidenceQuestions"] as const) {
+      if (request[key] !== undefined) context.addIssue({ code: "custom", path: [key], message: "Continuation must be the only caller field." });
     }
     return;
   }
@@ -354,7 +380,7 @@ export const FreeContextCallerRequestSchema = z.object({
       context.addIssue({ code: "custom", path: issue.path, message: issue.message });
     }
   }
-}).describe("One full initial or typed-reentry request, or one recovery-only request with no caller-supplied prior facts.");
+}).describe("One full initial request, one compact continuation, or one recovery-only request with no caller-supplied prior facts.");
 
 export const FreeContextInvocationContextSchema = z.object({
   invocationId: identifier,
@@ -548,9 +574,12 @@ export type CoverageTarget = z.infer<typeof CoverageTargetSchema>;
 export type KnownReference = z.infer<typeof KnownReferenceSchema>;
 export type EvidenceQuestion = z.infer<typeof CanonicalEvidenceQuestionSchema>;
 export type FreeContextCallerEvidenceQuestion = z.infer<typeof FreeContextCallerEvidenceQuestionSchema>;
+export type FreeContextCallerReentryOrigin = z.infer<typeof FreeContextCallerReentryOriginSchema>;
+export type FreeContextCallerReentry = z.infer<typeof FreeContextCallerReentrySchema>;
 export type FreeContextCallerFullRequest = z.infer<typeof FreeContextCallerFullRequestSchema>;
+export type FreeContextCallerReentryRequest = z.infer<typeof FreeContextCallerReentryRequestSchema>;
 export type FreeContextCallerRecoveryRequest = z.infer<typeof FreeContextCallerRecoveryRequestSchema>;
-export type FreeContextCallerRequest = FreeContextCallerFullRequest | FreeContextCallerRecoveryRequest;
+export type FreeContextCallerRequest = FreeContextCallerFullRequest | FreeContextCallerReentryRequest | FreeContextCallerRecoveryRequest;
 export type ReentryBlockingGap = z.infer<typeof ReentryBlockingGapSchema>;
 export type ReentryGapOrigin = z.infer<typeof ReentryGapOriginSchema>;
 export type ReentryDerivation = z.infer<typeof ReentryDerivationSchema>;
@@ -606,9 +635,8 @@ function normalizeKnownPath(value: string): string | null {
   return normalized === "." || normalized === ".." || normalized.startsWith("../") ? null : normalized;
 }
 
-export function normalizeFreeContextRequest(rawRequest: unknown): Readonly<FreeContextRequest> {
-  const raw = FreeContextCallerFullRequestSchema.parse(rawRequest);
-  const ranked = raw.knownRefs.map((reference, index) => {
+export function normalizeKnownReferences(rawReferences: readonly KnownReference[]): readonly KnownReference[] {
+  const ranked = rawReferences.map((reference, index) => {
     const normalizedPath = "path" in reference && reference.path
       ? normalizeKnownPath(reference.path)
       : undefined;
@@ -636,38 +664,109 @@ export function normalizeFreeContextRequest(rawRequest: unknown): Readonly<FreeC
     knownRefs.push(item.normalized);
     if (knownRefs.length === 12) break;
   }
-  const evidenceQuestions = raw.evidenceQuestions.map((question, questionIndex) => {
-    const id = `q${questionIndex + 1}`;
-    const defaultTopic = [...question.question.replace(/\s+/gu, " ").trim()]
-      .slice(0, RESULT_LIMITS.detailCodePoints)
-      .join("");
-    const target = question.target ?? { subject: { kind: "topic" as const, topic: defaultTopic }, coverageMode: "single" as const };
-    const inferredFactKind = question.role === "test"
-      ? "verification"
-      : question.role === "contract"
-        ? "contract"
-        : question.role === "caller"
-          ? "relationship"
-          : "behavior";
-    return {
-      id,
-      role: question.role,
-      question: question.question,
-      required: question.required,
-      coverageTargets: [{
-        id: target.id ?? `target:${id}`,
-        subject: target.subject,
-        factKind: target.factKind ?? inferredFactKind,
-        coverageMode: target.coverageMode,
-      }],
-    };
+  return Object.freeze(knownRefs);
+}
+
+function normalizedCallerQuestion(
+  question: Readonly<FreeContextCallerEvidenceQuestion>,
+  questionId: string,
+): Readonly<EvidenceQuestion> {
+  const defaultTopic = [...question.question.replace(/\s+/gu, " ").trim()]
+    .slice(0, RESULT_LIMITS.detailCodePoints)
+    .join("");
+  const target = question.target ?? { subject: { kind: "topic" as const, topic: defaultTopic }, coverageMode: "single" as const };
+  const inferredFactKind = question.role === "test"
+    ? "verification"
+    : question.role === "contract"
+      ? "contract"
+      : question.role === "caller"
+        ? "relationship"
+        : "behavior";
+  return Object.freeze({
+    id: questionId,
+    role: question.role,
+    question: question.question,
+    required: question.required,
+    coverageTargets: [{
+      id: target.id ?? `target:${questionId}`,
+      subject: target.subject,
+      factKind: target.factKind ?? inferredFactKind,
+      coverageMode: target.coverageMode,
+    }],
   });
+}
+
+export function normalizeFreeContextRequest(rawRequest: unknown): Readonly<FreeContextRequest> {
+  const canonical = FreeContextRequestSchema.safeParse(rawRequest);
+  if (canonical.success) return Object.freeze(canonical.data);
+  const legacyReentry = rawRequest && typeof rawRequest === "object" && "reentry" in rawRequest
+    ? (rawRequest as { reentry?: unknown }).reentry
+    : undefined;
+  const callerInput = legacyReentry === undefined || !rawRequest || typeof rawRequest !== "object"
+    ? rawRequest
+    : Object.fromEntries(Object.entries(rawRequest).filter(([key]) => key !== "reentry"));
+  const raw = FreeContextCallerFullRequestSchema.parse(callerInput);
+  const evidenceQuestions = raw.evidenceQuestions.map((question, questionIndex) =>
+    normalizedCallerQuestion(question, `q${questionIndex + 1}`));
   return Object.freeze(FreeContextRequestSchema.parse({
     taskText: raw.taskText,
     workUnit: raw.workUnit,
-    knownRefs,
+    knownRefs: normalizeKnownReferences(raw.knownRefs),
     evidenceQuestions,
-    ...(raw.reentry ? { reentry: raw.reentry } : {}),
+    ...(legacyReentry !== undefined ? { reentry: legacyReentry } : {}),
+  }));
+}
+
+export function normalizeFreeContextContinuationRequest(
+  rawReentry: unknown,
+  priorRequest: Readonly<FreeContextRequest>,
+  priorHandoff: Readonly<FreeContextHandoff>,
+): Readonly<FreeContextRequest> {
+  const raw = FreeContextCallerReentrySchema.parse(rawReentry);
+  const questionId = `q${priorRequest.evidenceQuestions.length + 1}`;
+  const question = normalizedCallerQuestion(raw.question, questionId);
+  const target = question.coverageTargets[0];
+  if (!target) throw new Error("Continuation question must have one target.");
+  const baseGapId = `gap:child:${target.id.slice(0, 140)}`;
+  const occupiedGapIds = new Set([priorHandoff.id, ...priorHandoff.blockingGaps.map((gap) => gap.id)]);
+  let gapId = baseGapId;
+  let gapSuffix = 2;
+  while (occupiedGapIds.has(gapId)) {
+    gapId = `${baseGapId.slice(0, 157 - String(gapSuffix).length)}:${gapSuffix}`;
+    gapSuffix += 1;
+  }
+  const origin = raw.origin.kind === "evidence"
+    ? { kind: "evidence_consumption" as const, evidenceIds: raw.origin.evidenceIds }
+    : raw.origin;
+  const gapKind = target.factKind === "contract"
+    ? "contract_unknown" as const
+    : target.factKind === "verification"
+      ? "verification_unknown" as const
+      : target.subject.kind === "topic"
+        ? "cross_document_unknown" as const
+        : "cross_file_unknown" as const;
+  const blockingGap = {
+    id: gapId,
+    questionId,
+    targetId: target.id,
+    kind: gapKind,
+    scope: target.subject,
+    requiredFact: question.question,
+    derivation: raw.parentGapId
+      ? { kind: "gap_concretization" as const, parentGapId: raw.parentGapId }
+      : { kind: "handoff_child" as const, parentHandoffId: priorHandoff.id },
+    origin,
+  } satisfies ReentryBlockingGap;
+  return Object.freeze(FreeContextRequestSchema.parse({
+    taskText: priorRequest.taskText,
+    workUnit: priorRequest.workUnit,
+    knownRefs: normalizeKnownReferences(raw.knownRefs ?? priorRequest.knownRefs),
+    evidenceQuestions: [question],
+    reentry: {
+      priorSessionId: raw.priorSessionId,
+      priorHandoff,
+      blockingGap,
+    },
   }));
 }
 
@@ -697,7 +796,7 @@ export function serializeForModel(rawResult: Readonly<FreeContextResult>): strin
   if (!result.handoff) lines.push("-");
   else lines.push(`- prior_handoff=${JSON.stringify(result.handoff)}`);
   if (result.nextAction.kind === "consume_evidence") {
-    lines.push(`Follow nextAction: consume inline Evidence and proceed to edit/check. If change-critical context is omitted, one necessary adjacent read on an Evidence path is allowed. A listed gap is not replay authorization; reenter only for an explicitly parented child blocker exposed by Evidence consumption, an edit, or a check. Same-fact replay remains invalid. ${result.nextAction.reason}`);
+    lines.push(`Follow nextAction: consume inline Evidence and proceed to edit/check. If change-critical context is omitted, one necessary adjacent read on an Evidence path is allowed. A listed gap is not replay authorization; for a new gather-level child, send compact reentry with priorSessionId, one question, and a typed evidence/edit/check origin, plus parentGapId only for gap concretization. Same-fact replay remains invalid. ${result.nextAction.reason}`);
   } else {
     lines.push(`Follow nextAction: make one exact non-broad path or symbol probe and read at most one candidate path; broader discovery calls FreeContext. ${result.nextAction.reason}`);
     if (result.nextAction.recovery) {
