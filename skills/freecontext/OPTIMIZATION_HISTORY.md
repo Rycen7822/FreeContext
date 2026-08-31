@@ -87,7 +87,7 @@ Do not copy early task or Slice execution logs into this file. Keep only reusabl
 ### 2026-08-31 — Three-arm live reentry qualification
 
 - 日期：2026-08-31
-- commit/source：`00b182f` documentation tip with `bee6fce` as the latest behavior commit; live evidence is `.work/freecontext-deepswe-reentry-skill-ab-20260831/analysis/final-report.md`. The previous-skill arm used the two tracked skill files from `v0.1.0-rc.1/26ad344` while all arms shared the current product, server, harness, runtime, model settings, and paired seeds.
+- commit/source：`00b182f` documentation tip with `bee6fce` as the latest behavior commit; the retained baseline index is `.work/freecontext-benchmark-baselines/reentry-five/README.md` and v1 live evidence is under its `baseline-v1-three-arm-20260831/` directory. The previous-skill arm used the two tracked skill files from `v0.1.0-rc.1/26ad344` while all arms shared the current product, server, harness, runtime, model settings, and paired seeds.
 - 目标/问题：Test whether the session-restored recovery and continuation policy produces real post-edit or post-check reentry in long sessions, and compare it with both no FC and the previous release skill without changing task-specific behavior.
 - 通用改动：No skill or product behavior was changed for this entry. It records a fresh three-arm qualification of the existing generic policy so later optimization can distinguish behavioral proof from performance claims.
 - 验证范围：Five historically positive-control tasks, three repetitions per arm, 45 fresh trials total, max total concurrency six, attempt 1, no retry or replacement. All 45 result, aggregate, trajectory, verifier, and cleanup records passed root cross-check; the cost report rebuilt exactly from retained artifacts.
