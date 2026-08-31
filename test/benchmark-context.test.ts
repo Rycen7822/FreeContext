@@ -1281,14 +1281,13 @@ test("canonical Pier adapter registers direct MCP without legacy CLI wrappers", 
     "Do not use web search, curl, wget, raw GitHub, remote git clone/ls-remote/fetch, npm view/pack",
     "CONDITIONAL_FC_TREATMENT_POLICY = (",
     "arm enablement does not make a call automatic",
-    "route the current evidence gap, whether initial or exposed after Evidence, an edit, or a check",
-    "Call gather_context only when that gap meets the skill conditions",
-    "handle bounded reads and ordinary edit/check/diff work directly",
+    "apply the whole-phase decision initially and after Evidence, an edit, or a check",
     "is the only tool in that assistant batch/code cell",
     "never parallelize, and do no native or other tool work during dispatch",
     "If a cell ID returns, exclusively call functions.wait with yield_time_ms=300000 until terminal",
     "Ready/partial and listed gaps do not themselves authorize reentry",
-    "only an explicitly parented child blocker exposed by Evidence/edit/check may reenter",
+    "only a new typed child evidence question exposed by Evidence/edit/check may reenter",
+    "Rejection of one continuation affects only that request",
     "COMMON_DIAGNOSTIC_CHECKPOINT = (",
     "TREATMENT_DIAGNOSTIC_ROUTE = (",
     "CONTROL_DIAGNOSTIC_ROUTE = (",
@@ -1296,10 +1295,11 @@ test("canonical Pier adapter registers direct MCP without legacy CLI wrappers", 
     "EXPLICIT_NATIVE_ONLY_POLICY = (",
   ]) assert.equal(source.includes(fragment), true, `explicit arm policy fragment drifted: ${fragment}`);
   const commonCheckpoint = source.match(/COMMON_DIAGNOSTIC_CHECKPOINT = \(([\s\S]*?)\n\)/u)?.[1] ?? "";
-  assert.match(commonCheckpoint, /During task execution[\s\S]*repo-wide search or substantial reading[\s\S]*roughly 30% likely/iu);
-  assert.match(commonCheckpoint, /unknown[\s\S]*runtime, type, data, or control flow[\s\S]*second non-adjacent module[\s\S]*call gather_context/iu);
-  assert.match(commonCheckpoint, /one exact read makes a concrete local fix clear[\s\S]*continue natively/iu);
-  assert.match(source, /TREATMENT_DIAGNOSTIC_ROUTE = \([\s\S]*common prospective checkpoint[\s\S]*eligible[\s\S]*never mechanically forced/iu);
+  assert.match(commonCheckpoint, /whole upcoming phase[\s\S]*many files or substantial content/iu);
+  assert.match(commonCheckpoint, /native repository reading only when[\s\S]*one small bounded read is enough[\s\S]*otherwise call gather_context before searching or reading/iu);
+  assert.match(commonCheckpoint, /Repeat this decision after Evidence, an edit, a check, or another phase change/iu);
+  assert.match(commonCheckpoint, /rejected request affects only that request[\s\S]*different later phase normally/iu);
+  assert.match(source, /TREATMENT_DIAGNOSTIC_ROUTE = \([\s\S]*common whole-phase checkpoint[\s\S]*clearly small bounded phase[\s\S]*never mechanically forced/iu);
   assert.match(source, /CONTROL_DIAGNOSTIC_ROUTE = \([\s\S]*native repository tools[\s\S]*do not invoke FreeContext/iu);
   for (const retired of [
     "complete unresolved question",

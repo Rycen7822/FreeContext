@@ -12,52 +12,52 @@ export interface FreeContextEligibilityGate {
 }
 
 export const FREECONTEXT_ELIGIBILITY_POLICY = Object.freeze({
-  id: "freecontext-eligibility-v4",
+  id: "freecontext-eligibility-v5",
   toolName: "gather_context",
   gates: Object.freeze([
     Object.freeze({
       order: 1,
       id: "bounded_direct_action",
       outcome: "direct_read",
-      instruction: "Handle one precise path, path-bound symbol, stack location, changed hunk, exact failure location, Git diff or status, or test directly when bounded evidence or action can close the current gap.",
+      instruction: "Use native repository reading only when one precise path, path-bound symbol, stack location, changed hunk, exact failure location, Git diff or status, or test is clearly enough to close the phase's evidence need.",
     }),
     Object.freeze({
       order: 2,
       id: "delegated_scope",
       outcome: "call",
-      instruction: "Call for the current gap when it needs two evidence roles, a cross-module chain, two joint configs, cross-document synthesis, long-document facts, or source-bound planning, review, or diagnosis.",
+      instruction: "Call before repository search or reading when the whole upcoming phase may require many files, substantial content, multiple evidence roles, or a cross-module or source-bound chain.",
     }),
     Object.freeze({
       order: 3,
       id: "native_escalation",
       outcome: "call",
-      instruction: "After bounded orientation, call before broader native exploration when current evidence or one bounded read cannot close the active gap.",
+      instruction: "At a phase change, including after Evidence, an edit, or a check, call before broader native exploration unless one small bounded read is clearly enough.",
     }),
     Object.freeze({
       order: 4,
       id: "candidate_scope",
       outcome: "call",
-      instruction: "After one exact probe, read one candidate path only when it can close the active gap; if multiple paths are needed or scope expands, call gather_context before broader exploration.",
+      instruction: "Read one exact candidate directly only when it is clearly the small bounded read that can close the phase; if more paths or content may be needed, call gather_context first.",
     }),
     Object.freeze({
       order: 5,
       id: "exact_candidate_probe",
       outcome: "exact_probe",
-      instruction: "Otherwise make one bounded exact path or symbol probe with no source text only when it may close the active gap; otherwise call gather_context before broader exploration.",
+      instruction: "Use one exact path or symbol probe with no source text only to identify a bounded reference; it does not authorize source reading. Otherwise call gather_context first.",
     }),
   ] satisfies readonly FreeContextEligibilityGate[]),
   invariants: Object.freeze([
-    "Route the current evidence gap rather than task-level complexity or familiarity: a gap that truly needs cross-document or multi-role synthesis is not bounded-read sufficient and calls FreeContext, while an overall multi-file task does not call automatically.",
-    "During task execution, keep noticing whether the next step may need repo-wide search or substantial reading; at roughly 30% confidence, call FreeContext without hesitation. This is prospective judgment, not a mechanical trigger or a prediction from final file counts. Before repo-wide search, an unknown owner/caller/implementation, runtime/type/data/control-flow tracing, or a second non-adjacent module after one exact read, call before continuing discovery; when one exact read makes a concrete local fix clear, continue natively.",
+    "Before starting or changing a task phase, judge the whole upcoming phase rather than only the next command. Use native repository reading only when one small bounded read is clearly enough; otherwise call FreeContext before searching or reading.",
+    "Repeat the whole-phase decision after Evidence, an edit, a check, or another phase change. Rejection of one request affects only that request and does not make a different later broad phase native.",
     "FreeContext is read-only: no edits, tests, Git, packages, web, or credentials.",
     "Read the selected skill before constructing a call; later eligible episodes call gather_context directly without catalog discovery.",
     "Question role is an evidence category, not an agent persona: use only implementation, caller, test, or contract.",
     "Each request names one stable outer edit, check, answer, or decision work unit and binds every question to one structured path, symbol, or topic fact target; target IDs are stable handles, not semantic proof.",
     "An invocation is not a repository map: normally ask for the one atomic source-bound fact that directly unblocks the current work unit. For requested new behavior, ask for the nearest existing extension seam and confirmed presence or absence rather than presupposing a new symbol exists.",
-    "Use supported partial Evidence immediately. Execute the handoff; only a typed child blocker exposed while consuming Evidence or by edit/check may start another invocation.",
+    "Use supported partial Evidence immediately. Execute the handoff; only a new typed child evidence question exposed while consuming Evidence or by edit/check may start another invocation.",
     "A continuation sends only priorSessionId, one new child question, and a typed edit, check, or evidence origin; optional knownRefs and parentGapId are allowed only when needed. The server restores the committed handoff, work unit, and request context, treating an omitted parentGapId as a handoff child and a supplied one as gap concretization.",
     "Continuation origin is structured as evidence with evidenceIds, edit with changedPaths, or check with check and optional failureLocation; do not guess hidden fields.",
-    "Each gather_context invocation is atomic and non-replayable; a later invocation addresses a blocking or newly exposed issue without a fixed call-count rule.",
+    "Each gather_context invocation is atomic and non-replayable; a later invocation addresses a newly exposed evidence need without a fixed call-count rule.",
     "Inline Evidence excerpts are verified successful repository reads and may be used directly; one exact cited or adjacent read is allowed only when an excerpt omits change-critical context.",
     "After not_found, make the one exact probe and send only recovery with the returned priorSessionId and a workspace-relative probePath; committed prior request facts are restored by the server and cannot be overridden by the caller.",
     "Required coverage-slot total is at most six per payload envelope, not a semantic exploration limit.",
@@ -75,11 +75,11 @@ function renderEligibilityPolicy(): string {
   const gates = FREECONTEXT_ELIGIBILITY_POLICY.gates
     .map((gate) => `Gate ${gate.order}: ${gate.instruction}`)
     .join(" ");
-  return `During execution, if the next step seems roughly 30% likely to need a broad search or substantial reading, call FreeContext without hesitation; this is prospective judgment, not a mechanical trigger or a prediction from final file counts. Route each current evidence gap independently; gather_context is available for an eligible initial or mid-task episode but is not automatic. ${gates} ${FREECONTEXT_ELIGIBILITY_POLICY.invariants.join(" ")}`;
+  return `Before starting or changing a task phase, judge the whole upcoming phase. Use native repository reading only when one small bounded read is clearly enough; otherwise call FreeContext before searching or reading. A rejected request affects only that request; reassess a different later phase normally. ${gates} ${FREECONTEXT_ELIGIBILITY_POLICY.invariants.join(" ")}`;
 }
 
 export const TOOL_DESCRIPTION = renderEligibilityPolicy();
-export const SERVER_INSTRUCTIONS = `FreeContext exposes one read-only ${FREECONTEXT_ELIGIBILITY_POLICY.toolName} tool governed by ${FREECONTEXT_ELIGIBILITY_POLICY.id}. Each invocation binds to the public MCP request id and either an operator-configured absolute workspace root or one public MCP file root; an initial caller sends one stable outer work unit and one structured fact target per evidence question. Caller target ids, fact kinds, required flags, and single coverage default internally. During task execution, keep noticing whether the next step may need repo-wide search or substantial reading; at roughly 30% confidence, call FreeContext without hesitation, while a concrete local fix from one exact read may continue natively. A continuation caller sends only reentry.priorSessionId, one new reentry.question, one typed reentry.origin (evidence, edit, or check), and optional knownRefs or parentGapId; the server restores the committed task, work unit, handoff, and prior result, with omitted parentGapId meaning handoff child and supplied parentGapId meaning gap concretization. Before provider execution it rejects identical replay, stale or foreign sessions, non-latest or reused parents, invalid origins, and incorrect parent gaps. After not_found, the caller sends only recovery.priorSessionId and a workspace-relative recovery.probePath; the server restores the committed prior request facts and rejects caller overrides. The invocation is atomic, awaits one terminal outer result, and never replays a pending or terminal request. Follow the returned nextAction; use supported partial Evidence immediately and execute the handoff. Ready is invocation-scoped. Never send credentials or source dumps.`;
+export const SERVER_INSTRUCTIONS = `FreeContext exposes one read-only ${FREECONTEXT_ELIGIBILITY_POLICY.toolName} tool governed by ${FREECONTEXT_ELIGIBILITY_POLICY.id}. Each invocation binds to the public MCP request id and either an operator-configured absolute workspace root or one public MCP file root; an initial caller sends one stable outer work unit and one structured fact target per evidence question. Caller target ids, fact kinds, required flags, and single coverage default internally. Before starting or changing a task phase, judge the whole upcoming phase: use native repository reading only when one small bounded read is clearly enough, and otherwise call FreeContext before searching or reading. Rejection affects only that request; reassess a different later phase normally. A continuation caller sends only reentry.priorSessionId, one new reentry.question, one typed reentry.origin (evidence, edit, or check), and optional knownRefs or parentGapId; the server restores the committed task, work unit, handoff, and prior result, with omitted parentGapId meaning handoff child and supplied parentGapId meaning gap concretization. Before provider execution it rejects identical replay, stale or foreign sessions, non-latest or reused parents, invalid origins, and incorrect parent gaps. After not_found, the caller sends only recovery.priorSessionId and a workspace-relative recovery.probePath; the server restores the committed prior request facts and rejects caller overrides. The invocation is atomic, awaits one terminal outer result, and never replays a pending or terminal request. Follow the returned nextAction; use supported partial Evidence immediately and execute the handoff. Ready is invocation-scoped. Never send credentials or source dumps.`;
 
 export const MODEL_RESULT_MAX_BYTES = 8_192;
 export const RESULT_LIMITS = Object.freeze({

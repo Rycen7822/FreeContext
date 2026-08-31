@@ -17,13 +17,14 @@ test("implicit discovery routes each current gap while preserving the atomic cal
   assert.ok(Buffer.byteLength(skill, "utf8") <= 5_400);
   assert.ok([...description].length <= 560);
   for (const gate of FREECONTEXT_ELIGIBILITY_POLICY.gates) assert.equal(skill.includes(gate.instruction), false);
-  for (const trigger of ["current evidence gap", "cross-module", "multi-role", "long-document", "source-bound"]) {
+  for (const trigger of ["whole upcoming phase", "many files", "substantial content", "one small bounded read"]) {
     assert.ok(description.includes(trigger));
   }
-  assert.match(description, /Use initially or after Evidence, an edit, or a check/iu);
-  assert.match(description, /exact path.*changed hunk.*diff or status.*test.*exact failure location/iu);
-  assert.match(description, /During execution.*roughly 30% likely.*repo-wide search.*substantial reading.*call FreeContext/iu);
+  assert.match(description, /Recheck after Evidence, an edit, or a check/iu);
+  assert.match(description, /Exact paths.*changed hunks.*diff or status.*tests.*exact failure locations/iu);
+  assert.match(description, /native repository reads only when.*clearly know.*bounded read.*otherwise call gather_context before searching or reading/iu);
   assert.doesNotMatch(skill, /call FC before native work|at task start|first read-only exploration action/iu);
+  assert.doesNotMatch(skill, /roughly 30%|next step may|second non-adjacent/iu);
   assert.match(skill, /```js\n\/\/ @exec: \{"yield_time_ms": 300000, "max_output_tokens": 10000\}/u);
   const codeStart = skill.indexOf("```js\n");
   const pragma = skill.indexOf("// @exec: {\"yield_time_ms\": 300000, \"max_output_tokens\": 10000}");
@@ -60,16 +61,13 @@ test("implicit discovery routes each current gap while preserving the atomic cal
   assert.match(skill, /stable outer implementation goal/u);
   assert.doesNotMatch(skill, /\bworkspace_root\b/u);
   assert.match(skill, /A listed partial gap is not permission to replay/iu);
-  assert.match(skill, /ordinary edit\/check\/read\/diff work stays direct/iu);
-  assert.match(skill, /After an edit or failed check, one exact failure read remains native/iu);
-  assert.match(skill, /classify before a second non-adjacent module or cross-module search/iu);
-  assert.match(skill, /local fix clear/iu);
-  assert.match(skill, /runtime\/type\/data\/control-flow or owner tracing/iu);
-  assert.match(skill, /second non-adjacent module/iu);
-  for (const nativeCase of ["Single-file work", "accurate locations", "routine checks", "same handoff gap"]) {
-    assert.match(skill, new RegExp(`${nativeCase}.*remain native`, "iu"));
-  }
-  assert.match(skill, /Never force a second call/iu);
+  assert.match(skill, /Judge the whole upcoming phase, not only the next command/iu);
+  assert.match(skill, /native repository reading only when you clearly know one small bounded read is enough/iu);
+  assert.match(skill, /otherwise call .*gather_context.* before repository search or reading/iu);
+  assert.match(skill, /Repeat this decision after Evidence, an edit, a check, or another phase change/iu);
+  assert.match(skill, /A rejected request affects only that request.*different later phase normally/iu);
+  assert.match(skill, /new typed child evidence question/iu);
+  assert.match(skill, /Never force a call count/iu);
   assert.match(skill, /Send only `reentry:\{priorSessionId,question:\{role,question,target\?\},origin:/iu);
   assert.match(skill, /server restores the prior task, work unit, handoff, and request context/iu);
   for (const origin of ["evidence", "edit", "check"]) assert.match(skill, new RegExp(`(?:${origin})`, "u"));

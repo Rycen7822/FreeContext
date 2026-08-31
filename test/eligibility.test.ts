@@ -37,7 +37,7 @@ function facts(overrides: Partial<FreeContextEligibilityFacts> = {}): FreeContex
 }
 
 test("one immutable policy owns gate order, tool text, and host route metadata", () => {
-  assert.equal(FREECONTEXT_ELIGIBILITY_POLICY.id, "freecontext-eligibility-v4");
+  assert.equal(FREECONTEXT_ELIGIBILITY_POLICY.id, "freecontext-eligibility-v5");
   assert.deepEqual(FREECONTEXT_ELIGIBILITY_POLICY.gates.map(({ order }) => order), [1, 2, 3, 4, 5]);
   assert.equal(FREECONTEXT_HOST_ROUTE_METADATA.gates, FREECONTEXT_ELIGIBILITY_POLICY.gates);
   assert.equal(FREECONTEXT_HOST_ROUTE_METADATA.invariants, FREECONTEXT_ELIGIBILITY_POLICY.invariants);
@@ -46,11 +46,12 @@ test("one immutable policy owns gate order, tool text, and host route metadata",
   }
   assert.match(TOOL_DESCRIPTION, /one structured path, symbol, or topic fact target/iu);
   assert.match(TOOL_DESCRIPTION, /invocation is not a repository map/iu);
-  assert.match(TOOL_DESCRIPTION, /current evidence gap independently/iu);
-  assert.match(TOOL_DESCRIPTION, /overall multi-file task does not call automatically/iu);
+  assert.match(TOOL_DESCRIPTION, /whole upcoming phase/iu);
+  assert.match(TOOL_DESCRIPTION, /native repository reading only when one small bounded read is clearly enough/iu);
+  assert.match(TOOL_DESCRIPTION, /rejected request affects only that request/iu);
   assert.doesNotMatch(TOOL_DESCRIPTION, /Familiarity, known files, or keywords never weaken/iu);
   assert.doesNotMatch(TOOL_DESCRIPTION, /at task start|first read-only exploration action/iu);
-  assert.match(TOOL_DESCRIPTION, /only a typed child blocker exposed while consuming Evidence or by edit\/check may start another invocation/iu);
+  assert.match(TOOL_DESCRIPTION, /only a new typed child evidence question exposed while consuming Evidence or by edit\/check may start another invocation/iu);
 });
 
 test("complex scopes call FreeContext before any repository probe", () => {

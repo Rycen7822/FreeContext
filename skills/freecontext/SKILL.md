@@ -1,19 +1,18 @@
 ---
 name: freecontext
-description: Route the current evidence gap, not the whole task size, to gather_context for cross-module, multi-role, long-document, multi-document, or source-bound exploration. During execution, if the next step seems roughly 30% likely to need repo-wide search or substantial reading, call FreeContext prospectively. Use initially or after Evidence, an edit, or a check exposes such a gap. Handle an exact path or path-bound symbol, stack location, changed hunk, diff or status, test, or exact failure location directly when one bounded action suffices.
+description: Before starting or changing a task phase, judge whether the whole upcoming phase may require searching or reading many files or substantial content. Use native repository reads only when you clearly know one small bounded read is enough; otherwise call gather_context before searching or reading. Recheck after Evidence, an edit, or a check. Exact paths, changed hunks, diff or status, tests, and exact failure locations stay direct when no broader reading is needed.
 ---
 
 # FreeContext routing
 
-Route current evidence, not task size. During execution, notice whether the next step may require repo-wide search or substantial reading; if roughly 30% likely, call FreeContext without hesitation. Prospective, not mechanical or final-count based.
+Judge the whole upcoming phase, not only the next command. Do this before starting work and whenever the work changes phase.
 
 ## Choose the route
 
-- **Direct:** use native tools for one exact path or path-bound symbol, stack location, changed hunk, Git diff/status, test, or exact failure location when it closes the gap. Ordinary reads, edits, checks, and diff review stay direct.
-- **Gather:** call `tools.mcp__freecontext__gather_context` for cross-module chains, multiple evidence roles, joint configs, cross-document synthesis, long-document facts, or source-bound planning/review/diagnosis.
-- **Orient once:** without a precise reference, probe one bounded exact path or symbol. Read a candidate only if it closes the gap; call FreeContext before broader exploration.
+- **Direct:** use native repository reading only when you clearly know one small bounded read is enough. Exact locations, changed hunks, Git diff/status, tests, edits, and checks stay direct when they need no broader reading.
+- **Gather:** otherwise call `tools.mcp__freecontext__gather_context` before repository search or reading.
 
-Call before continuing discovery for a repo-wide search, an unknown owner/caller/implementation, runtime/type/data/control-flow tracing, or a second non-adjacent module after one exact read. If one exact read makes a concrete local fix clear, continue natively.
+Repeat this decision after Evidence, an edit, a check, or another phase change. A rejected request affects only that request; judge a different later phase normally. Never force a call count.
 
 The main agent owns edits, checks, Git, packages, and web; FreeContext is read-only.
 
@@ -45,8 +44,8 @@ No waiting Hook; no replay/session inspection.
 
 `ready` and `partial` include a handoff. Consume Evidence and `nextAction` directly. Do not reread covered content; one cited or adjacent read is allowed for omitted change-critical context. A listed partial gap is not permission to replay; ready/partial alone never justifies reentry.
 
-After an edit or failed check, one exact failure read remains native when it makes a local fix clear. Otherwise classify before a second non-adjacent module or cross-module search; reenter only for runtime/type/data/control-flow or owner tracing. Single-file work, accurate locations, routine checks, and the same handoff gap remain native. Never force a second call.
+After Evidence, an edit, or a check, apply the same whole-phase decision. One exact failure read stays native only when you clearly know it is enough; a new phase that may need many files or substantial content should reenter before searching or reading.
 
-Reenter only for a **typed child blocker** needing gather-level exploration; ordinary edit/check/read/diff work stays direct. Send only `reentry:{priorSessionId,question:{role,question,target?},origin:{kind:"evidence"|"edit"|"check",...},knownRefs?,parentGapId?}`. The server restores the prior task, work unit, handoff, and request context. Omit `parentGapId` for a handoff child; provide the exact prior gap id for gap concretization. Reusing a prior session, scope/fact, or wrong origin is invalid. Never target a changed path or exact failure path.
+Reenter only for a **new typed child evidence question** exposed by Evidence, an edit, or a check and needing gather-level exploration. A rejected continuation affects only that request and does not disable a different later broad phase. Send only `reentry:{priorSessionId,question:{role,question,target?},origin:{kind:"evidence"|"edit"|"check",...},knownRefs?,parentGapId?}`. The server restores the prior task, work unit, handoff, and request context. Omit `parentGapId` for a handoff child; provide the exact prior gap id for gap concretization. Reusing a prior session, scope/fact, or wrong origin is invalid. Never target a changed path or exact failure path.
 
 For `not_found`, make the exact probe required by `nextAction`, then call `gather_context` with only `{recovery:{priorSessionId:<exact nextAction.recovery.priorSessionId>,probePath:"<workspace-relative probed path>"}}`. Send no `taskText`, `workUnit`, `knownRefs`, `evidenceQuestions`, or handoff; the server restores them from the committed session. Recovery is once-only and invalid after partial, ready, failure, broad exploration, or bypass. With a handoff use typed reentry; fix `INVALID_REQUEST`; never use broad fallback.

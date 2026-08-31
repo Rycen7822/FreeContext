@@ -47,21 +47,21 @@ COMMON_TASK_EFFECT_POLICY = (
     "Solve only from the workspace and existing local caches. Do not use web search, curl, wget, raw GitHub, remote git clone/ls-remote/fetch, npm view/pack, remote module or package queries, or any other upstream source discovery for the task solution or patch. Provider, Pier, and benchmark-controller network traffic is infrastructure and does not authorize task-solution network access."
 )
 COMMON_DIAGNOSTIC_CHECKPOINT = (
-    "[Benchmark common prospective FreeContext checkpoint]\n"
-    "During task execution, keep noticing whether the next step may require a repo-wide search or substantial reading. "
-    "If that seems roughly 30% likely, call FreeContext without hesitation; this is prospective judgment, not a mechanical trigger or a prediction from final file counts. "
-    "Before repo-wide search, when an owner/caller/implementation is unknown, when tracing runtime, type, data, or control flow, or after one exact read still leaves a need for a second non-adjacent module, call gather_context before continuing discovery. "
-    "If one exact read makes a concrete local fix clear, continue natively."
+    "[Benchmark common whole-phase FreeContext checkpoint]\n"
+    "Before starting or changing a task phase, judge whether the whole upcoming phase may require searching or reading many files or substantial content. "
+    "Use native repository reading only when you clearly know one small bounded read is enough; otherwise call gather_context before searching or reading. "
+    "Repeat this decision after Evidence, an edit, a check, or another phase change. Exact errors, changed hunks, tests, edits, checks, and diff/status remain direct when they need no broader reading. "
+    "A rejected request affects only that request; judge a different later phase normally."
 )
 TREATMENT_DIAGNOSTIC_ROUTE = (
-    "FreeContext is available in this treatment. Follow the common prospective checkpoint and call gather_context when the remaining gap is eligible; otherwise continue with bounded native reads and ordinary edits, checks, or diffs. A later call is never mechanically forced."
+    "FreeContext is available in this treatment. Follow the common whole-phase checkpoint; use native repository reading only for a clearly small bounded phase and otherwise call gather_context before searching or reading. A later call is never mechanically forced."
 )
 CONTROL_DIAGNOSTIC_ROUTE = (
-    "FreeContext is unavailable in this control arm. Apply the common prospective checkpoint as a fair counterfactual, but continue with native repository tools whenever it would call and do not invoke FreeContext."
+    "FreeContext is unavailable in this control arm. Apply the common whole-phase checkpoint as a fair counterfactual, but continue with native repository tools whenever it would call and do not invoke FreeContext."
 )
 CONDITIONAL_FC_TREATMENT_POLICY = (
     "[Benchmark arm policy: conditional_fc_treatment]\n"
-    "FreeContext is available in this treatment but arm enablement does not make a call automatic. Follow the installed skill and route the current evidence gap, whether initial or exposed after Evidence, an edit, or a check. Call gather_context only when that gap meets the skill conditions; otherwise handle bounded reads and ordinary edit/check/diff work directly. When called, gather_context is the only tool in that assistant batch/code cell: never parallelize, and do no native or other tool work during dispatch. If a cell ID returns, exclusively call functions.wait with yield_time_ms=300000 until terminal. Consume inline Evidence, handoff, and nextAction directly. Ready/partial and listed gaps do not themselves authorize reentry; only an explicitly parented child blocker exposed by Evidence/edit/check may reenter, while normalized same-target/scope/fact replay remains invalid."
+    "FreeContext is available in this treatment but arm enablement does not make a call automatic. Follow the installed skill and apply the whole-phase decision initially and after Evidence, an edit, or a check. When called, gather_context is the only tool in that assistant batch/code cell: never parallelize, and do no native or other tool work during dispatch. If a cell ID returns, exclusively call functions.wait with yield_time_ms=300000 until terminal. Consume inline Evidence, handoff, and nextAction directly. Ready/partial and listed gaps do not themselves authorize reentry; only a new typed child evidence question exposed by Evidence/edit/check may reenter, while normalized same-target/scope/fact replay remains invalid. Rejection of one continuation affects only that request."
     "\n"
     + TREATMENT_DIAGNOSTIC_ROUTE
 )
