@@ -52,8 +52,8 @@ test("request normalization deduplicates refs and keeps the documented priority"
       { kind: "path", path: "../outside.ts" },
     ],
     evidenceQuestions: [
-      { role: "implementation", question: "Where is routing implemented?", required: true, target: { id: "routing-body", subject: { kind: "symbol", symbol: "route", path: "src/router.ts" }, factKind: "definition", coverageMode: "single" } },
-      { role: "test", question: "Which tests cover routing?", required: true, target: { id: "routing-tests", subject: { kind: "symbol", symbol: "route" }, factKind: "verification", coverageMode: "single" } },
+      { role: "implementation", question: "Where is routing implemented?" },
+      { role: "test", question: "Which tests cover routing?", target: { subject: { kind: "symbol", symbol: "route" } } },
     ],
   });
   assert.equal(normalized.taskText, "Preserve this task exactly.\n");
@@ -69,14 +69,14 @@ test("request normalization deduplicates refs and keeps the documented priority"
     role: "implementation",
     question: "Where is routing implemented?",
     required: true,
-    coverageTargets: [{ id: "routing-body", subject: { kind: "symbol", symbol: "route", path: "src/router.ts" }, factKind: "definition", coverageMode: "single" }],
+    coverageTargets: [{ id: "target:q1", subject: { kind: "topic", topic: "Where is routing implemented?" }, factKind: "behavior", coverageMode: "single" }],
   });
   assert.deepEqual(normalized.evidenceQuestions[1], {
     id: "q2",
     role: "test",
     question: "Which tests cover routing?",
     required: true,
-    coverageTargets: [{ id: "routing-tests", subject: { kind: "symbol", symbol: "route" }, factKind: "verification", coverageMode: "single" }],
+    coverageTargets: [{ id: "target:q2", subject: { kind: "symbol", symbol: "route" }, factKind: "verification", coverageMode: "single" }],
   });
   assert.throws(() => normalizeFreeContextRequest({
     taskText: "Missing work unit.",
@@ -149,7 +149,7 @@ test("serializeForModel is text-first and contains every canonical evidence fiel
     "-",
     "Handoff:",
     "- prior_handoff={\"id\":\"handoff:session-1\",\"workUnit\":{\"outcome\":\"answer\",\"goal\":\"Use the verified routing evidence.\"},\"evidenceIds\":[\"e1\"],\"outcome\":{\"kind\":\"answer\",\"instruction\":\"Answer from the verified routing evidence.\"},\"blockingGaps\":[]}",
-    "Follow nextAction: consume inline Evidence and proceed to edit/check. If change-critical context is omitted, one necessary adjacent read on an Evidence path is allowed. A listed gap is not replay authorization; reenter only for a distinct new typed blocker exposed by Evidence consumption, an edit, or a check. Read the decisive implementation span.",
+    "Follow nextAction: consume inline Evidence and proceed to edit/check. If change-critical context is omitted, one necessary adjacent read on an Evidence path is allowed. A listed gap is not replay authorization; reenter only for an explicitly parented child blocker exposed by Evidence consumption, an edit, or a check. Same-fact replay remains invalid. Read the decisive implementation span.",
     "Gaps:",
     "-",
     "Summary: The implementation and test locations are verified.",
@@ -176,10 +176,7 @@ test("canonical result schema enforces terminal state and span invariants", () =
     nextAction: {
       ...legacyNotFound.nextAction,
       recovery: {
-        requestKind: "not_found_recovery",
         priorSessionId: "session-1",
-        workUnit: readyResult().handoff.workUnit,
-        requiredProbe: "exact_probe",
       },
     },
   }).status, "not_found");
@@ -188,10 +185,7 @@ test("canonical result schema enforces terminal state and span invariants", () =
     nextAction: {
       ...legacyNotFound.nextAction,
       recovery: {
-        requestKind: "not_found_recovery",
         priorSessionId: "other-session",
-        workUnit: readyResult().handoff.workUnit,
-        requiredProbe: "exact_probe",
       },
     },
   }), /must bind to the result session/u);

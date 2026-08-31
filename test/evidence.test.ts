@@ -99,6 +99,12 @@ test("compiler validates observed spans, crops, orders, and emits a ready result
     workUnit: request().workUnit,
     evidenceIds: ["e1", "e2"],
     outcome: { kind: "answer", instruction: "Proceed with answer: Trace routing implementation and tests." },
+    addressedFacts: request().evidenceQuestions.flatMap((question) => question.coverageTargets.map((target) => ({
+      questionId: question.id,
+      targetId: target.id,
+      scope: target.subject,
+      requiredFact: question.question,
+    }))),
     blockingGaps: [],
   });
   const serialized = serializeForModel(result);
@@ -143,7 +149,7 @@ test("compiler cannot mark a required multi-span question ready after one narrow
   assert.equal(partial.gaps.find((gap) => gap.questionId === "implementation")?.reason,
     "Only 1 of 2 required coverage slots were validated.");
   assert.equal(partial.nextAction.reason,
-    "Use Evidence; listed gaps do not authorize replay. Reenter only for a distinct blocker exposed by Evidence/edit/check.");
+    "Use Evidence; gaps do not allow replay. Reenter only for a parented child exposed by Evidence/edit/check.");
   assert.deepEqual(partial.handoff?.evidenceIds, ["e1", "e2"]);
   assert.deepEqual(partial.handoff?.blockingGaps.map((gap) => gap.targetId), ["implementation-target"]);
 
@@ -399,7 +405,7 @@ test("compiler turns role mismatch and rejected generated paths into explicit ga
   assert.equal(result.errorCode, null);
   assert.deepEqual(result.evidence.map((item) => item.questionId), ["implementation"]);
   assert.deepEqual(result.gaps, [{ questionId: "tests", targetId: "tests-target", reason: "Test evidence remains unresolved." }]);
-  assert.equal(result.nextAction.reason, "Use Evidence; listed gaps do not authorize replay. Reenter only for a distinct blocker exposed by Evidence/edit/check.");
+  assert.equal(result.nextAction.reason, "Use Evidence; gaps do not allow replay. Reenter only for a parented child exposed by Evidence/edit/check.");
 }));
 
 test("compiler does not treat a trailing newline as an extra citable line", async () => withWorkspace(async (root) => {
@@ -433,13 +439,10 @@ test("normal empty evidence is not_found while malformed output is failed", asyn
   assert.equal(notFound.errorCode, null);
   assert.equal(notFound.nextAction.kind, "exact_probe");
   assert.deepEqual(notFound.nextAction.recovery, {
-    requestKind: "not_found_recovery",
     priorSessionId: "session-1",
-    workUnit: request().workUnit,
-    requiredProbe: "exact_probe",
   });
   assert.match(serializeForModel(notFound), /one exact non-broad path or symbol probe and read at most one candidate path/iu);
-  assert.match(serializeForModel(notFound), /Recovery contract: after the exact probe/iu);
+  assert.match(serializeForModel(notFound), /Recovery contract: reuse the exact prior taskText/iu);
 
   const failed = await compileFreeContextResult(
     request(),

@@ -58,6 +58,12 @@ function result(
       workUnit: requestValue.workUnit,
       evidenceIds: ["e1"],
       outcome: { kind: requestValue.workUnit.outcome, instruction: `Proceed with ${requestValue.workUnit.goal}` },
+      addressedFacts: requestValue.evidenceQuestions.flatMap((question) => question.coverageTargets.map((target) => ({
+        questionId: question.id,
+        targetId: target.id,
+        scope: target.subject,
+        requiredFact: question.question,
+      }))),
       blockingGaps: unresolvedTargetIds.flatMap((targetId) => {
         const question = requestValue.evidenceQuestions.find(({ coverageTargets }) => coverageTargets[0]?.id === targetId);
         const target = question?.coverageTargets[0];
@@ -119,10 +125,12 @@ test("ordered invocations produce disjoint initial and reentrant windows", () =>
       priorHandoff: implementationResult.handoff!,
       blockingGap: {
         id: "gap:tests-target",
+        questionId: "tests",
         targetId: "tests-target",
         kind: "verification_unknown" as const,
         scope: { kind: "symbol" as const, symbol: "tests" },
-        requiredFact: "Locate cross-file verification exposed by the edit.",
+        requiredFact: "Where is tests?",
+        derivation: { kind: "handoff_child" as const, parentHandoffId: implementationResult.handoff!.id },
         origin: { kind: "edit" as const, changedPaths: ["src/implementation-target.ts"] },
       },
     },
@@ -156,6 +164,7 @@ test("ordered invocations produce disjoint initial and reentrant windows", () =>
     windowStartedAfter: "2026-08-21T00:00:30.000Z",
     windowEndedBefore: "2026-08-21T00:00:40.000Z",
   }]);
+  assert.equal(windows[1]?.continuationRelation, "handoff_child");
   assert.ok(windows.every(({ windowObserved }) => windowObserved));
 
   for (const invalidBoundary of [
@@ -179,10 +188,8 @@ test("not_found exact probe round-trips through recovery into typed reentry", ()
     ...request("missing-recovery"),
     workUnit: initial.workUnit,
     recovery: {
-      requestKind: "not_found_recovery" as const,
       priorSessionId: missing.sessionId,
-      priorWorkUnit: initial.workUnit,
-      probe: { kind: "exact_probe" as const, path: "src/missing.ts" },
+      probePath: "src/missing.ts",
     },
   };
   const recovered = result(recovery, "partial", ["missing-recovery-target"]);
@@ -193,11 +200,13 @@ test("not_found exact probe round-trips through recovery into typed reentry", ()
       priorHandoff: recovered.handoff!,
       blockingGap: {
         id: "gap:verification-target",
+        questionId: "verification",
         targetId: "verification-target",
         kind: "verification_unknown" as const,
         scope: { kind: "symbol" as const, symbol: "verification" },
-        requiredFact: "Locate the verification exposed by the recovery result.",
-        origin: { kind: "evidence_consumption" as const, evidenceIds: ["e1"] },
+        requiredFact: "Where is verification?",
+        derivation: { kind: "gap_concretization" as const, parentGapId: "gap:missing-recovery-target" },
+        origin: { kind: "check" as const, check: "Run the focused recovery check." },
       },
     },
   };
@@ -228,10 +237,8 @@ test("not_found recovery is one-shot and cannot follow a handoff", () => {
     ...request("recovery"),
     workUnit: initial.workUnit,
     recovery: {
-      requestKind: "not_found_recovery" as const,
       priorSessionId: missing.sessionId,
-      priorWorkUnit: initial.workUnit,
-      probe: { kind: "exact_probe" as const, path: "src/missing.ts" },
+      probePath: "src/missing.ts",
     },
   };
   const repeated = buildFreeContextInvocationWindows(
@@ -267,10 +274,12 @@ test("a legal typed reentry stays accepted after an invalid ancestor", () => {
       priorHandoff: initialResult.handoff!,
       blockingGap: {
         id: "gap:tests-target",
+        questionId: "tests",
         targetId: "tests-target",
         kind: "verification_unknown" as const,
         scope: { kind: "symbol" as const, symbol: "tests" },
-        requiredFact: "Locate the verification exposed by the edit.",
+        requiredFact: "Where is tests?",
+        derivation: { kind: "handoff_child" as const, parentHandoffId: initialResult.handoff!.id },
         origin: { kind: "edit" as const, changedPaths: ["src/implementation-target.ts"] },
       },
     },
@@ -314,10 +323,12 @@ test("missing or rewritten reentry contracts fail closed", () => {
       priorHandoff: initialResult.handoff!,
       blockingGap: {
         id: "gap:rewritten",
+        questionId: "implementation",
         targetId: "implementation-target",
         kind: "cross_file_unknown" as const,
         scope: initialRequest.evidenceQuestions[0]!.coverageTargets[0]!.subject,
-        requiredFact: "Reword the existing gap.",
+        requiredFact: "Where is implementation?",
+        derivation: { kind: "handoff_child" as const, parentHandoffId: initialResult.handoff!.id },
         origin: { kind: "evidence_consumption" as const, evidenceIds: ["e1"] },
       },
     },

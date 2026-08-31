@@ -15,6 +15,7 @@ import {
 import type { DeadlineClock, TerminalStore } from "./lifecycle.js";
 import { executeSingleCall } from "./single-call.js";
 import type { SingleCallDependencies } from "./single-call.js";
+import { validateCommittedRecovery } from "./session.js";
 
 export interface SingleFlightExecutor {
   run<T>(task: () => Promise<T>): Promise<T>;
@@ -147,6 +148,20 @@ export function createGatherContextHandler(
       return callResult(failedResult({
         code: "INVALID_REQUEST",
         reason: recoveryDecision.reason,
+        sessionId: callContext.invocationId,
+        sessionFile: null,
+        request,
+      }));
+    }
+    const committedRecoveryDecision = await validateCommittedRecovery({
+      request,
+      workspaceRoot: callContext.workspaceRoot,
+      ...(dependencies.sessionDirectory ? { sessionDirectory: dependencies.sessionDirectory } : {}),
+    });
+    if (!committedRecoveryDecision.accepted) {
+      return callResult(failedResult({
+        code: "INVALID_REQUEST",
+        reason: committedRecoveryDecision.reason,
         sessionId: callContext.invocationId,
         sessionFile: null,
         request,

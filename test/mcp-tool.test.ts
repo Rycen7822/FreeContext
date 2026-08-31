@@ -80,6 +80,24 @@ function readyResult(options: RunExplorerOptions): Readonly<FreeContextResult> {
   });
 }
 
+function notFoundResult(options: RunExplorerOptions): Readonly<FreeContextResult> {
+  return FreeContextResultSchema.parse({
+    status: "not_found",
+    summary: "No validated evidence.",
+    evidence: [],
+    gaps: options.request.evidenceQuestions.map((question) => ({ questionId: question.id, reason: "Not found." })),
+    handoff: null,
+    nextAction: {
+      kind: "exact_probe",
+      reason: "Probe the exact candidate.",
+      recovery: { priorSessionId: options.invocation.sessionId },
+    },
+    errorCode: null,
+    sessionId: options.invocation.sessionId,
+    sessionFile: options.invocation.sessionFile,
+  });
+}
+
 function outputOf(result: Awaited<ReturnType<ReturnType<typeof createGatherContextHandler>>>) {
   return FreeContextResultSchema.parse(result.structuredContent);
 }
@@ -235,6 +253,12 @@ test("typed reentry returns the specific safe work-unit mismatch reason", async 
       workUnit: request.workUnit,
       evidenceIds: ["e1"],
       outcome: { kind: request.workUnit.outcome, instruction: "Use the prior Evidence." },
+      addressedFacts: [{
+        questionId: "q1",
+        targetId: "implementation-owner",
+        scope: { kind: "topic" as const, topic: "implementation owner" },
+        requiredFact: "Where is it implemented?",
+      }],
       blockingGaps: [],
     };
     const reentryRequest = {
@@ -244,10 +268,12 @@ test("typed reentry returns the specific safe work-unit mismatch reason", async 
         priorHandoff,
         blockingGap: {
           id: "gap:new-contract",
+          questionId: "q1",
           targetId: "implementation-owner",
           kind: "contract_unknown" as const,
           scope: { kind: "topic" as const, topic: "implementation owner" },
-          requiredFact: "Locate the newly exposed contract.",
+          requiredFact: "Where is it implemented?",
+          derivation: { kind: "handoff_child" as const, parentHandoffId: priorHandoff.id },
           origin: { kind: "evidence_consumption" as const, evidenceIds: ["e1"] },
         },
       },
@@ -274,34 +300,53 @@ test("typed reentry returns the specific safe work-unit mismatch reason", async 
   }
 });
 
-test("not_found recovery returns a specific work-unit mismatch reason", async () => {
+test("not_found recovery binds one exact reused request to the latest committed session", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "freecontext-mcp-recovery-"));
   const workspace = path.join(root, "workspace");
   const sessions = path.join(root, "sessions");
   try {
     await mkdir(workspace);
     let calls = 0;
-    const recoveryRequest = {
-      ...request,
-      recovery: {
-        requestKind: "not_found_recovery" as const,
-        priorSessionId: "session-not-found",
-        priorWorkUnit: { ...request.workUnit, goal: "A different recovery work unit." },
-        probe: { kind: "exact_probe" as const, path: "document.md" },
-      },
-    } satisfies FreeContextCallerRequest;
-    const call = await createGatherContextHandler({
+    const handler = createGatherContextHandler({
       tokenCounter,
       sessionDirectory: sessions,
       runExplorer: async (options) => {
         calls += 1;
-        return readyResult(options);
+        return options.request.recovery ? readyResult(options) : notFoundResult(options);
       },
-    })(recoveryRequest, callContext(workspace));
-    const output = outputOf(call);
-    assert.equal(calls, 0);
-    assert.equal(output.errorCode, "INVALID_REQUEST");
-    assert.equal(output.nextAction.reason, "Recovery request.workUnit must exactly equal recovery.priorWorkUnit.");
+    });
+    const initial = outputOf(await handler(request, callContext(workspace, "initial-invocation", "initial-call")));
+    assert.equal(initial.status, "not_found");
+    const latest = outputOf(await handler(request, callContext(workspace, "latest-invocation", "latest-call")));
+    assert.equal(latest.status, "not_found");
+
+    const arbitrary = outputOf(await handler({
+      ...request,
+      recovery: { priorSessionId: initial.sessionId, probePath: "document.md" },
+    }, callContext(workspace, "arbitrary-invocation", "arbitrary-call")));
+    assert.equal(arbitrary.nextAction.reason, "Recovery prior session is not the immediately eligible session.");
+    assert.equal(arbitrary.errorCode, "INVALID_REQUEST");
+
+    const changed = outputOf(await handler({
+      ...request,
+      taskText: "Changed recovery request.",
+      recovery: { priorSessionId: latest.sessionId, probePath: "document.md" },
+    }, callContext(workspace, "changed-invocation", "changed-call")));
+    assert.equal(changed.nextAction.reason, "Recovery must exactly reuse the prior request facts.");
+    assert.equal(changed.errorCode, "INVALID_REQUEST");
+
+    const recoveryRequest = {
+      ...request,
+      recovery: { priorSessionId: latest.sessionId, probePath: "document.md" },
+    } satisfies FreeContextCallerRequest;
+    const recovered = outputOf(await handler(recoveryRequest, callContext(workspace, "recovery-invocation", "recovery-call")));
+    assert.equal(recovered.status, "ready");
+    assert.equal(recovered.errorCode, null);
+
+    const reused = outputOf(await handler(recoveryRequest, callContext(workspace, "reuse-invocation", "reuse-call")));
+    assert.equal(reused.nextAction.reason, "Recovery prior session has already been consumed.");
+    assert.equal(reused.errorCode, "INVALID_REQUEST");
+    assert.equal(calls, 3);
   } finally {
     await rm(root, { recursive: true, force: true });
   }

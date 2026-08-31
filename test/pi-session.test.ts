@@ -47,10 +47,7 @@ function evaluateFixture(candidate: Readonly<ExplorerCandidate>): Readonly<FreeC
         kind: "exact_probe",
         reason: "Continue the fixture exploration.",
         recovery: {
-          requestKind: "not_found_recovery",
           priorSessionId: "test-session",
-          workUnit: baseRequest().workUnit,
-          requiredProbe: "exact_probe",
         },
       },
       errorCode: null,

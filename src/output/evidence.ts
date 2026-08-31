@@ -260,6 +260,13 @@ export async function compileFreeContextResult(
             ? `Proceed with ${request.workUnit.outcome}: ${request.workUnit.goal}`
             : `Use delivered Evidence for ${request.workUnit.outcome}; reenter only if a typed blocking gap prevents: ${request.workUnit.goal}`, 500),
         },
+        addressedFacts: request.evidenceQuestions.flatMap((question) =>
+          questionCoverageTargets(question).map((target) => ({
+            questionId: question.id,
+            targetId: target.id,
+            scope: target.subject,
+            requiredFact: question.question,
+          }))),
         blockingGaps,
       }
     : null;
@@ -275,7 +282,7 @@ export async function compileFreeContextResult(
           kind: "consume_evidence",
           reason: clipSingleLine(status === "ready"
             ? "Use inline Evidence for the next edit/check; call FreeContext when edit/check exposes a new source-bound gap."
-            : "Use Evidence; listed gaps do not authorize replay. Reenter only for a distinct blocker exposed by Evidence/edit/check.", RESULT_LIMITS.detailCodePoints),
+            : "Use Evidence; gaps do not allow replay. Reenter only for a parented child exposed by Evidence/edit/check.", RESULT_LIMITS.detailCodePoints),
         }
       : {
           kind: "exact_probe",
@@ -285,10 +292,7 @@ export async function compileFreeContextResult(
           ),
           ...(effectiveError === null ? {
             recovery: {
-              requestKind: "not_found_recovery" as const,
               priorSessionId: invocation.sessionId,
-              workUnit: request.workUnit,
-              requiredProbe: "exact_probe" as const,
             },
           } : {}),
         },

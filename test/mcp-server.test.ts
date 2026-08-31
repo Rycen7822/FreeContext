@@ -150,7 +150,7 @@ test("no-network MCP loopback awaits one terminal Promise and never emits an int
     assert.equal(questionItem?.properties?.target?.type, "object");
     assert.equal(questionItem?.properties?.id, undefined);
     assert.equal(questionItem?.properties?.minimumSpans, undefined);
-    assert.deepEqual(questionItem?.required, ["role", "question", "required", "target"]);
+    assert.deepEqual(questionItem?.required, ["role", "question"]);
     assert.ok(tool?.outputSchema?.properties?.status);
 
     let firstSettled = false;

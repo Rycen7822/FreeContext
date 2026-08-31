@@ -11,7 +11,7 @@ function request(targetId: string, reentry?: FreeContextRequest["reentry"]): Fre
     workUnit: { outcome: "edit", goal: "Implement the requested change." },
     evidenceQuestions: [{
       role: "implementation",
-      question: `Locate ${targetId}.`,
+      question: reentry?.blockingGap.requiredFact ?? `Locate ${targetId}.`,
       required: true,
       target: { id: targetId, subject: { kind: "symbol", symbol: targetId }, factKind: "location", coverageMode: "single" },
     }],
@@ -31,6 +31,12 @@ function result(requestValue: FreeContextRequest, status: FreeContextResult["sta
     workUnit: requestValue.workUnit,
     evidenceIds: ["e1"],
     outcome: { kind: requestValue.workUnit.outcome, instruction: "Proceed with the edit." },
+    addressedFacts: [{
+      questionId: requestValue.evidenceQuestions[0]!.id,
+      targetId: target.id,
+      scope: target.subject,
+      requiredFact: requestValue.evidenceQuestions[0]!.question,
+    }],
     blockingGaps: gap ? [{ id: "gap:owner", targetId: target.id, kind: "source_unknown" as const, scope: target.subject, requiredFact: "Find the owner." }] : [],
   } : null;
   return {
@@ -41,7 +47,7 @@ function result(requestValue: FreeContextRequest, status: FreeContextResult["sta
     ...(handoff ? { handoff } : { handoff: null }),
     nextAction: evidence.length > 0
       ? { kind: "consume_evidence" as const, reason: "Consume the evidence." }
-      : { kind: "exact_probe" as const, reason: "Probe exactly.", ...(status === "not_found" ? { recovery: { requestKind: "not_found_recovery" as const, priorSessionId: `session-${target.id}-${status}`, workUnit: requestValue.workUnit, requiredProbe: "exact_probe" as const } } : {}) },
+      : { kind: "exact_probe" as const, reason: "Probe exactly.", ...(status === "not_found" ? { recovery: { priorSessionId: `session-${target.id}-${status}` } } : {}) },
     errorCode: status === "failed" ? "INVALID_REQUEST" as const : null,
     sessionId: `session-${target.id}-${status}`,
     sessionFile: `/logs/agent/freecontext-sessions/${target.id}.json`,
@@ -68,10 +74,8 @@ function recoveryRequest(requestValue: FreeContextRequest, priorSessionId: strin
   return normalizeFreeContextRequest({
     ...(caller(requestValue) as Record<string, unknown>),
     recovery: {
-      requestKind: "not_found_recovery",
       priorSessionId,
-      priorWorkUnit: requestValue.workUnit,
-      probe: { kind: "exact_probe", path: "src/owner.ts" },
+      probePath: "src/owner.ts",
     },
   });
 }
@@ -84,11 +88,13 @@ test("raw invocation provenance keeps rejected attempts and accepted descendants
   const initial = request("owner");
   const notFound = result(initial, "not_found");
   const partial = result(initial, "partial", true);
-  const reentryRequest = request("next", {
+  const reentryRequest = request("owner", {
     priorHandoff: partial.handoff!,
     blockingGap: {
-      id: "gap:next", targetId: "next", kind: "verification_unknown",
-      scope: { kind: "symbol", symbol: "next" }, requiredFact: "Find the next owner.",
+      id: "gap:owner-child", targetId: "owner", kind: "verification_unknown",
+      questionId: "q1",
+      scope: { kind: "symbol", symbol: "owner" }, requiredFact: "Find the caller exposed by the focused edit.",
+      derivation: { kind: "gap_concretization", parentGapId: "gap:owner" },
       origin: { kind: "edit", changedPaths: ["src/owner.ts"] },
     },
   });
@@ -97,7 +103,9 @@ test("raw invocation provenance keeps rejected attempts and accepted descendants
     priorHandoff: ready.handoff!,
     blockingGap: {
       id: "gap:final", targetId: "final", kind: "verification_unknown",
+      questionId: "q1",
       scope: { kind: "symbol", symbol: "final" }, requiredFact: "Find the final owner.",
+      derivation: { kind: "handoff_child", parentHandoffId: ready.handoff!.id },
       origin: { kind: "check", check: "run the focused check" },
     },
   });
@@ -106,7 +114,9 @@ test("raw invocation provenance keeps rejected attempts and accepted descendants
     priorHandoff: partial.handoff!,
     blockingGap: {
       id: "gap:owner", targetId: "owner", kind: "verification_unknown",
+      questionId: "q1",
       scope: { kind: "symbol", symbol: "owner" }, requiredFact: "Repeat the old gap.",
+      derivation: { kind: "gap_concretization", parentGapId: "gap:owner" },
       origin: { kind: "edit", changedPaths: ["src/other.ts"] },
     },
   });
@@ -149,6 +159,7 @@ test("raw invocation provenance keeps rejected attempts and accepted descendants
     { schema: "accepted", intrinsic: "accepted", chain: "accepted", committed: "accepted" },
   ]);
   assert.equal(provenance.attempts[4]?.invocationKind, "reentrant");
+  assert.equal(provenance.attempts[4]?.continuationRelation, "gap_concretization");
   assert.deepEqual(provenance.attempts[4]?.chain.failureReasons, []);
   assert.ok((provenance.attempts[4]?.inheritedAncestryFailures.length ?? 0) > 0);
   assert.match(provenance.attempts[0]?.schema.failureReasons[0] ?? "", /^schema_rejection:/u);
@@ -160,6 +171,7 @@ test("raw invocation provenance keeps rejected attempts and accepted descendants
   );
   assert.equal(provenance.attempts[4]?.intrinsic.status, "accepted");
   assert.equal(provenance.attempts[4]?.chain.status, "accepted");
+  assert.equal(provenance.attempts[5]?.continuationRelation, "handoff_child");
 });
 
 test("fresh invocation gate accepts a clean initial and typed reentry chain", () => {
@@ -169,7 +181,9 @@ test("fresh invocation gate accepts a clean initial and typed reentry chain", ()
     priorHandoff: partial.handoff!,
     blockingGap: {
       id: "gap:next", targetId: "next", kind: "verification_unknown",
+      questionId: "q1",
       scope: { kind: "symbol", symbol: "next" }, requiredFact: "Find the next owner.",
+      derivation: { kind: "gap_concretization", parentGapId: "gap:owner" },
       origin: { kind: "edit", changedPaths: ["src/owner.ts"] },
     },
   });
@@ -214,6 +228,7 @@ test("fresh gate rejects legacy and inconsistent provenance without inferring a 
       resultContract: "current" as const,
       resultStatus: partial.status,
       invocationKind: "initial" as const,
+      continuationRelation: null,
       inheritedAncestryFailures: [],
     }],
   };
@@ -222,7 +237,7 @@ test("fresh gate rejects legacy and inconsistent provenance without inferring a 
   assert.equal(mismatch.failures[0]?.code, "counts_mismatch");
 });
 
-test("v2 separates failed-to-recovery chain rejection from intrinsic acceptance", () => {
+test("v3 separates failed-to-recovery chain rejection from intrinsic acceptance", () => {
   const initial = request("owner");
   const failed = result(initial, "failed");
   const recovery = recoveryRequest(initial, failed.sessionId);
@@ -250,7 +265,7 @@ test("v2 separates failed-to-recovery chain rejection from intrinsic acceptance"
   assert.equal(provenance.freshGate.failures.some(({ code }) => code === "impossible_commit_state"), false);
 });
 
-test("v2 gate rejects impossible correlations without collapsing layer facts", () => {
+test("v3 gate rejects impossible correlations without collapsing layer facts", () => {
   const base = {
     attemptIndex: 1,
     callId: "synthetic",
@@ -263,6 +278,7 @@ test("v2 gate rejects impossible correlations without collapsing layer facts", (
     resultContract: "current" as const,
     resultStatus: "ready" as const,
     invocationKind: "initial" as const,
+    continuationRelation: null,
     inheritedAncestryFailures: [],
   };
   const impossibleCommit = {

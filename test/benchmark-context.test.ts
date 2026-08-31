@@ -383,8 +383,8 @@ test("master context exporter joins an aliased v3 call and ignores its late diag
     });
     const document = JSON.parse(await readFile(outputPath, "utf8")) as BenchmarkMasterAgentContext;
     const call = document.freeContextCalls[0];
-    assert.equal(document.schemaVersion, "freecontext-master-agent-context-v4");
-    assert.equal(document.invocationProvenance.schemaVersion, "freecontext-invocation-provenance-v2");
+    assert.equal(document.schemaVersion, "freecontext-master-agent-context-v5");
+    assert.equal(document.invocationProvenance.schemaVersion, "freecontext-invocation-provenance-v3");
     assert.equal(document.invocationProvenance.freshGate.schemaVersion, "freecontext-fresh-invocation-gate-v2");
     assert.equal("semanticallyAcceptedCalls" in (document.invocationProvenance.counts ?? {}), false);
     assert.deepEqual(document.freeContextTransport, [{
@@ -429,7 +429,7 @@ test("master context exporter joins an aliased v3 call and ignores its late diag
       "utf8",
     )).trim().split("\n").map((line) => JSON.parse(line));
     assert.deepEqual(consumption.map(({ schemaVersion }) => schemaVersion), [
-      "freecontext-consumption-audit-v6",
+      "freecontext-consumption-audit-v7",
       "freecontext-duplicate-semantic-call-v1",
       "freecontext-transport-observation-v1",
     ]);
@@ -643,6 +643,50 @@ test("historical v2 sessions are read without rewriting their identity schema", 
   }
 });
 
+test("historical continuation requests remain readable with an unknown relation", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "freecontext-master-old-continuation-"));
+  try {
+    const base = historicalV2Session();
+    const oldHandoff = {
+      id: "handoff:old",
+      workUnit: base.request.workUnit,
+      evidenceIds: ["e1"],
+      outcome: { kind: base.request.workUnit.outcome, instruction: "Use old evidence." },
+      blockingGaps: [],
+    };
+    const oldContinuation = {
+      ...base,
+      request: {
+        ...base.request,
+        reentry: {
+          priorHandoff: oldHandoff,
+          blockingGap: {
+            id: "gap:old-child",
+            targetId: "router",
+            kind: "cross_file_unknown" as const,
+            scope: { kind: "symbol" as const, symbol: "router" },
+            requiredFact: "Where is the router?",
+            origin: { kind: "edit" as const, changedPaths: ["src/router.ts"] },
+          },
+        },
+      },
+    };
+    const fixture = await createFixture(root, oldContinuation as unknown as ReturnType<typeof historicalV2Session>, null);
+    const outputPath = await exportMasterAgentContext({
+      agentDir: fixture.agentDir,
+      taskName: "historical-continuation",
+      allowUnreferencedSessions: true,
+    });
+    const document = JSON.parse(await readFile(outputPath, "utf8")) as BenchmarkMasterAgentContext;
+    assert.equal(document.freeContextCalls[0]?.status, "ready");
+    assert.equal(document.freeContextCalls[0]?.invocationKind, null);
+    assert.equal(document.freeContextCalls[0]?.continuationRelation, null);
+    assert.match(document.freeContextCalls[0]?.promptToFreeContext ?? "", /"gap:old-child"/u);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test("historical not_found sessions without recovery are explicitly legacy", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "freecontext-master-legacy-not-found-"));
   try {
@@ -669,6 +713,84 @@ test("historical not_found sessions without recovery are explicitly legacy", asy
     assert.equal(document.freeContextCalls[0]?.deliveryStatus, "missing");
     assert.equal(document.invocationProvenance.availability, "evidence_unavailable");
     assert.deepEqual(document.invocationProvenance.freshGate.failures.map(({ code }) => code), ["evidence_unavailable", "counts_unavailable"]);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("historical initial not_found and recovery continuation remain readable without inferred relations", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "freecontext-master-old-recovery-chain-"));
+  try {
+    const base = historicalV2Session();
+    const oldNotFoundResult = {
+      ...base.result,
+      status: "not_found" as const,
+      evidence: [],
+      gaps: [{ questionId: "implementation", reason: "No observed evidence." }],
+      handoff: null,
+      nextAction: {
+        kind: "exact_probe" as const,
+        reason: "Probe the exact path.",
+        recovery: {
+          requestKind: "not_found_recovery" as const,
+          priorSessionId: "call-001",
+          workUnit: base.request.workUnit,
+          requiredProbe: "exact_probe" as const,
+        },
+      },
+      errorCode: null,
+      sessionFile: null,
+    };
+    const initial = {
+      ...base,
+      result: oldNotFoundResult,
+      serializedTextSha256: createHash("sha256").update(JSON.stringify(oldNotFoundResult)).digest("hex"),
+    };
+    const fixture = await createFixture(root, initial as unknown as ReturnType<typeof historicalV2Session>, null);
+
+    const recoveryResult = {
+      ...base.result,
+      sessionId: "call-002",
+      sessionFile: "/logs/agent/freecontext-sessions/call-002.json",
+    };
+    const recoveryContinuation = {
+      ...base,
+      request: {
+        ...base.request,
+        recovery: {
+          requestKind: "not_found_recovery" as const,
+          priorSessionId: "call-001",
+          priorWorkUnit: base.request.workUnit,
+          probe: { kind: "exact_probe" as const, path: "src/router.ts" },
+        },
+      },
+      invocation: {
+        ...base.invocation,
+        callId: "call-002",
+        sessionId: "call-002",
+        sessionFile: "/logs/agent/freecontext-sessions/call-002.json",
+      },
+      result: recoveryResult,
+      serializedTextSha256: createHash("sha256").update(serializeForModel(recoveryResult)).digest("hex"),
+      terminalDecision: { ...base.terminalDecision, callId: "call-002" },
+    };
+    await writeFile(
+      path.join(fixture.agentDir, "freecontext-sessions", "call-002.json"),
+      `${JSON.stringify(recoveryContinuation, null, 2)}\n`,
+      "utf8",
+    );
+
+    const outputPath = await exportMasterAgentContext({
+      agentDir: fixture.agentDir,
+      taskName: "historical-recovery-chain",
+      allowUnreferencedSessions: true,
+    });
+    const document = JSON.parse(await readFile(outputPath, "utf8")) as BenchmarkMasterAgentContext;
+    assert.deepEqual(document.freeContextCalls.map(({ status }) => status), ["not_found", "ready"]);
+    assert.ok(document.freeContextCalls.every(({ invocationKind }) => invocationKind === null));
+    assert.ok(document.freeContextCalls.every(({ continuationRelation }) => continuationRelation === null));
+    assert.match(document.freeContextCalls[1]?.promptToFreeContext ?? "", /"priorWorkUnit"/u);
+    assert.match(fixture.sessionRaw, /"requiredProbe": "exact_probe"/u);
   } finally {
     await rm(root, { recursive: true, force: true });
   }
@@ -901,10 +1023,12 @@ test("two-call export assigns each completed host cell to one disjoint invocatio
             priorHandoff,
             blockingGap: {
               id: `gap:${questionId}-target`,
+              questionId,
               targetId: target.id,
               kind: "contract_unknown" as const,
               scope: target.subject,
-              requiredFact: `Locate ${questionId} after consuming prior Evidence.`,
+              requiredFact: `Where is ${questionId}?`,
+              derivation: { kind: "handoff_child" as const, parentHandoffId: priorHandoff.id },
               origin: { kind: "evidence_consumption" as const, evidenceIds: [priorHandoff.evidenceIds[0]!] },
             },
           },
@@ -924,6 +1048,7 @@ test("two-call export assigns each completed host cell to one disjoint invocatio
           workUnit,
           evidenceIds: ["e1"],
           outcome: { kind: workUnit.outcome, instruction: `Proceed with ${workUnit.goal}` },
+          addressedFacts: [{ questionId, targetId: target.id, scope: target.subject, requiredFact: `Where is ${questionId}?` }],
           blockingGaps: [],
         },
         nextAction: { kind: "consume_evidence" as const, reason: "Use it." },
@@ -1080,7 +1205,7 @@ test("canonical Pier adapter registers direct MCP without legacy CLI wrappers", 
     "never parallelize, and do no native or other tool work during dispatch",
     "If a cell ID returns, exclusively call functions.wait with yield_time_ms=300000 until terminal",
     "Ready/partial and listed gaps do not themselves authorize reentry",
-    "only a distinct new typed blocker exposed by Evidence/edit/check may reenter",
+    "only an explicitly parented child blocker exposed by Evidence/edit/check may reenter",
     "COMMON_DIAGNOSTIC_CHECKPOINT = (",
     "TREATMENT_DIAGNOSTIC_ROUTE = (",
     "CONTROL_DIAGNOSTIC_ROUTE = (",

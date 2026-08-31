@@ -1,5 +1,12 @@
 import { createHash } from "node:crypto";
+import { readdir, readFile, realpath, stat } from "node:fs/promises";
 import path from "node:path";
+import { isDeepStrictEqual } from "node:util";
+import {
+  FreeContextInvocationContextSchema,
+  FreeContextRequestSchema,
+  FreeContextResultSchema,
+} from "./contracts.js";
 import type {
   FreeContextInvocationContext,
   FreeContextRequest,
@@ -12,6 +19,7 @@ import type {
 } from "../runtime/session-capture.js";
 import type { PiSessionEventState } from "../runtime/pi-session.js";
 import { cancelSessionFile, commitSessionFile, reserveSessionFile } from "../session/store.js";
+import { defaultSessionDirectory } from "../session/store.js";
 import type { SessionFileReservation } from "../session/store.js";
 import type { TerminalDecision } from "./lifecycle.js";
 
@@ -46,6 +54,69 @@ export interface McpSessionCommit {
   readonly sessionFile: string;
   readonly sessionBytes: number;
   readonly sessionFileSha256: string;
+}
+
+export interface CommittedRecoveryDecision {
+  readonly accepted: boolean;
+  readonly reason: string;
+}
+
+export async function validateCommittedRecovery({
+  request,
+  workspaceRoot,
+  sessionDirectory = defaultSessionDirectory(),
+}: Readonly<{
+  request: Readonly<FreeContextRequest>;
+  workspaceRoot: string;
+  sessionDirectory?: string;
+}>): Promise<Readonly<CommittedRecoveryDecision>> {
+  const recovery = request.recovery;
+  if (!recovery) return Object.freeze({ accepted: true, reason: "Initial or typed-reentry invocation." });
+  let names: string[];
+  try {
+    names = (await readdir(sessionDirectory)).filter((name) => name.endsWith(".json"));
+  } catch {
+    return Object.freeze({ accepted: false, reason: "Recovery prior session is not available." });
+  }
+  const canonicalWorkspace = await realpath(workspaceRoot).catch(() => null);
+  if (!canonicalWorkspace) return Object.freeze({ accepted: false, reason: "Recovery workspace is not available." });
+  const sessions: Array<{ document: McpSessionDocument; committedAt: number }> = [];
+  for (const name of names) {
+    try {
+      const sessionPath = path.join(sessionDirectory, name);
+      const [text, fileStat] = await Promise.all([readFile(sessionPath, "utf8"), stat(sessionPath)]);
+      const value: unknown = JSON.parse(text);
+      if (!value || typeof value !== "object" || (value as { schemaVersion?: unknown }).schemaVersion !== "freecontext-mcp-session-v3") continue;
+      const document = value as McpSessionDocument;
+      if (document.transport !== "mcp" || !document.invocation || !document.request || !document.result ||
+          typeof document.finishedAt !== "string" || Number.isNaN(Date.parse(document.finishedAt)) ||
+          !FreeContextInvocationContextSchema.safeParse(document.invocation).success ||
+          !FreeContextRequestSchema.safeParse(document.request).success ||
+          !FreeContextResultSchema.safeParse(document.result).success) continue;
+      sessions.push({ document, committedAt: fileStat.mtimeMs });
+    } catch { /* Unrelated or historical session files cannot establish current recovery eligibility. */ }
+  }
+  const sameWorkspace = sessions.filter(({ document }) => path.resolve(document.invocation.workspaceRoot) === canonicalWorkspace)
+    .sort((left, right) => left.committedAt - right.committedAt ||
+      Date.parse(left.document.finishedAt) - Date.parse(right.document.finishedAt) ||
+      left.document.invocation.sessionId.localeCompare(right.document.invocation.sessionId));
+  const priorEntry = sameWorkspace.find(({ document }) => document.invocation.sessionId === recovery.priorSessionId);
+  const prior = priorEntry?.document;
+  if (!prior) return Object.freeze({ accepted: false, reason: "Recovery prior session is not a committed session in this workspace." });
+  if (sameWorkspace.some(({ document }) => document.request.recovery?.priorSessionId === recovery.priorSessionId)) {
+    return Object.freeze({ accepted: false, reason: "Recovery prior session has already been consumed." });
+  }
+  if (sameWorkspace.at(-1) !== priorEntry) {
+    return Object.freeze({ accepted: false, reason: "Recovery prior session is not the immediately eligible session." });
+  }
+  if (prior.result.status !== "not_found" || prior.result.handoff !== null && prior.result.handoff !== undefined) {
+    return Object.freeze({ accepted: false, reason: "Recovery prior session must be not_found without a handoff." });
+  }
+  const reused = ["taskText", "workUnit", "knownRefs", "evidenceQuestions"] as const;
+  if (reused.some((key) => !isDeepStrictEqual(prior.request[key], request[key]))) {
+    return Object.freeze({ accepted: false, reason: "Recovery must exactly reuse the prior request facts." });
+  }
+  return Object.freeze({ accepted: true, reason: "Recovery is bound to the immediately eligible committed not_found session." });
 }
 
 export async function reserveMcpSession({

@@ -53,9 +53,9 @@ export const FREECONTEXT_ELIGIBILITY_POLICY = Object.freeze({
     "Question role is an evidence category, not an agent persona: use only implementation, caller, test, or contract.",
     "Each request names one stable outer edit, check, answer, or decision work unit and binds every question to one structured path, symbol, or topic fact target; target IDs are stable handles, not semantic proof.",
     "An invocation is not a repository map: normally ask for the one atomic source-bound fact that directly unblocks the current work unit. For requested new behavior, ask for the nearest existing extension seam and confirmed presence or absence rather than presupposing a new symbol exists.",
-    "Use supported partial Evidence immediately. Execute the handoff; only a new typed blocker exposed while consuming Evidence or by edit/check may start another invocation.",
-    "A typed reentry copies priorHandoff verbatim, keeps request.workUnit exactly equal to priorHandoff.workUnit, and binds blockingGap.targetId and scope to a current declared target.",
-    "Reentry origin is structured as evidence_consumption with evidenceIds and optional priorGapId, edit with changedPaths, or check with check and optional failureLocation; do not guess hidden fields.",
+    "Use supported partial Evidence immediately. Execute the handoff; only a typed child blocker exposed while consuming Evidence or by edit/check may start another invocation.",
+    "A typed reentry copies priorHandoff verbatim, keeps request.workUnit exactly equal to priorHandoff.workUnit, binds blockingGap questionId, targetId, scope, and requiredFact to one current question, and declares whether the child derives from the handoff or concretizes one named prior gap.",
+    "Reentry origin is structured as evidence_consumption with evidenceIds, edit with changedPaths, or check with check and optional failureLocation; do not guess hidden fields.",
     "Each gather_context invocation is atomic and non-replayable; a later invocation addresses a blocking or newly exposed issue without a fixed call-count rule.",
     "Inline Evidence excerpts are verified successful repository reads and may be used directly; one exact cited or adjacent read is allowed only when an excerpt omits change-critical context.",
     "Required coverage-slot total is at most six per payload envelope, not a semantic exploration limit.",
@@ -77,7 +77,7 @@ function renderEligibilityPolicy(): string {
 }
 
 export const TOOL_DESCRIPTION = renderEligibilityPolicy();
-export const SERVER_INSTRUCTIONS = `FreeContext exposes one read-only ${FREECONTEXT_ELIGIBILITY_POLICY.toolName} tool governed by ${FREECONTEXT_ELIGIBILITY_POLICY.id}. Each invocation binds to the public MCP request id and either an operator-configured absolute workspace root or one public MCP file root; the caller sends one stable outer work unit and one structured fact target per evidence question. A typed reentry copies the priorHandoff verbatim, preserves request.workUnit exactly, binds its distinct new blocking gap to a declared target, and uses evidence_consumption, edit, or check origin fields; no hidden continuation fields are required. The invocation is atomic, awaits one terminal outer result, and never replays a pending or terminal request. Follow the returned nextAction; use supported partial Evidence immediately and execute the handoff. A listed gap or ready/partial status does not authorize replay; only a distinct new typed blocker exposed by Evidence consumption, an edit, or a check can reenter. Ready is invocation-scoped. Never send credentials or source dumps.`;
+export const SERVER_INSTRUCTIONS = `FreeContext exposes one read-only ${FREECONTEXT_ELIGIBILITY_POLICY.toolName} tool governed by ${FREECONTEXT_ELIGIBILITY_POLICY.id}. Each invocation binds to the public MCP request id and either an operator-configured absolute workspace root or one public MCP file root; the caller sends one stable outer work unit and one structured fact target per evidence question. Caller target ids, fact kinds, required flags, and single coverage default internally. A typed reentry copies the priorHandoff verbatim, preserves request.workUnit exactly, binds its child blocking gap to one current question and target, and explicitly derives it from the handoff or one named prior gap. The invocation is atomic, awaits one terminal outer result, and never replays a pending or terminal request. Follow the returned nextAction; use supported partial Evidence immediately and execute the handoff. A listed gap or ready/partial status does not authorize replay; only a child blocker exposed by Evidence consumption, an edit, or a check can reenter. Reusing an addressed target, scope, and fact after whitespace/case normalization or changing only an id remains replay. Ready is invocation-scoped. Never send credentials or source dumps.`;
 
 export const MODEL_RESULT_MAX_BYTES = 8_192;
 export const RESULT_LIMITS = Object.freeze({
@@ -119,19 +119,26 @@ export const BlockingGapKindSchema = z.enum([
 ]);
 
 export const ReentryGapOriginSchema = z.discriminatedUnion("kind", [
-  z.object({ kind: z.literal("evidence_consumption"), evidenceIds: z.array(identifier).min(1).max(RESULT_LIMITS.evidence), priorGapId: identifier.optional() }).strict(),
+  z.object({ kind: z.literal("evidence_consumption"), evidenceIds: z.array(identifier).min(1).max(RESULT_LIMITS.evidence) }).strict(),
   z.object({ kind: z.literal("edit"), changedPaths: z.array(relativePath).min(1).max(12) }).strict(),
   z.object({ kind: z.literal("check"), check: singleLine(RESULT_LIMITS.detailCodePoints), failureLocation: singleLine(RESULT_LIMITS.detailCodePoints).optional() }).strict(),
 ]).describe("The new blocking gap must be caused by consuming returned Evidence, an edit, or a check; use the matching structured fields.");
 
+export const ReentryDerivationSchema = z.discriminatedUnion("kind", [
+  z.object({ kind: z.literal("handoff_child"), parentHandoffId: identifier }).strict(),
+  z.object({ kind: z.literal("gap_concretization"), parentGapId: identifier }).strict(),
+]).describe("Auditable child relationship: derive from the prior handoff or concretize one named prior gap.");
+
 export const ReentryBlockingGapSchema = z.object({
   id: identifier,
+  questionId: identifier,
   targetId: identifier,
   kind: BlockingGapKindSchema,
   scope: EvidenceTargetSubjectSchema,
   requiredFact: singleLine(500),
+  derivation: ReentryDerivationSchema,
   origin: ReentryGapOriginSchema,
-}).strict().describe("A new typed blocker linked to one current target and one structured origin.");
+}).strict().describe("A typed child blocker linked to one current target, one prior parent, and one structured origin.");
 
 export const PriorHandoffSchema = z.object({
   id: identifier,
@@ -141,6 +148,12 @@ export const PriorHandoffSchema = z.object({
     kind: z.enum(["edit", "check", "answer", "decision"]),
     instruction: singleLine(500),
   }).strict(),
+  addressedFacts: z.array(z.object({
+    questionId: identifier,
+    targetId: identifier,
+    scope: EvidenceTargetSubjectSchema,
+    requiredFact: singleLine(500),
+  }).strict()).max(RESULT_LIMITS.evidence).optional(),
   blockingGaps: z.array(z.object({
     id: identifier,
     targetId: identifier,
@@ -155,17 +168,10 @@ export const FreeContextReentrySchema = z.object({
   blockingGap: ReentryBlockingGapSchema,
 }).strict().describe("A later invocation preserves the prior handoff and exact work unit while addressing one new typed blocking gap.");
 
-export const FreeContextRecoveryProbeSchema = z.object({
-  kind: z.literal("exact_probe"),
-  path: relativePath,
-}).strict().describe("One exact, non-broad probe permitted after a not_found result.");
-
 export const FreeContextRecoveryRequestSchema = z.object({
-  requestKind: z.literal("not_found_recovery"),
   priorSessionId: identifier,
-  priorWorkUnit: WorkUnitSchema,
-  probe: FreeContextRecoveryProbeSchema,
-}).strict().describe("A single recovery request copied from a not_found nextAction after one exact probe.");
+  probePath: relativePath,
+}).strict().describe("After the one exact probe, copy priorSessionId from not_found recovery and add only the observed probePath.");
 
 export const CoverageTargetSchema = z.object({
   id: identifier,
@@ -173,6 +179,13 @@ export const CoverageTargetSchema = z.object({
   factKind: z.enum(["location", "definition", "behavior", "relationship", "contract", "verification", "presence"]),
   coverageMode: z.enum(["single", "exhaustive"]),
 }).strict();
+
+export const FreeContextCallerCoverageTargetSchema = z.object({
+  id: identifier.optional(),
+  subject: EvidenceTargetSubjectSchema,
+  factKind: CoverageTargetSchema.shape.factKind.optional(),
+  coverageMode: CoverageTargetSchema.shape.coverageMode.default("single"),
+}).strict().describe("Name the subject; id, role-appropriate factKind, and single coverage default internally.");
 
 export const KnownReferenceSchema = z.discriminatedUnion("kind", [
   z.object({ kind: z.literal("path"), path: relativePath }).strict(),
@@ -255,13 +268,43 @@ export const FreeContextRequestSchema = z.object({
   validateContinuationShape(request, context);
 });
 
+const HistoricalReentryGapOriginSchema = z.discriminatedUnion("kind", [
+  z.object({ kind: z.literal("evidence_consumption"), evidenceIds: z.array(identifier).min(1).max(RESULT_LIMITS.evidence), priorGapId: identifier.optional() }).strict(),
+  z.object({ kind: z.literal("edit"), changedPaths: z.array(relativePath).min(1).max(12) }).strict(),
+  z.object({ kind: z.literal("check"), check: singleLine(RESULT_LIMITS.detailCodePoints), failureLocation: singleLine(RESULT_LIMITS.detailCodePoints).optional() }).strict(),
+]);
+const HistoricalPriorHandoffSchema = PriorHandoffSchema.omit({ addressedFacts: true });
+const HistoricalReentrySchema = z.object({
+  priorHandoff: HistoricalPriorHandoffSchema,
+  blockingGap: ReentryBlockingGapSchema.omit({ questionId: true, derivation: true }).extend({ origin: HistoricalReentryGapOriginSchema }),
+}).strict();
+const HistoricalRecoverySchema = z.object({
+  requestKind: z.literal("not_found_recovery"),
+  priorSessionId: identifier,
+  priorWorkUnit: WorkUnitSchema,
+  probe: z.object({ kind: z.literal("exact_probe"), path: relativePath }).strict(),
+}).strict();
+export const HistoricalFreeContextRequestSchema = z.object({
+  taskText: canonicalRequestFields.taskText,
+  workUnit: WorkUnitSchema,
+  knownRefs: z.array(KnownReferenceSchema).max(12),
+  evidenceQuestions: z.array(CanonicalEvidenceQuestionSchema).min(1).max(RESULT_LIMITS.evidence),
+  reentry: HistoricalReentrySchema.optional(),
+  recovery: HistoricalRecoverySchema.optional(),
+}).strict().superRefine((request, context) => {
+  validateQuestions(request, context);
+  if (request.reentry && request.recovery) {
+    context.addIssue({ code: "custom", path: ["reentry"], message: "Historical request cannot combine reentry and recovery." });
+  }
+});
+
 export const FreeContextCallerEvidenceQuestionSchema = z.object({
   role: EvidenceRoleSchema,
   question: z.string().trim().min(1).refine((value) => codePointLength(value) <= 2_000, "question is too long")
     .describe("Name one existing-code owner or decision. For new behavior, ask for its nearest extension seam or confirmed absence instead of presupposing the requested symbol exists."),
-  required: z.boolean(),
-  target: CoverageTargetSchema
-    .describe("One stable subject and fact kind; this target must receive evidence or a target-scoped gap."),
+  required: z.boolean().default(true),
+  target: FreeContextCallerCoverageTargetSchema.optional()
+    .describe("Optional precise subject override; otherwise the question becomes a normalized topic target."),
 }).strict();
 
 export const FreeContextCallerRequestSchema = z.object({
@@ -275,14 +318,15 @@ export const FreeContextCallerRequestSchema = z.object({
   const { evidenceQuestions } = request;
   const targetIds = new Set<string>();
   for (const [questionIndex, question] of evidenceQuestions.entries()) {
-    if (targetIds.has(question.target.id)) {
+    const targetId = question.target?.id;
+    if (targetId !== undefined && targetIds.has(targetId)) {
       context.addIssue({
         code: "custom",
         path: ["evidenceQuestions", questionIndex, "target", "id"],
         message: "target id must be unique within the request",
       });
     }
-    targetIds.add(question.target.id);
+    if (targetId !== undefined) targetIds.add(targetId);
   }
   validateContinuationShape(request, context);
 });
@@ -339,11 +383,8 @@ export const FreeContextNextActionSchema = z.object({
   kind: z.enum(["consume_evidence", "exact_probe"]),
   reason: singleLine(RESULT_LIMITS.detailCodePoints),
   recovery: z.object({
-    requestKind: z.literal("not_found_recovery"),
     priorSessionId: identifier,
-    workUnit: WorkUnitSchema,
-    requiredProbe: z.literal("exact_probe"),
-  }).strict().optional().describe("Present only for not_found: copy this identity and work unit after one exact probe."),
+  }).strict().optional().describe("Present only for not_found: copy priorSessionId and add probePath after one exact probe."),
 }).strict().describe("consume_evidence means consume the returned Evidence and execute the handoff; exact_probe means one bounded probe before broader discovery.");
 
 export const FreeContextHandoffGapSchema = PriorHandoffSchema.shape.blockingGaps.element;
@@ -440,6 +481,37 @@ export const LegacyFreeContextResultSchema = FreeContextResultBaseSchema.superRe
   validateFreeContextResult(result, context, false);
 }).describe("Historical result reader: missing not_found recovery is retained as legacy and is not current-runtime valid.");
 
+export const HistoricalNotFoundFreeContextResultSchema = FreeContextResultBaseSchema.omit({
+  status: true,
+  evidence: true,
+  handoff: true,
+  nextAction: true,
+  errorCode: true,
+}).extend({
+  status: z.literal("not_found"),
+  evidence: z.array(FreeContextEvidenceSchema).length(0),
+  handoff: z.null().optional(),
+  nextAction: z.object({
+    kind: z.literal("exact_probe"),
+    reason: singleLine(RESULT_LIMITS.detailCodePoints),
+    recovery: z.object({
+      requestKind: z.literal("not_found_recovery"),
+      priorSessionId: identifier,
+      workUnit: WorkUnitSchema,
+      requiredProbe: z.literal("exact_probe"),
+    }).strict(),
+  }).strict(),
+  errorCode: z.null(),
+}).strict().superRefine((result, context) => {
+  if (result.sessionId !== result.nextAction.recovery.priorSessionId) {
+    context.addIssue({
+      code: "custom",
+      path: ["nextAction", "recovery", "priorSessionId"],
+      message: "historical not_found recovery must bind to the result session",
+    });
+  }
+}).describe("Historical reader for the retired not_found recovery payload; never accepted as a current runtime result.");
+
 export const FreeContextResultSchema = FreeContextResultBaseSchema.superRefine((result, context) => {
   validateFreeContextResult(result, context, true);
 }).describe("Current runtime result contract: not_found must carry structured recovery.");
@@ -454,9 +526,9 @@ export type FreeContextCallerEvidenceQuestion = z.infer<typeof FreeContextCaller
 export type FreeContextCallerRequest = z.infer<typeof FreeContextCallerRequestSchema>;
 export type ReentryBlockingGap = z.infer<typeof ReentryBlockingGapSchema>;
 export type ReentryGapOrigin = z.infer<typeof ReentryGapOriginSchema>;
+export type ReentryDerivation = z.infer<typeof ReentryDerivationSchema>;
 export type PriorHandoff = z.infer<typeof PriorHandoffSchema>;
 export type FreeContextRecoveryRequest = z.infer<typeof FreeContextRecoveryRequestSchema>;
-export type FreeContextRecoveryProbe = z.infer<typeof FreeContextRecoveryProbeSchema>;
 export type FreeContextRequest = z.infer<typeof FreeContextRequestSchema>;
 export type FreeContextInvocationContext = z.infer<typeof FreeContextInvocationContextSchema>;
 export type FreeContextCallContext = z.infer<typeof FreeContextCallContextSchema>;
@@ -539,21 +611,34 @@ export function normalizeFreeContextRequest(rawRequest: unknown): Readonly<FreeC
   }
   const evidenceQuestions = raw.evidenceQuestions.map((question, questionIndex) => {
     const id = `q${questionIndex + 1}`;
+    const defaultTopic = [...question.question.replace(/\s+/gu, " ").trim()]
+      .slice(0, RESULT_LIMITS.detailCodePoints)
+      .join("");
+    const target = question.target ?? { subject: { kind: "topic" as const, topic: defaultTopic }, coverageMode: "single" as const };
+    const inferredFactKind = question.role === "test"
+      ? "verification"
+      : question.role === "contract"
+        ? "contract"
+        : question.role === "caller"
+          ? "relationship"
+          : "behavior";
     return {
       id,
       role: question.role,
       question: question.question,
       required: question.required,
-      coverageTargets: [question.target],
+      coverageTargets: [{
+        id: target.id ?? `target:${id}`,
+        subject: target.subject,
+        factKind: target.factKind ?? inferredFactKind,
+        coverageMode: target.coverageMode,
+      }],
     };
   });
   const recovery = raw.recovery
     ? {
         ...raw.recovery,
-        probe: {
-          ...raw.recovery.probe,
-          path: normalizeKnownPath(raw.recovery.probe.path) ?? "",
-        },
+        probePath: normalizeKnownPath(raw.recovery.probePath) ?? "",
       }
     : undefined;
   return Object.freeze(FreeContextRequestSchema.parse({
@@ -584,11 +669,11 @@ export function serializeForModel(rawResult: Readonly<FreeContextResult>): strin
   if (!result.handoff) lines.push("-");
   else lines.push(`- prior_handoff=${JSON.stringify(result.handoff)}`);
   if (result.nextAction.kind === "consume_evidence") {
-    lines.push(`Follow nextAction: consume inline Evidence and proceed to edit/check. If change-critical context is omitted, one necessary adjacent read on an Evidence path is allowed. A listed gap is not replay authorization; reenter only for a distinct new typed blocker exposed by Evidence consumption, an edit, or a check. ${result.nextAction.reason}`);
+    lines.push(`Follow nextAction: consume inline Evidence and proceed to edit/check. If change-critical context is omitted, one necessary adjacent read on an Evidence path is allowed. A listed gap is not replay authorization; reenter only for an explicitly parented child blocker exposed by Evidence consumption, an edit, or a check. Same-fact replay remains invalid. ${result.nextAction.reason}`);
   } else {
     lines.push(`Follow nextAction: make one exact non-broad path or symbol probe and read at most one candidate path; broader discovery calls FreeContext. ${result.nextAction.reason}`);
     if (result.nextAction.recovery) {
-      lines.push(`Recovery contract: after the exact probe, send ${JSON.stringify(result.nextAction.recovery)}; do not fabricate a handoff or send a new initial request.`);
+      lines.push(`Recovery contract: reuse the exact prior taskText, workUnit, knownRefs, and evidenceQuestions; add recovery ${JSON.stringify(result.nextAction.recovery)} plus only probePath from the exact probe. Do not fabricate a handoff or change the prior request.`);
     }
   }
   lines.push("Gaps:");

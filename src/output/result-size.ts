@@ -25,7 +25,7 @@ function resultFits(result: Readonly<FreeContextResult>): boolean {
 function compactNextActionReason(result: Readonly<FreeContextResult>): string {
   if (result.nextAction.kind === "exact_probe") {
     return result.nextAction.recovery
-      ? "Make one exact probe, then send the structured not_found_recovery request bound to the prior session and work unit."
+      ? "Make one exact probe, then reuse the prior request with recovery.priorSessionId and the observed probePath."
       : "Make one exact probe; call FreeContext before broader discovery.";
   }
   if ((result.handoff?.blockingGaps.length ?? 0) > 0) {

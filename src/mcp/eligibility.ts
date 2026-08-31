@@ -53,22 +53,24 @@ export function validateFreeContextRecovery(
   if (request.reentry) {
     return Object.freeze({ accepted: false, reason: "Recovery cannot be combined with typed reentry." });
   }
-  if (!isDeepStrictEqual(request.workUnit, recovery.priorWorkUnit)) {
-    return Object.freeze({ accepted: false, reason: "Recovery request.workUnit must exactly equal recovery.priorWorkUnit." });
-  }
-  if (recovery.probe.kind !== "exact_probe" || !recovery.probe.path.trim()) {
+  if (!recovery.probePath.trim()) {
     return Object.freeze({ accepted: false, reason: "Recovery requires one exact probe path." });
   }
-  return Object.freeze({ accepted: true, reason: "Recovery shape is bound to the prior not_found session and exact work unit." });
+  return Object.freeze({ accepted: true, reason: "Recovery is bound to the prior not_found session and one exact probe path." });
 }
 
 function declaredTargetFor(
   request: Readonly<FreeContextRequest>,
+  questionId: string,
   targetId: string,
-): Readonly<CoverageTarget> | undefined {
-  return request.evidenceQuestions
-    .flatMap((question) => question.coverageTargets)
-    .find((target) => target.id === targetId);
+): Readonly<{ question: Readonly<FreeContextRequest>["evidenceQuestions"][number]; target: Readonly<CoverageTarget> }> | undefined {
+  const question = request.evidenceQuestions.find((candidate) => candidate.id === questionId);
+  const target = question?.coverageTargets.find((candidate) => candidate.id === targetId);
+  return question && target ? { question, target } : undefined;
+}
+
+function normalizedFact(value: string): string {
+  return value.replace(/\s+/gu, " ").trim().toLocaleLowerCase("en-US");
 }
 
 export function validateFreeContextReentry(
@@ -77,36 +79,59 @@ export function validateFreeContextReentry(
   const reentry = request.reentry;
   if (!reentry) return Object.freeze({ accepted: true, reason: "Initial invocation." });
   const { priorHandoff, blockingGap } = reentry;
+  if (!priorHandoff.addressedFacts || priorHandoff.addressedFacts.length === 0) {
+    return Object.freeze({ accepted: false, reason: "Reentry priorHandoff must include addressed request facts." });
+  }
   if (priorHandoff.workUnit.outcome !== priorHandoff.outcome.kind) {
     return Object.freeze({ accepted: false, reason: "Reentry priorHandoff outcome must match its workUnit." });
   }
   if (!isDeepStrictEqual(priorHandoff.workUnit, request.workUnit)) {
     return Object.freeze({ accepted: false, reason: "Reentry request.workUnit must exactly equal priorHandoff.workUnit." });
   }
-  const target = declaredTargetFor(request, blockingGap.targetId);
-  if (!target) {
-    return Object.freeze({ accepted: false, reason: "Reentry blocking gap must bind to a current declared target." });
+  const declared = declaredTargetFor(request, blockingGap.questionId, blockingGap.targetId);
+  if (!declared) {
+    return Object.freeze({ accepted: false, reason: "Reentry blocking gap must bind to one current question and target." });
   }
-  if (!isDeepStrictEqual(target.subject, blockingGap.scope)) {
+  if (!isDeepStrictEqual(declared.target.subject, blockingGap.scope)) {
     return Object.freeze({ accepted: false, reason: "Reentry blocking gap scope must match its declared target." });
+  }
+  if (normalizedFact(declared.question.question) !== normalizedFact(blockingGap.requiredFact)) {
+    return Object.freeze({ accepted: false, reason: "Reentry blocking gap requiredFact must match its current evidence question." });
   }
   if (blockingGap.id === priorHandoff.id || priorHandoff.blockingGaps.some((gap) => gap.id === blockingGap.id)) {
     return Object.freeze({ accepted: false, reason: "Reentry blocking gap id must be new; it cannot repeat the prior handoff." });
   }
-  const sameTypedScope = priorHandoff.blockingGaps.some((gap) => isDeepStrictEqual(
-    { targetId: gap.targetId, scope: gap.scope },
-    { targetId: blockingGap.targetId, scope: blockingGap.scope },
-  ));
-  if (sameTypedScope) {
-    return Object.freeze({ accepted: false, reason: "Reentry blocking gap duplicates an existing target and scope." });
+  const parentGapId = blockingGap.derivation.kind === "gap_concretization"
+    ? blockingGap.derivation.parentGapId
+    : null;
+  const parentGap = parentGapId !== null
+    ? priorHandoff.blockingGaps.find((gap) => gap.id === parentGapId)
+    : undefined;
+  if (blockingGap.derivation.kind === "handoff_child" &&
+      blockingGap.derivation.parentHandoffId !== priorHandoff.id) {
+    return Object.freeze({ accepted: false, reason: "Handoff-child reentry must name the copied prior handoff." });
+  }
+  if (blockingGap.derivation.kind === "gap_concretization" && !parentGap) {
+    return Object.freeze({ accepted: false, reason: "Gap concretization must name a gap in the copied prior handoff." });
+  }
+  const repeatsAddressedFact = priorHandoff.addressedFacts.some((fact) =>
+    isDeepStrictEqual(fact.scope, blockingGap.scope) &&
+    normalizedFact(fact.requiredFact) === normalizedFact(blockingGap.requiredFact));
+  if (repeatsAddressedFact) {
+    return Object.freeze({ accepted: false, reason: "Reentry repeats an already addressed scope and normalized fact." });
+  }
+  if (blockingGap.derivation.kind === "gap_concretization") {
+    if (blockingGap.origin.kind !== "edit" && blockingGap.origin.kind !== "check") {
+      return Object.freeze({ accepted: false, reason: "Gap concretization must be exposed by an edit or a check." });
+    }
+    if (parentGap && normalizedFact(blockingGap.requiredFact) === normalizedFact(parentGap.requiredFact)) {
+      return Object.freeze({ accepted: false, reason: "Gap concretization must ask a normalized child fact, not repeat the parent gap." });
+    }
   }
   if (blockingGap.origin.kind === "evidence_consumption") {
     const origin = blockingGap.origin;
     if (origin.evidenceIds.some((id) => !priorHandoff.evidenceIds.includes(id))) {
       return Object.freeze({ accepted: false, reason: "Evidence-origin reentry must cite Evidence returned in priorHandoff." });
-    }
-    if (origin.priorGapId && !priorHandoff.blockingGaps.some((gap) => gap.id === origin.priorGapId)) {
-      return Object.freeze({ accepted: false, reason: "Evidence-origin reentry cited an unknown prior gap." });
     }
   }
   if (blockingGap.origin.kind === "edit" && blockingGap.scope.kind === "path"
@@ -117,7 +142,7 @@ export function validateFreeContextReentry(
       && blockingGap.origin.failureLocation === blockingGap.scope.path) {
     return Object.freeze({ accepted: false, reason: "Check-origin reentry targets the exact failure path; use a bounded direct diagnostic instead." });
   }
-  return Object.freeze({ accepted: true, reason: "Accepted: a new typed blocking gap is linked to Evidence consumption, an edit, or a check." });
+  return Object.freeze({ accepted: true, reason: `Accepted: ${blockingGap.derivation.kind} is linked to ${blockingGap.origin.kind}.` });
 }
 
 function gate(order: FreeContextEligibilityGate["order"]): FreeContextEligibilityGate {

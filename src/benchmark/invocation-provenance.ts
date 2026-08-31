@@ -9,6 +9,7 @@ import { validateFreeContextRecovery, validateFreeContextReentry } from "../mcp/
 import type { FreeContextRequest, FreeContextResult } from "../mcp/contracts.js";
 import type { ObservedMcpCall } from "./delivery-observation.js";
 import type { FreeContextInvocationWindow } from "./invocation-window.js";
+import type { FreeContextContinuationRelation } from "./invocation-window.js";
 
 export type FreeContextInvocationLayerStatus =
   | "accepted"
@@ -33,6 +34,7 @@ export interface FreeContextInvocationAttempt {
   readonly resultContract: "current" | "legacy" | "unavailable";
   readonly resultStatus: FreeContextResult["status"] | null;
   readonly invocationKind: "initial" | "recovery" | "reentrant" | "invalid" | "unknown";
+  readonly continuationRelation: FreeContextContinuationRelation | null;
   readonly inheritedAncestryFailures: readonly string[];
 }
 
@@ -46,7 +48,7 @@ export interface FreeContextInvocationCounts {
 }
 
 export interface FreeContextInvocationProvenance {
-  readonly schemaVersion: "freecontext-invocation-provenance-v2";
+  readonly schemaVersion: "freecontext-invocation-provenance-v3";
   readonly availability: "observed" | "evidence_unavailable";
   readonly counts: Readonly<FreeContextInvocationCounts> | null;
   readonly attempts: readonly Readonly<FreeContextInvocationAttempt>[];
@@ -257,7 +259,7 @@ export function collectInvocationProvenance({
   const directCalls = calls.filter((call) => call.source === "direct_mcp");
   if (directCalls.length === 0) {
     const unavailable = {
-      schemaVersion: "freecontext-invocation-provenance-v2" as const,
+      schemaVersion: "freecontext-invocation-provenance-v3" as const,
       availability: "evidence_unavailable" as const,
       counts: null,
       attempts: Object.freeze([]) as readonly Readonly<FreeContextInvocationAttempt>[],
@@ -296,6 +298,7 @@ export function collectInvocationProvenance({
     let intrinsic = layer("not_evaluated");
     let chain = layer("not_evaluated");
     let invocationKind: FreeContextInvocationAttempt["invocationKind"] = "invalid";
+    let continuationRelation: FreeContextContinuationRelation | null = null;
     let request: FreeContextRequest | null = null;
 
     if (!parsed.success) {
@@ -343,7 +346,10 @@ export function collectInvocationProvenance({
           }
         } else if (request.reentry) {
           if (!previousHandoffObserved(directCalls, sessionByCallId, index, request)) chainReasons.push("unknown_prior_handoff");
-          else invocationKind = "reentrant";
+          else {
+            invocationKind = "reentrant";
+            continuationRelation = request.reentry.blockingGap.derivation.kind;
+          }
         } else {
           if (previousResult?.status === "not_found" && !previousResult.handoff) chainReasons.push("missing_not_found_recovery");
           else chainReasons.push("missing_reentry_contract");
@@ -352,7 +358,10 @@ export function collectInvocationProvenance({
         chain = chainReasons.length === 0 ? layer("accepted") : layer("rejected", chainReasons);
       }
     }
-    if (window) invocationKind = window.invocationKind;
+    if (window) {
+      invocationKind = window.invocationKind;
+      continuationRelation = window.continuationRelation;
+    }
     const windowInherited = window?.chainFailureReasons ?? [];
     const allInherited = Object.freeze([...new Set([...inherited, ...windowInherited])]);
     attempts.push(Object.freeze({
@@ -367,6 +376,7 @@ export function collectInvocationProvenance({
       resultContract,
       resultStatus,
       invocationKind,
+      continuationRelation,
       inheritedAncestryFailures: allInherited,
     }));
   }
@@ -379,7 +389,7 @@ export function collectInvocationProvenance({
     providerExecutedCalls: acceptedCount(attempts, (attempt) => attempt.providerExecuted),
   });
   const provenance = {
-    schemaVersion: "freecontext-invocation-provenance-v2" as const,
+    schemaVersion: "freecontext-invocation-provenance-v3" as const,
     availability: "observed" as const,
     counts,
     attempts: Object.freeze(attempts),
@@ -444,6 +454,7 @@ export function adaptHistoricalInvocationProvenanceV1(
       resultContract,
       resultStatus: typeof value.resultStatus === "string" ? value.resultStatus as FreeContextResult["status"] : null,
       invocationKind,
+      continuationRelation: null,
       inheritedAncestryFailures: Object.freeze([...chainFailureReasons]),
     });
   });

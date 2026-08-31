@@ -4,6 +4,7 @@ import { validateFreeContextRecovery, validateFreeContextReentry } from "../mcp/
 import type { FreeContextTransportObservation } from "./delivery-observation.js";
 
 export type FreeContextInvocationKind = "initial" | "recovery" | "reentrant" | "invalid" | "unknown";
+export type FreeContextContinuationRelation = "handoff_child" | "gap_concretization";
 
 export interface FreeContextInvocationWindowInput {
   readonly callId: string;
@@ -17,6 +18,7 @@ export interface FreeContextInvocationWindow {
   readonly callId: string;
   readonly episodeIndex: number;
   readonly invocationKind: FreeContextInvocationKind;
+  readonly continuationRelation: FreeContextContinuationRelation | null;
   readonly windowStartedAfter: string | null;
   readonly windowEndedBefore: string | null;
   readonly windowObserved: boolean;
@@ -70,6 +72,7 @@ function invalidWindows(
     callId: input.callId,
     episodeIndex: 1,
     invocationKind: "invalid" as const,
+    continuationRelation: null,
     windowStartedAfter: null,
     windowEndedBefore: null,
     windowObserved: false,
@@ -153,6 +156,7 @@ export function buildFreeContextInvocationWindows(
     const previous = correlated[index - 1];
     const repeatedRequest = priorRequests.some((request) => sameRequest(request, invocation.input.request));
     let invocationKind: FreeContextInvocationKind = index === 0 ? "initial" : "invalid";
+    let continuationRelation: FreeContextContinuationRelation | null = null;
     const failureReasons: string[] = [];
     const chainFailureReasons: string[] = [];
     let attemptAccepted = index === 0;
@@ -203,6 +207,7 @@ export function buildFreeContextInvocationWindows(
         else if (!decision.accepted) failureReasons.push("invalid_reentry_contract");
         else {
           invocationKind = "reentrant";
+          continuationRelation = reentry.blockingGap.derivation.kind;
           attemptAccepted = true;
           episodeIndex += 1;
         }
@@ -218,6 +223,7 @@ export function buildFreeContextInvocationWindows(
       callId: invocation.input.callId,
       episodeIndex,
       invocationKind,
+      continuationRelation,
       windowStartedAfter: invocation.completedAt,
       windowEndedBefore: next?.startedAt ?? (finalBoundaryObserved ? taskCompletedAt : null),
       windowObserved: next !== undefined || finalBoundaryObserved,

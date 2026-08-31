@@ -29,10 +29,7 @@ function result(status: FreeContextResult["status"] = "ready"): FreeContextResul
           reason: "Search directly.",
           ...(status === "not_found" ? {
             recovery: {
-              requestKind: "not_found_recovery" as const,
               priorSessionId: "session-1",
-              workUnit: { outcome: "answer" as const, goal: "Inspect the fixture." },
-              requiredProbe: "exact_probe" as const,
             },
           } : {}),
         }
@@ -109,9 +106,9 @@ test("collector accepts only explicit host action events for the selected call",
   );
 });
 
-test("v6 audit accepts inline observed evidence without a native reread", () => {
+test("v7 audit accepts inline observed evidence without a native reread", () => {
   const audit = analyzeFreeContextConsumption(result(), [], context());
-  assert.equal(audit.schemaVersion, "freecontext-consumption-audit-v6");
+  assert.equal(audit.schemaVersion, "freecontext-consumption-audit-v7");
   assert.equal(audit.inlineEvidenceCount, 1);
   assert.equal(audit.inlineEvidenceProvenanceComplete, true);
   assert.equal(audit.nativeEvidenceRereadCount, 0);
@@ -125,7 +122,7 @@ test("v6 audit accepts inline observed evidence without a native reread", () => 
   assert.deepEqual(missingAudit.failureReasons, ["inline_evidence_provenance_missing"]);
 });
 
-test("v6 audit rejects pre-edit search beyond a consume_evidence nextAction", () => {
+test("v7 audit rejects pre-edit search beyond a consume_evidence nextAction", () => {
   const audit = analyzeFreeContextConsumption(result(), [
     action(1, {}, { observationBatchId: "cell-1" }),
     action(2, {}, { observationBatchId: "cell-2" }),
@@ -137,7 +134,7 @@ test("v6 audit rejects pre-edit search beyond a consume_evidence nextAction", ()
   assert.deepEqual(audit.failureReasons, ["pre_edit_handoff_scope_exceeded"]);
 });
 
-test("v6 audit applies pre-edit handoff and post-edit diagnostic boundaries", () => {
+test("v7 audit applies pre-edit handoff and post-edit diagnostic boundaries", () => {
   const adjacent = analyzeFreeContextConsumption(result(), [
     action(1, { startLine: 21, endLine: 30 }),
   ], context());
@@ -225,10 +222,13 @@ test("typed reentry and unobserved windows fail closed", () => {
   assert.equal(prematureReentry.editOrCheckObserved, false);
   assert.deepEqual(prematureReentry.failureReasons, ["reentry_without_typed_origin"]);
   assert.deepEqual(prematureReentry.phases.map(({ phase }) => phase), ["pre_edit_handoff", "reentry"]);
-  assert.deepEqual(analyzeFreeContextConsumption(result(), [], context({
+  const typedChild = analyzeFreeContextConsumption(result(), [], context({
     followedByReentrant: true,
     reentryOrigin: "evidence_consumption",
-  })).failureReasons, []);
+    followupRelation: "handoff_child",
+  }));
+  assert.deepEqual(typedChild.failureReasons, []);
+  assert.equal(typedChild.followupRelation, "handoff_child");
   for (const kind of ["edit", "check"] as const) {
     const progressed = analyzeFreeContextConsumption(result(), [
       action(1, { kind, path: kind === "edit" ? "src/router.ts" : null, startLine: null, endLine: null }),

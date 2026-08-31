@@ -1,7 +1,7 @@
 import type { FreeContextResult } from "../mcp/contracts.js";
 import path from "node:path";
 import { isRecord } from "./delivery-observation.js";
-import type { FreeContextInvocationKind } from "./invocation-window.js";
+import type { FreeContextContinuationRelation, FreeContextInvocationKind } from "./invocation-window.js";
 
 export type ParentRepositoryActionKind = "read" | "search" | "edit" | "check" | "other";
 export type FreeContextConsumptionPhase = "pre_edit_handoff" | "post_edit_diagnostic" | "reentry";
@@ -33,7 +33,7 @@ export interface ParentRepositoryActionEvent {
 }
 
 export interface FreeContextConsumptionAudit {
-  readonly schemaVersion: "freecontext-consumption-audit-v6";
+  readonly schemaVersion: "freecontext-consumption-audit-v7";
   readonly observationSource: "explicit_host_event" | "completed_codex_tool_call";
   readonly taskId: string;
   readonly callId: string;
@@ -58,6 +58,7 @@ export interface FreeContextConsumptionAudit {
   readonly checkCount: number;
   readonly followedByReentrant: boolean;
   readonly followedByRecovery: boolean;
+  readonly followupRelation: FreeContextContinuationRelation | null;
   readonly recoveryProbeAccepted: boolean | null;
   readonly editOrCheckObserved: boolean;
   readonly exactDuplicate: boolean;
@@ -83,6 +84,7 @@ export interface FreeContextConsumptionAuditContext {
   readonly recoveryProbePath?: string | null;
   readonly hasFollowupInvocation?: boolean;
   readonly reentryOrigin?: "evidence_consumption" | "edit" | "check" | null;
+  readonly followupRelation?: FreeContextContinuationRelation | null;
 }
 
 function positiveInteger(value: unknown): number | null {
@@ -325,7 +327,7 @@ export function analyzeFreeContextConsumption(
   if (postEditActions.length > 0) phases.push(phaseSummary("post_edit_diagnostic", postEditActions));
   if (followedByReentrant) phases.push(phaseSummary("reentry", []));
   return Object.freeze({
-    schemaVersion: "freecontext-consumption-audit-v6",
+    schemaVersion: "freecontext-consumption-audit-v7",
     observationSource: context.observationSource,
     taskId: context.taskId,
     callId: context.callId,
@@ -350,6 +352,7 @@ export function analyzeFreeContextConsumption(
     checkCount: checks.length,
     followedByReentrant,
     followedByRecovery,
+    followupRelation: context.followupRelation ?? null,
     recoveryProbeAccepted,
     editOrCheckObserved,
     exactDuplicate: context.exactDuplicate,

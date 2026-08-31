@@ -50,14 +50,15 @@ test("implicit discovery routes each current gap while preserving the atomic cal
   assert.match(parsedTemplate.workUnit.goal, /conditional routing/iu);
   assert.equal(parsedTemplate.evidenceQuestions.length, 1);
   assert.equal(parsedTemplate.evidenceQuestions[0]?.role, "implementation");
-  assert.equal(parsedTemplate.evidenceQuestions[0]?.target.coverageMode, "single");
+  assert.equal(parsedTemplate.evidenceQuestions[0]?.required, true);
+  assert.equal(parsedTemplate.evidenceQuestions[0]?.target, undefined);
   assert.match(skill, /Roles are only `implementation`, `caller`, `test`, or `contract`/u);
-  assert.match(skill, /Usually ask for the one concrete `single` target actually needed/u);
-  assert.match(skill, /`knownRefs` shapes are exactly/u);
+  assert.match(skill, /question becomes a topic target.*`required:true`.*role-appropriate `factKind`.*stable id.*`single` coverage default internally/u);
+  assert.match(skill, /`knownRefs` are/u);
   assert.match(skill, /stable outer implementation goal/u);
   assert.doesNotMatch(skill, /\bworkspace_root\b/u);
   assert.match(skill, /A listed partial gap is not permission to replay/iu);
-  assert.match(skill, /Ordinary edit\/check\/read\/diff work does not call FreeContext/iu);
+  assert.match(skill, /ordinary edit\/check\/read\/diff work stays direct/iu);
   assert.match(skill, /After an edit or failed check, use a diagnostic checkpoint/iu);
   assert.match(skill, /at most one direct read of the exact failure location is allowed/iu);
   assert.match(skill, /Before a second non-adjacent file read or cross-module search for that diagnosis, stop and classify the remaining gap/iu);
@@ -67,9 +68,9 @@ test("implicit discovery routes each current gap while preserving the atomic cal
   }
   assert.match(skill, /Never force a second call/iu);
   assert.match(skill, /Copy `priorHandoff` verbatim/iu);
-  assert.match(skill, /`workUnit` exactly equal to `priorHandoff\.workUnit`/iu);
+  assert.match(skill, /keep `workUnit` exactly equal/iu);
   for (const origin of ["evidence_consumption", "edit", "check"]) assert.match(skill, new RegExp(`(?:${origin})`, "u"));
-  assert.match(skill, /targetId,kind,scope,requiredFact,origin/iu);
+  assert.match(skill, /questionId,targetId,kind,scope,requiredFact,derivation,origin/iu);
   assert.match(skill, /Never target a changed path or exact failure path/iu);
   assert.match(skill, /Recovery is once-only/iu);
   assert.doesNotMatch(skill, /complete unresolved question|same-unit|same gaps|Acceptance receipt|private acceptance receipt/iu);

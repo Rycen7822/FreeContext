@@ -50,7 +50,7 @@ test("one immutable policy owns gate order, tool text, and host route metadata",
   assert.match(TOOL_DESCRIPTION, /overall multi-file task does not call automatically/iu);
   assert.doesNotMatch(TOOL_DESCRIPTION, /Familiarity, known files, or keywords never weaken/iu);
   assert.doesNotMatch(TOOL_DESCRIPTION, /at task start|first read-only exploration action/iu);
-  assert.match(TOOL_DESCRIPTION, /only a new typed blocker exposed while consuming Evidence or by edit\/check may start another invocation/iu);
+  assert.match(TOOL_DESCRIPTION, /only a typed child blocker exposed while consuming Evidence or by edit\/check may start another invocation/iu);
 });
 
 test("complex scopes call FreeContext before any repository probe", () => {
@@ -166,6 +166,12 @@ test("reentry round-trips the exact handoff and exposes all origin contracts", (
     workUnit: request.workUnit,
     evidenceIds: ["e1"],
     outcome: { kind: request.workUnit.outcome, instruction: "Use the prior Evidence." },
+    addressedFacts: [{
+      questionId: "old-question",
+      targetId: "old-contract",
+      scope: { kind: "symbol" as const, symbol: "OldContract", path: "src/contract.ts" },
+      requiredFact: "Determine the old contract.",
+    }],
     blockingGaps: [{
       id: "gap:old-contract",
       targetId: "old-contract",
@@ -178,6 +184,7 @@ test("reentry round-trips the exact handoff and exposes all origin contracts", (
     ...request,
     evidenceQuestions: [{
       ...request.evidenceQuestions[0]!,
+      question: blockingGap.requiredFact,
       coverageTargets: [{
         id: blockingGap.targetId,
         subject: blockingGap.scope,
@@ -191,26 +198,32 @@ test("reentry round-trips the exact handoff and exposes all origin contracts", (
   const validOrigins = [
     {
       id: "gap:new-evidence",
+      questionId: "impl",
       targetId: "new-evidence",
       kind: "contract_unknown" as const,
       scope: { kind: "symbol" as const, symbol: "NewContract", path: "src/contract.ts" },
       requiredFact: "Locate the newly exposed contract dependency.",
+      derivation: { kind: "handoff_child" as const, parentHandoffId: priorHandoff.id },
       origin: { kind: "evidence_consumption" as const, evidenceIds: ["e1"] },
     },
     {
       id: "gap:new-edit",
+      questionId: "impl",
       targetId: "new-edit",
       kind: "verification_unknown" as const,
       scope: { kind: "path" as const, path: "test/new-behavior.test.ts" },
       requiredFact: "Locate cross-file verification for the newly edited behavior.",
+      derivation: { kind: "handoff_child" as const, parentHandoffId: priorHandoff.id },
       origin: { kind: "edit" as const, changedPaths: ["src/implementation.ts"] },
     },
     {
       id: "gap:new-check",
+      questionId: "impl",
       targetId: "new-check",
       kind: "cross_file_unknown" as const,
       scope: { kind: "symbol" as const, symbol: "CheckContract", path: "src/check.ts" },
       requiredFact: "Locate the contract exposed by the failing check.",
+      derivation: { kind: "handoff_child" as const, parentHandoffId: priorHandoff.id },
       origin: { kind: "check" as const, check: "Run the focused contract check.", failureLocation: "test/check.test.ts:12" },
     },
   ] satisfies ReentryBlockingGap[];
@@ -227,11 +240,8 @@ test("reentry round-trips the exact handoff and exposes all origin contracts", (
       reason: "Evidence-origin reentry must cite Evidence returned in priorHandoff.",
     },
     {
-      request: withGap({
-        ...validOrigins[0]!,
-        origin: { kind: "evidence_consumption" as const, evidenceIds: ["e1"], priorGapId: "missing-gap" },
-      }),
-      reason: "Evidence-origin reentry cited an unknown prior gap.",
+      request: withGap({ ...validOrigins[0]!, derivation: { kind: "gap_concretization" as const, parentGapId: "missing-gap" } }),
+      reason: "Gap concretization must name a gap in the copied prior handoff.",
     },
     {
       request: {
@@ -241,7 +251,7 @@ test("reentry round-trips the exact handoff and exposes all origin contracts", (
           blockingGap: { ...validOrigins[0]!, targetId: "missing-target" },
         },
       },
-      reason: "Reentry blocking gap must bind to a current declared target.",
+      reason: "Reentry blocking gap must bind to one current question and target.",
     },
   ];
   for (const invalid of invalidOrigins) assert.equal(validateFreeContextReentry(invalid.request).reason, invalid.reason);
@@ -255,30 +265,91 @@ test("reentry round-trips the exact handoff and exposes all origin contracts", (
     reason: "Reentry request.workUnit must exactly equal priorHandoff.workUnit.",
   });
 
+  const forgedBlockingFact = withGap(validOrigins[0]!);
+  assert.equal(validateFreeContextReentry({
+    ...forgedBlockingFact,
+    reentry: {
+      ...forgedBlockingFact.reentry,
+      blockingGap: { ...forgedBlockingFact.reentry.blockingGap, requiredFact: "A forged child fact not sent to the explorer." },
+    },
+  }).reason, "Reentry blocking gap requiredFact must match its current evidence question.");
+
   assert.equal(validateFreeContextReentry(withGap({
     id: "gap:rewritten",
+    questionId: "impl",
     targetId: "old-contract",
     kind: "contract_unknown",
     scope: { kind: "symbol", symbol: "OldContract", path: "src/contract.ts" },
-    requiredFact: "Reworded request for the same contract.",
+    requiredFact: "  DETERMINE   THE OLD CONTRACT. ",
+    derivation: { kind: "handoff_child", parentHandoffId: priorHandoff.id },
     origin: { kind: "evidence_consumption", evidenceIds: ["e1"] },
-  })).reason, "Reentry blocking gap duplicates an existing target and scope.");
+  })).reason, "Reentry repeats an already addressed scope and normalized fact.");
+
+  assert.equal(validateFreeContextReentry(withGap({
+    id: "gap:changed-target-handle",
+    questionId: "impl",
+    targetId: "renamed-contract-target",
+    kind: "contract_unknown",
+    scope: { kind: "symbol", symbol: "OldContract", path: "src/contract.ts" },
+    requiredFact: "Determine the old contract.",
+    derivation: { kind: "handoff_child", parentHandoffId: priorHandoff.id },
+    origin: { kind: "evidence_consumption", evidenceIds: ["e1"] },
+  })).reason, "Reentry repeats an already addressed scope and normalized fact.");
+
+  const changedQuestionHandle = withGap({
+    id: "gap:changed-question-handle",
+    questionId: "renamed-question",
+    targetId: "old-contract",
+    kind: "contract_unknown",
+    scope: { kind: "symbol", symbol: "OldContract", path: "src/contract.ts" },
+    requiredFact: "Determine the old contract.",
+    derivation: { kind: "handoff_child", parentHandoffId: priorHandoff.id },
+    origin: { kind: "evidence_consumption", evidenceIds: ["e1"] },
+  });
+  assert.equal(validateFreeContextReentry({
+    ...changedQuestionHandle,
+    evidenceQuestions: changedQuestionHandle.evidenceQuestions.map((question) => ({
+      ...question,
+      id: "renamed-question",
+    })),
+  }).reason, "Reentry repeats an already addressed scope and normalized fact.");
+
+  const concretizedChild = {
+    id: "gap:concrete-check-child",
+    questionId: "impl",
+    targetId: "old-contract",
+    kind: "contract_unknown" as const,
+    scope: { kind: "symbol" as const, symbol: "OldContract", path: "src/contract.ts" },
+    requiredFact: "Determine which caller violates OldContract after the focused check.",
+    derivation: { kind: "gap_concretization" as const, parentGapId: "gap:old-contract" },
+    origin: { kind: "check" as const, check: "Run the focused contract check." },
+  };
+  assert.equal(validateFreeContextReentry(withGap(concretizedChild)).accepted, true);
+  assert.equal(validateFreeContextReentry(withGap({
+    ...concretizedChild,
+    id: "gap:same-fact",
+    requiredFact: "Determine the old contract.",
+  })).reason, "Reentry repeats an already addressed scope and normalized fact.");
 
   assert.equal(validateFreeContextReentry(withGap({
     id: "gap:file-tail",
+    questionId: "impl",
     targetId: "file-tail",
     kind: "cross_file_unknown",
     scope: { kind: "path", path: "src/implementation.ts" },
     requiredFact: "Read the changed file tail.",
+    derivation: { kind: "handoff_child", parentHandoffId: priorHandoff.id },
     origin: { kind: "edit", changedPaths: ["src/implementation.ts"] },
   })).reason, "Edit-origin reentry targets a changed path; read that path directly instead.");
 
   assert.equal(validateFreeContextReentry(withGap({
     id: "gap:check-path",
+    questionId: "impl",
     targetId: "check-path",
     kind: "verification_unknown",
     scope: { kind: "path", path: "src/failure.ts" },
     requiredFact: "Read the exact failure path.",
+    derivation: { kind: "handoff_child", parentHandoffId: priorHandoff.id },
     origin: { kind: "check", check: "Run the focused check.", failureLocation: "src/failure.ts" },
   })).reason, "Check-origin reentry targets the exact failure path; use a bounded direct diagnostic instead.");
 });
