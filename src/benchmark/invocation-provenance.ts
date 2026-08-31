@@ -134,6 +134,48 @@ function comparableCallId(callId: string): string {
   return callId.replace(/^item_/u, "");
 }
 
+interface SessionCorrelation {
+  readonly session: SessionEntry | undefined;
+  readonly layer: Readonly<FreeContextInvocationLayer>;
+}
+
+function resolveSessionCorrelation(
+  call: Readonly<ObservedMcpCall>,
+  sessions: readonly Readonly<SessionEntry>[],
+): Readonly<SessionCorrelation> {
+  const accepted = (session: Readonly<SessionEntry>): Readonly<SessionCorrelation> =>
+    Object.freeze({ session, layer: layer("accepted") });
+  const rejected = (): Readonly<SessionCorrelation> => Object.freeze({
+    session: undefined,
+    layer: layer("rejected", ["call_session_correlation_mismatch"]),
+  });
+  const unique = (matches: readonly Readonly<SessionEntry>[]): Readonly<SessionEntry> | undefined =>
+    matches.length === 1 ? matches[0] : undefined;
+
+  const structuredSessionId = resultFromObservedCall(call)?.sessionId;
+  if (structuredSessionId) {
+    const session = unique(sessions.filter((candidate) => candidate.result.sessionId === structuredSessionId));
+    return session ? accepted(session) : rejected();
+  }
+
+  const sessionLines = (call.text ?? "").split(/\r?\n/u).filter((line) => line.startsWith("Session: "));
+  if (sessionLines.length > 0) {
+    const referenced = sessionLines.map((line) => unique(sessions.filter((candidate) =>
+      line === `Session: ${candidate.result.sessionId}` ||
+      candidate.result.sessionFile !== null && line === `Session: ${candidate.result.sessionFile}`)));
+    if (referenced.some((session) => session === undefined) || new Set(referenced).size !== 1) return rejected();
+    return accepted(referenced[0] as Readonly<SessionEntry>);
+  }
+
+  const session = unique(sessions.filter((candidate) =>
+    comparableCallId(candidate.callId) === comparableCallId(call.callId)));
+  if (session) return accepted(session);
+  return Object.freeze({
+    session: undefined,
+    layer: sessions.length === 0 ? layer("not_evaluated") : layer("rejected", ["call_session_correlation_mismatch"]),
+  });
+}
+
 function gateFailure(
   code: FreeContextFreshInvocationGateFailure["code"],
   attempt: Readonly<FreeContextInvocationAttempt> | null = null,
@@ -218,14 +260,14 @@ function inheritedFailures(attempts: readonly Readonly<FreeContextInvocationAtte
 
 function previousHandoffObserved(
   calls: readonly Readonly<ObservedMcpCall>[],
-  sessionByCallId: ReadonlyMap<string, SessionEntry>,
+  sessionsByAttempt: readonly (Readonly<SessionEntry> | undefined)[],
   index: number,
   request: Readonly<FreeContextRequest>,
 ): boolean {
   return request.reentry !== undefined && calls.slice(0, index)
-    .map((call) => {
+    .map((call, priorIndex) => {
       const observed = resultFromObservedCall(call);
-      const session = sessionByCallId.get(call.callId) ?? sessionByCallId.get(comparableCallId(call.callId));
+      const session = sessionsByAttempt[priorIndex];
       return session?.result.handoff ?? observed?.handoff;
     })
     .some((handoff) => handoff !== null && handoff !== undefined && isDeepStrictEqual(handoff, request.reentry?.priorHandoff));
@@ -266,11 +308,8 @@ export function collectInvocationProvenance({
     };
     return Object.freeze({ ...unavailable, freshGate: evaluateFreshInvocationGate(unavailable) });
   }
-  const sessionByCallId = new Map(sessions.flatMap((session) => [
-    [session.callId, session] as const,
-    [comparableCallId(session.callId), session] as const,
-    [session.result.sessionId, session] as const,
-  ]));
+  const sessionCorrelations = directCalls.map((call) => resolveSessionCorrelation(call, sessions));
+  const sessionsByAttempt = sessionCorrelations.map(({ session }) => session);
   const windowByCallId = new Map(windows.flatMap((window) => [
     [window.callId, window] as const,
     [comparableCallId(window.callId), window] as const,
@@ -278,18 +317,13 @@ export function collectInvocationProvenance({
   const attempts: FreeContextInvocationAttempt[] = [];
   for (const [index, call] of directCalls.entries()) {
     const parsed = FreeContextCallerRequestSchema.safeParse(call.arguments);
-    const observedSessionId = resultFromObservedCall(call)?.sessionId;
-    const session = (observedSessionId ? sessionByCallId.get(observedSessionId) : undefined)
-      ?? sessionByCallId.get(call.callId) ?? sessionByCallId.get(comparableCallId(call.callId));
+    const resolvedCorrelation = sessionCorrelations[index];
+    const session = resolvedCorrelation?.session;
     const result = session?.result ?? resultFromObservedCall(call);
     const window = (session ? windowByCallId.get(session.callId) : undefined)
       ?? windowByCallId.get(call.callId) ?? windowByCallId.get(comparableCallId(call.callId));
     const resultContract = currentResultContract(session, call);
-    const correlation = !session
-      ? layer("not_evaluated")
-      : comparableCallId(session.callId) === comparableCallId(call.callId)
-        ? layer("accepted")
-        : layer("rejected", ["call_session_correlation_mismatch"]);
+    const correlation = resolvedCorrelation?.layer ?? layer("not_evaluated");
     const committed = session ? layer("accepted") : layer("not_evaluated");
     const providerExecuted = providerLayer(session);
     const resultStatus = result?.status ?? null;
@@ -306,7 +340,14 @@ export function collectInvocationProvenance({
     } else {
       schema = layer("accepted");
       try {
-        request = normalizeFreeContextRequest(parsed.data);
+        if (parsed.data.recovery) {
+          if (!session || !isDeepStrictEqual(session.request.recovery, parsed.data.recovery)) {
+            throw new Error("Committed recovery request is unavailable or mismatched.");
+          }
+          request = session.request;
+        } else {
+          request = normalizeFreeContextRequest(parsed.data);
+        }
         if (request.recovery) {
           const decision = validateFreeContextRecovery(request);
           intrinsic = decision.accepted ? layer("accepted") : layer("rejected", [decision.reason]);
@@ -322,9 +363,7 @@ export function collectInvocationProvenance({
       if (intrinsic.status === "accepted" && request) {
         const chainReasons: string[] = [];
         const previousCall = directCalls[index - 1];
-        const previousSession = previousCall
-          ? sessionByCallId.get(previousCall.callId) ?? sessionByCallId.get(comparableCallId(previousCall.callId))
-          : undefined;
+        const previousSession = previousCall ? sessionsByAttempt[index - 1] : undefined;
         const previousResult = previousSession?.result ?? (previousCall ? resultFromObservedCall(previousCall) : null);
         if (index === 0 || (!previousResult && attempts.every((attempt) => attempt.chain.status !== "accepted"))) {
           if (request.reentry || request.recovery) chainReasons.push("unexpected_initial_continuation");
@@ -345,7 +384,7 @@ export function collectInvocationProvenance({
             invocationKind = "recovery";
           }
         } else if (request.reentry) {
-          if (!previousHandoffObserved(directCalls, sessionByCallId, index, request)) chainReasons.push("unknown_prior_handoff");
+          if (!previousHandoffObserved(directCalls, sessionsByAttempt, index, request)) chainReasons.push("unknown_prior_handoff");
           else {
             invocationKind = "reentrant";
             continuationRelation = request.reentry.blockingGap.derivation.kind;

@@ -8,6 +8,7 @@ import type { BenchmarkMasterAgentContext } from "../src/benchmark/master-contex
 import { exportMasterAgentContext } from "../src/benchmark/master-context.js";
 import {
   FREECONTEXT_ELIGIBILITY_POLICY,
+  FreeContextRequestSchema,
   normalizeFreeContextRequest,
   serializeForModel,
 } from "../src/mcp/contracts.js";
@@ -843,6 +844,26 @@ test("session address stays primary when the transport call id is reused", () =>
   assert.equal(secondDelivery.sessionReferenceMatches, 1);
 });
 
+test("delivery matches a recovery-only caller payload to its restored committed request", () => {
+  const base = v3Session();
+  const request = FreeContextRequestSchema.parse({
+    ...base.request,
+    recovery: { priorSessionId: "prior-not-found", probePath: "src/router.ts" },
+  });
+  const text = serializeForModel(base.result);
+  const delivery = evaluateDelivery([{
+    source: "direct_mcp",
+    callId: base.invocation.callId,
+    startedSeen: true,
+    arguments: { recovery: request.recovery },
+    text,
+    structuredContent: base.result,
+  }], base.invocation.callId, request, base.result, createHash("sha256").update(text).digest("hex"));
+
+  assert.equal(delivery.requestMatches, true);
+  assert.equal(delivery.deliveryStatus, "matched");
+});
+
 test("fast code-await transport completes without a reminder or wait", () => {
   const metadata = { turn_id: "turn-fast" };
   const raw = [{
@@ -1215,9 +1236,9 @@ test("canonical Pier adapter registers direct MCP without legacy CLI wrappers", 
   const commonCheckpoint = source.match(/COMMON_DIAGNOSTIC_CHECKPOINT = \(([\s\S]*?)\n\)/u)?.[1] ?? "";
   assert.match(commonCheckpoint, /After an edit or failed check[\s\S]*at most one direct read[\s\S]*exact failure location/iu);
   assert.match(commonCheckpoint, /second non-adjacent file read[\s\S]*cross-module search[\s\S]*stop and classify/iu);
-  assert.match(commonCheckpoint, /single-file work[\s\S]*exact failures[\s\S]*routine checks[\s\S]*same handoff gap[\s\S]*remain native/iu);
+  assert.match(commonCheckpoint, /single-file work[\s\S]*accurate stack or location[\s\S]*routine checks[\s\S]*same handoff gap[\s\S]*remain native/iu);
   assert.match(commonCheckpoint, /never force a second call/iu);
-  assert.match(source, /TREATMENT_DIAGNOSTIC_ROUTE = \([\s\S]*distinct new static cross-module relationship[\s\S]*prior handoff/iu);
+  assert.match(source, /TREATMENT_DIAGNOSTIC_ROUTE = \([\s\S]*concrete local fix clear[\s\S]*runtime, type, data, or control flow[\s\S]*owner relationship[\s\S]*second non-adjacent module/iu);
   assert.match(source, /CONTROL_DIAGNOSTIC_ROUTE = \([\s\S]*continue with native repository tools[\s\S]*FreeContext is disabled/iu);
   for (const retired of [
     "complete unresolved question",

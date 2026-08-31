@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
+  FreeContextCallerRequestSchema,
   FreeContextRequestSchema,
   FreeContextResultSchema,
   LegacyFreeContextResultSchema,
@@ -95,6 +96,28 @@ test("request normalization deduplicates refs and keeps the documented priority"
       { role: "test", question: "Where is routing tested?", required: false, target: { id: "routing", subject: { kind: "topic", topic: "routing tests" }, factKind: "verification", coverageMode: "single" } },
     ],
   }), /target id must be unique/iu);
+});
+
+test("caller recovery is a strict recovery-only relative-path payload", () => {
+  assert.deepEqual(FreeContextCallerRequestSchema.parse({
+    recovery: { priorSessionId: "session-1", probePath: "src/router.ts" },
+  }), {
+    recovery: { priorSessionId: "session-1", probePath: "src/router.ts" },
+  });
+  assert.throws(() => FreeContextCallerRequestSchema.parse({
+    taskText: "Caller must not override prior facts.",
+    recovery: { priorSessionId: "session-1", probePath: "src/router.ts" },
+  }), /Recovery must be the only caller field/u);
+  assert.throws(() => FreeContextCallerRequestSchema.parse({
+    knownRefs: [],
+    recovery: { priorSessionId: "session-1", probePath: "src/router.ts" },
+  }), /Recovery must be the only caller field/u);
+  assert.throws(() => FreeContextCallerRequestSchema.parse({
+    recovery: { priorSessionId: "session-1", probePath: "/workspace/src/router.ts" },
+  }), /workspace-relative/u);
+  assert.throws(() => FreeContextCallerRequestSchema.parse({
+    recovery: { priorSessionId: "session-1", probePath: "C:\\workspace\\src\\router.ts" },
+  }), /workspace-relative/u);
 });
 
 test("canonical request separates model intent from host invocation facts", () => {

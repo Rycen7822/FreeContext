@@ -1,7 +1,6 @@
 import { createHash } from "node:crypto";
 import { readdir, readFile, realpath, stat } from "node:fs/promises";
 import path from "node:path";
-import { isDeepStrictEqual } from "node:util";
 import {
   FreeContextInvocationContextSchema,
   FreeContextRequestSchema,
@@ -9,6 +8,7 @@ import {
 } from "./contracts.js";
 import type {
   FreeContextInvocationContext,
+  FreeContextRecoveryRequest,
   FreeContextRequest,
   FreeContextResult,
 } from "./contracts.js";
@@ -56,22 +56,24 @@ export interface McpSessionCommit {
   readonly sessionFileSha256: string;
 }
 
-export interface CommittedRecoveryDecision {
-  readonly accepted: boolean;
-  readonly reason: string;
-}
+export type CommittedRecoveryResolution = Readonly<{
+  accepted: true;
+  reason: string;
+  request: Readonly<FreeContextRequest>;
+}> | Readonly<{
+  accepted: false;
+  reason: string;
+}>;
 
-export async function validateCommittedRecovery({
-  request,
+export async function restoreCommittedRecovery({
+  recovery,
   workspaceRoot,
   sessionDirectory = defaultSessionDirectory(),
 }: Readonly<{
-  request: Readonly<FreeContextRequest>;
+  recovery: Readonly<FreeContextRecoveryRequest>;
   workspaceRoot: string;
   sessionDirectory?: string;
-}>): Promise<Readonly<CommittedRecoveryDecision>> {
-  const recovery = request.recovery;
-  if (!recovery) return Object.freeze({ accepted: true, reason: "Initial or typed-reentry invocation." });
+}>): Promise<CommittedRecoveryResolution> {
   let names: string[];
   try {
     names = (await readdir(sessionDirectory)).filter((name) => name.endsWith(".json"));
@@ -112,11 +114,21 @@ export async function validateCommittedRecovery({
   if (prior.result.status !== "not_found" || prior.result.handoff !== null && prior.result.handoff !== undefined) {
     return Object.freeze({ accepted: false, reason: "Recovery prior session must be not_found without a handoff." });
   }
-  const reused = ["taskText", "workUnit", "knownRefs", "evidenceQuestions"] as const;
-  if (reused.some((key) => !isDeepStrictEqual(prior.request[key], request[key]))) {
-    return Object.freeze({ accepted: false, reason: "Recovery must exactly reuse the prior request facts." });
+  if (prior.request.recovery) {
+    return Object.freeze({ accepted: false, reason: "Recovery cannot chain from a recovery session." });
   }
-  return Object.freeze({ accepted: true, reason: "Recovery is bound to the immediately eligible committed not_found session." });
+  const request = FreeContextRequestSchema.parse({
+    taskText: prior.request.taskText,
+    workUnit: prior.request.workUnit,
+    knownRefs: prior.request.knownRefs,
+    evidenceQuestions: prior.request.evidenceQuestions,
+    recovery,
+  });
+  return Object.freeze({
+    accepted: true,
+    reason: "Recovery restored the immediately eligible committed not_found request facts.",
+    request: Object.freeze(request),
+  });
 }
 
 export async function reserveMcpSession({

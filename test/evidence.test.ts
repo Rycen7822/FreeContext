@@ -442,7 +442,8 @@ test("normal empty evidence is not_found while malformed output is failed", asyn
     priorSessionId: "session-1",
   });
   assert.match(serializeForModel(notFound), /one exact non-broad path or symbol probe and read at most one candidate path/iu);
-  assert.match(serializeForModel(notFound), /Recovery contract: reuse the exact prior taskText/iu);
+  assert.match(serializeForModel(notFound), /Recovery contract: after the exact probe, call gather_context with only/iu);
+  assert.match(serializeForModel(notFound), /workspace-relative probed path/iu);
 
   const failed = await compileFreeContextResult(
     request(),

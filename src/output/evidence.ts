@@ -315,7 +315,9 @@ export function serializeExplorerFeedback(rawResult: Readonly<FreeContextResult>
   if (result.gaps.length === 0) lines.push("-");
   for (const gap of result.gaps) lines.push(`- [${gap.questionId}]${gap.targetId ? `[target:${gap.targetId}]` : ""} ${gap.reason}`);
   lines.push(`Next action: ${result.nextAction.kind} — ${result.nextAction.reason}`);
-  if (result.nextAction.recovery) lines.push(`Recovery contract: ${JSON.stringify(result.nextAction.recovery)}`);
+  if (result.nextAction.recovery) {
+    lines.push(`Recovery contract: after the exact probe, call gather_context with only {"recovery":{"priorSessionId":${JSON.stringify(result.nextAction.recovery.priorSessionId)},"probePath":"<workspace-relative probed path>"}}.`);
+  }
   lines.push(result.status === "ready"
     ? "This candidate is terminal for these questions only. Do not continue native exploration; call gather_context first if task work exposes any new path, symbol, or missing context."
     : "This is non-terminal feedback. Continue this same Pi exploration session, resolve only the listed gaps with repository tools, and submit an updated candidate. Do not call gather_context or start another session.");

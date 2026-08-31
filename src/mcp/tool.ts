@@ -1,10 +1,12 @@
 import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
 import {
   FreeContextCallContextSchema,
+  FreeContextCallerRequestSchema,
+  normalizeFreeContextRecoveryRequest,
   normalizeFreeContextRequest,
   serializeForModel,
 } from "./contracts.js";
-import type { FreeContextCallContext, FreeContextResult } from "./contracts.js";
+import type { FreeContextCallContext, FreeContextCallerRequest, FreeContextResult } from "./contracts.js";
 import { validateFreeContextRecovery, validateFreeContextReentry } from "./eligibility.js";
 import { errorReason, failedResult } from "./failure.js";
 import {
@@ -15,7 +17,7 @@ import {
 import type { DeadlineClock, TerminalStore } from "./lifecycle.js";
 import { executeSingleCall } from "./single-call.js";
 import type { SingleCallDependencies } from "./single-call.js";
-import { validateCommittedRecovery } from "./session.js";
+import { restoreCommittedRecovery } from "./session.js";
 
 export interface SingleFlightExecutor {
   run<T>(task: () => Promise<T>): Promise<T>;
@@ -121,9 +123,9 @@ export function createGatherContextHandler(
       });
     }
 
-    let request;
+    let callerRequest: Readonly<FreeContextCallerRequest>;
     try {
-      request = normalizeFreeContextRequest(rawInput);
+      callerRequest = FreeContextCallerRequestSchema.parse(rawInput) as Readonly<FreeContextCallerRequest>;
     } catch (error) {
       return callResult(failedResult({
         code: "INVALID_REQUEST",
@@ -131,6 +133,45 @@ export function createGatherContextHandler(
         sessionId: callContext.invocationId,
         sessionFile: null,
       }));
+    }
+    let request;
+    if ("recovery" in callerRequest) {
+      let recovery;
+      try {
+        recovery = normalizeFreeContextRecoveryRequest(callerRequest.recovery);
+      } catch (error) {
+        return callResult(failedResult({
+          code: "INVALID_REQUEST",
+          reason: safeRequestSchemaReason(error),
+          sessionId: callContext.invocationId,
+          sessionFile: null,
+        }));
+      }
+      const resolution = await restoreCommittedRecovery({
+        recovery,
+        workspaceRoot: callContext.workspaceRoot,
+        ...(dependencies.sessionDirectory ? { sessionDirectory: dependencies.sessionDirectory } : {}),
+      });
+      if (!resolution.accepted) {
+        return callResult(failedResult({
+          code: "INVALID_REQUEST",
+          reason: resolution.reason,
+          sessionId: callContext.invocationId,
+          sessionFile: null,
+        }));
+      }
+      request = resolution.request;
+    } else {
+      try {
+        request = normalizeFreeContextRequest(callerRequest);
+      } catch (error) {
+        return callResult(failedResult({
+          code: "INVALID_REQUEST",
+          reason: safeRequestSchemaReason(error),
+          sessionId: callContext.invocationId,
+          sessionFile: null,
+        }));
+      }
     }
     const reentryDecision = validateFreeContextReentry(request);
     if (!reentryDecision.accepted) {
@@ -148,20 +189,6 @@ export function createGatherContextHandler(
       return callResult(failedResult({
         code: "INVALID_REQUEST",
         reason: recoveryDecision.reason,
-        sessionId: callContext.invocationId,
-        sessionFile: null,
-        request,
-      }));
-    }
-    const committedRecoveryDecision = await validateCommittedRecovery({
-      request,
-      workspaceRoot: callContext.workspaceRoot,
-      ...(dependencies.sessionDirectory ? { sessionDirectory: dependencies.sessionDirectory } : {}),
-    });
-    if (!committedRecoveryDecision.accepted) {
-      return callResult(failedResult({
-        code: "INVALID_REQUEST",
-        reason: committedRecoveryDecision.reason,
         sessionId: callContext.invocationId,
         sessionFile: null,
         request,

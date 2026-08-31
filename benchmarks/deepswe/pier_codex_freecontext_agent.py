@@ -48,10 +48,10 @@ COMMON_TASK_EFFECT_POLICY = (
 )
 COMMON_DIAGNOSTIC_CHECKPOINT = (
     "[Benchmark common diagnostic checkpoint]\n"
-    "After an edit or failed check, make at most one direct read of the exact failure location. Before a second non-adjacent file read or cross-module search for that diagnosis, stop and classify the remaining gap. Single-file work, exact failures, routine checks, and the same handoff gap remain native. Never force a second call."
+    "After an edit or failed check, make at most one direct read of the exact failure location. Before a second non-adjacent file read or cross-module search for that diagnosis, stop and classify the remaining gap. Single-file work, an accurate stack or location, routine checks, and the same handoff gap remain native. Never force a second call."
 )
 TREATMENT_DIAGNOSTIC_ROUTE = (
-    "At this checkpoint, call gather_context only when the classified remaining gap is a distinct new static cross-module relationship not covered by the prior handoff."
+    "At this checkpoint, continue natively when the exact failure read makes a concrete local fix clear. Otherwise, reenter gather_context with a new parented child blocker only when diagnosis still requires tracing runtime, type, data, or control flow, or an owner relationship, into a second non-adjacent module. Do not call for single-file work, an accurate stack or location, or a routine check; never force a second call."
 )
 CONTROL_DIAGNOSTIC_ROUTE = (
     "At this checkpoint, continue with native repository tools because FreeContext is disabled."

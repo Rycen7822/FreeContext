@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { adaptHistoricalInvocationProvenanceV1, collectInvocationProvenance, evaluateFreshInvocationGate } from "../src/benchmark/invocation-provenance.js";
 import type { ObservedMcpCall } from "../src/benchmark/delivery-observation.js";
-import { normalizeFreeContextRequest, serializeForModel } from "../src/mcp/contracts.js";
+import { FreeContextRequestSchema, normalizeFreeContextRequest, serializeForModel } from "../src/mcp/contracts.js";
 import type { FreeContextRequest, FreeContextResult } from "../src/mcp/contracts.js";
 
 function request(targetId: string, reentry?: FreeContextRequest["reentry"]): FreeContextRequest {
@@ -55,11 +55,11 @@ function result(requestValue: FreeContextRequest, status: FreeContextResult["sta
 }
 
 function caller(requestValue: FreeContextRequest): unknown {
+  if (requestValue.recovery) return { recovery: requestValue.recovery };
   return {
     taskText: requestValue.taskText,
     workUnit: requestValue.workUnit,
     knownRefs: requestValue.knownRefs,
-    ...(requestValue.recovery ? { recovery: requestValue.recovery } : {}),
     evidenceQuestions: requestValue.evidenceQuestions.map((question) => ({
       role: question.role,
       question: question.question,
@@ -71,8 +71,11 @@ function caller(requestValue: FreeContextRequest): unknown {
 }
 
 function recoveryRequest(requestValue: FreeContextRequest, priorSessionId: string): FreeContextRequest {
-  return normalizeFreeContextRequest({
-    ...(caller(requestValue) as Record<string, unknown>),
+  return FreeContextRequestSchema.parse({
+    taskText: requestValue.taskText,
+    workUnit: requestValue.workUnit,
+    knownRefs: requestValue.knownRefs,
+    evidenceQuestions: requestValue.evidenceQuestions,
     recovery: {
       priorSessionId,
       probePath: "src/owner.ts",
@@ -167,7 +170,7 @@ test("raw invocation provenance keeps rejected attempts and accepted descendants
   assert.equal(provenance.freshGate.accepted, false);
   assert.deepEqual(
     [...new Set(provenance.freshGate.failures.map(({ code }) => code))].sort(),
-    ["chain_rejection", "inherited_ancestry_failure", "intrinsic_rejection", "schema_rejection"].sort(),
+    ["chain_rejection", "correlation_mismatch", "inherited_ancestry_failure", "intrinsic_rejection", "schema_rejection"].sort(),
   );
   assert.equal(provenance.attempts[4]?.intrinsic.status, "accepted");
   assert.equal(provenance.attempts[4]?.chain.status, "accepted");
@@ -197,6 +200,77 @@ test("fresh invocation gate accepts a clean initial and typed reentry chain", ()
   });
   assert.equal(provenance.freshGate.accepted, true);
   assert.deepEqual(provenance.freshGate.failures, []);
+  assert.equal(provenance.attempts[0]?.correlation.status, "accepted");
+});
+
+test("synthetic call ids require structured or unique exact session correlation evidence", () => {
+  const initial = request("owner");
+  const ready = result(initial, "ready");
+  const runtimeSession = {
+    callId: "runtime-call",
+    request: initial,
+    result: ready,
+    capture: { primary: { metrics: { providerAttempts: 1 } } },
+  };
+  const attempt = (observed: ObservedMcpCall, sessions = [runtimeSession]) =>
+    collectInvocationProvenance({ calls: [observed], sessions }).attempts[0];
+
+  const structured = attempt({
+    source: "direct_mcp",
+    callId: "exec-structured",
+    startedSeen: true,
+    arguments: caller(initial),
+    text: "terminal result",
+    structuredContent: ready,
+  });
+  assert.equal(structured?.correlation.status, "accepted");
+
+  const exactCallId = attempt({
+    source: "direct_mcp",
+    callId: "runtime-call",
+    startedSeen: true,
+    arguments: caller(initial),
+    text: "terminal result",
+    structuredContent: null,
+  });
+  assert.equal(exactCallId?.correlation.status, "accepted");
+
+  const textBound = attempt({
+    source: "direct_mcp",
+    callId: "exec-text",
+    startedSeen: true,
+    arguments: caller(initial),
+    text: `Status: ready\nSession: ${ready.sessionFile}`,
+    structuredContent: null,
+  });
+  assert.equal(textBound?.correlation.status, "accepted");
+
+  const secondResult = { ...ready, sessionId: "second-session", sessionFile: "/logs/agent/freecontext-sessions/second-session.json" };
+  const ambiguous = attempt({
+    source: "direct_mcp",
+    callId: "exec-ambiguous",
+    startedSeen: true,
+    arguments: caller(initial),
+    text: `Session: ${ready.sessionFile}\nSession: ${secondResult.sessionFile}`,
+    structuredContent: null,
+  }, [runtimeSession, { ...runtimeSession, callId: "second-runtime-call", result: secondResult }]);
+  assert.deepEqual(ambiguous?.correlation, {
+    status: "rejected",
+    failureReasons: ["call_session_correlation_mismatch"],
+  });
+
+  const mismatched = attempt({
+    source: "direct_mcp",
+    callId: "exec-mismatched",
+    startedSeen: true,
+    arguments: caller(initial),
+    text: `Session: ${ready.sessionFile}`,
+    structuredContent: { ...ready, sessionId: "missing-session" },
+  });
+  assert.deepEqual(mismatched?.correlation, {
+    status: "rejected",
+    failureReasons: ["call_session_correlation_mismatch"],
+  });
 });
 
 test("fresh gate rejects legacy and inconsistent provenance without inferring a pass", () => {

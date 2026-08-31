@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import { runInNewContext } from "node:vm";
 import test from "node:test";
-import { FREECONTEXT_ELIGIBILITY_POLICY, FreeContextCallerRequestSchema } from "../src/mcp/contracts.js";
+import { FREECONTEXT_ELIGIBILITY_POLICY, FreeContextCallerFullRequestSchema, FreeContextCallerRequestSchema } from "../src/mcp/contracts.js";
 
 test("implicit discovery routes each current gap while preserving the atomic caller contract", async () => {
   const [skill, metadata] = await Promise.all([
@@ -45,7 +45,8 @@ test("implicit discovery routes each current gap while preserving the atomic cal
   const template = skill.match(/`(?<template>const args=\{[\s\S]+?\};)`/u)?.groups?.template;
   assert.ok(template);
   const templateArgs = runInNewContext(`${template}\nargs`, Object.create(null), { timeout: 100 });
-  const parsedTemplate = FreeContextCallerRequestSchema.parse(templateArgs);
+  FreeContextCallerRequestSchema.parse(templateArgs);
+  const parsedTemplate = FreeContextCallerFullRequestSchema.parse(templateArgs);
   assert.equal(parsedTemplate.workUnit.outcome, "edit");
   assert.match(parsedTemplate.workUnit.goal, /conditional routing/iu);
   assert.equal(parsedTemplate.evidenceQuestions.length, 1);
@@ -59,11 +60,12 @@ test("implicit discovery routes each current gap while preserving the atomic cal
   assert.doesNotMatch(skill, /\bworkspace_root\b/u);
   assert.match(skill, /A listed partial gap is not permission to replay/iu);
   assert.match(skill, /ordinary edit\/check\/read\/diff work stays direct/iu);
-  assert.match(skill, /After an edit or failed check, use a diagnostic checkpoint/iu);
-  assert.match(skill, /at most one direct read of the exact failure location is allowed/iu);
-  assert.match(skill, /Before a second non-adjacent file read or cross-module search for that diagnosis, stop and classify the remaining gap/iu);
-  assert.match(skill, /distinct new static cross-module relationship not covered by the prior handoff/iu);
-  for (const nativeCase of ["Single-file work", "exact failures", "routine checks", "same handoff gap"]) {
+  assert.match(skill, /After an edit or failed check, read the exact failure location at most once/iu);
+  assert.match(skill, /Before reading a second non-adjacent module or searching across modules, classify the gap/iu);
+  assert.match(skill, /concrete local fix clear.*continue natively/isu);
+  assert.match(skill, /runtime, type, data, or control flow, or an owner relationship/iu);
+  assert.match(skill, /second non-adjacent module/iu);
+  for (const nativeCase of ["Single-file work", "accurate stack or location", "routine checks", "same handoff gap"]) {
     assert.match(skill, new RegExp(`${nativeCase}.*remain native`, "iu"));
   }
   assert.match(skill, /Never force a second call/iu);
@@ -73,6 +75,8 @@ test("implicit discovery routes each current gap while preserving the atomic cal
   assert.match(skill, /questionId,targetId,kind,scope,requiredFact,derivation,origin/iu);
   assert.match(skill, /Never target a changed path or exact failure path/iu);
   assert.match(skill, /Recovery is once-only/iu);
+  assert.match(skill, /call `gather_context` with only `\{recovery/iu);
+  assert.match(skill, /workspace-relative probed path/iu);
   assert.doesNotMatch(skill, /complete unresolved question|same-unit|same gaps|Acceptance receipt|private acceptance receipt/iu);
 
   assert.match(metadata, /^  allow_implicit_invocation: true$/mu);

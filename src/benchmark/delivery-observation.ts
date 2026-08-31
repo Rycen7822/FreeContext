@@ -1,8 +1,10 @@
 import { createHash } from "node:crypto";
 import { isDeepStrictEqual } from "node:util";
 import {
+  FreeContextCallerRecoveryRequestSchema,
   FreeContextRequestSchema,
   normalizeFreeContextRequest,
+  type FreeContextCallerRecoveryRequest,
   type FreeContextRequest,
   type FreeContextResult,
 } from "../mcp/contracts.js";
@@ -116,6 +118,19 @@ function canonicalRequest(value: unknown): Readonly<FreeContextRequest> | null {
     const canonical = FreeContextRequestSchema.safeParse(value);
     return canonical.success ? canonical.data : null;
   }
+}
+
+function callerArgumentsMatch(value: unknown, request: Readonly<FreeContextRequest>): boolean {
+  const recoveryOnly = FreeContextCallerRecoveryRequestSchema.safeParse(value);
+  if (recoveryOnly.success) return isDeepStrictEqual(recoveryOnly.data.recovery, request.recovery);
+  return isDeepStrictEqual(canonicalRequest(value), request);
+}
+
+function semanticRequest(value: unknown): Readonly<FreeContextRequest> | Readonly<FreeContextCallerRecoveryRequest> | null {
+  const canonical = canonicalRequest(value);
+  if (canonical) return canonical;
+  const recoveryOnly = FreeContextCallerRecoveryRequestSchema.safeParse(value);
+  return recoveryOnly.success ? recoveryOnly.data : null;
 }
 
 function isFreeContextExec(event: Record<string, unknown>): boolean {
@@ -330,11 +345,11 @@ export function collectDuplicateSemanticCalls(
   taskId: string,
 ): readonly Readonly<DuplicateSemanticCall>[] {
   const semanticCalls = calls.filter((call) => call.source === "direct_mcp");
-  const firstCalls: { call: ObservedMcpCall; request: Readonly<FreeContextRequest> }[] = [];
+  const firstCalls: { call: ObservedMcpCall; request: Readonly<FreeContextRequest> | Readonly<FreeContextCallerRecoveryRequest> }[] = [];
   const duplicateCounts = new Map<string, number>();
   const duplicates: DuplicateSemanticCall[] = [];
   for (const call of semanticCalls) {
-    const request = canonicalRequest(call.arguments);
+    const request = semanticRequest(call.arguments);
     if (request === null) continue;
     const first = firstCalls.find((candidate) => isDeepStrictEqual(candidate.request, request));
     if (!first) {
@@ -493,7 +508,7 @@ export function evaluateDelivery(
     : sha256(observation.text);
   const directObservation = observation?.source === "direct_mcp";
   const requestMatches = directObservation
-    ? isDeepStrictEqual(canonicalRequest(observation.arguments), request)
+    ? callerArgumentsMatch(observation.arguments, request)
     : null;
   const structuredContentMatches = directObservation ? isDeepStrictEqual(observation.structuredContent, result) : null;
   const sourceMatches = observation?.source === "code_await" ||

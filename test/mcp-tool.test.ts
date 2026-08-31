@@ -303,15 +303,18 @@ test("typed reentry returns the specific safe work-unit mismatch reason", async 
 test("not_found recovery binds one exact reused request to the latest committed session", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "freecontext-mcp-recovery-"));
   const workspace = path.join(root, "workspace");
+  const otherWorkspace = path.join(root, "other-workspace");
   const sessions = path.join(root, "sessions");
   try {
-    await mkdir(workspace);
+    await Promise.all([mkdir(workspace), mkdir(otherWorkspace)]);
     let calls = 0;
+    const providerRequests: FreeContextRequest[] = [];
     const handler = createGatherContextHandler({
       tokenCounter,
       sessionDirectory: sessions,
       runExplorer: async (options) => {
         calls += 1;
+        providerRequests.push(options.request);
         return options.request.recovery ? readyResult(options) : notFoundResult(options);
       },
     });
@@ -321,32 +324,87 @@ test("not_found recovery binds one exact reused request to the latest committed 
     assert.equal(latest.status, "not_found");
 
     const arbitrary = outputOf(await handler({
-      ...request,
       recovery: { priorSessionId: initial.sessionId, probePath: "document.md" },
     }, callContext(workspace, "arbitrary-invocation", "arbitrary-call")));
     assert.equal(arbitrary.nextAction.reason, "Recovery prior session is not the immediately eligible session.");
     assert.equal(arbitrary.errorCode, "INVALID_REQUEST");
 
+    const unknown = outputOf(await handler({
+      recovery: { priorSessionId: "missing-session", probePath: "document.md" },
+    }, callContext(workspace, "unknown-invocation", "unknown-call")));
+    assert.equal(unknown.nextAction.reason, "Recovery prior session is not a committed session in this workspace.");
+    assert.equal(unknown.errorCode, "INVALID_REQUEST");
+
+    const wrongWorkspace = outputOf(await handler({
+      recovery: { priorSessionId: latest.sessionId, probePath: "document.md" },
+    }, callContext(otherWorkspace, "wrong-workspace-invocation", "wrong-workspace-call")));
+    assert.equal(wrongWorkspace.nextAction.reason, "Recovery prior session is not a committed session in this workspace.");
+    assert.equal(wrongWorkspace.errorCode, "INVALID_REQUEST");
+
     const changed = outputOf(await handler({
-      ...request,
       taskText: "Changed recovery request.",
       recovery: { priorSessionId: latest.sessionId, probePath: "document.md" },
     }, callContext(workspace, "changed-invocation", "changed-call")));
-    assert.equal(changed.nextAction.reason, "Recovery must exactly reuse the prior request facts.");
     assert.equal(changed.errorCode, "INVALID_REQUEST");
 
     const recoveryRequest = {
-      ...request,
       recovery: { priorSessionId: latest.sessionId, probePath: "document.md" },
     } satisfies FreeContextCallerRequest;
     const recovered = outputOf(await handler(recoveryRequest, callContext(workspace, "recovery-invocation", "recovery-call")));
     assert.equal(recovered.status, "ready");
     assert.equal(recovered.errorCode, null);
+    assert.deepEqual(providerRequests[2], {
+      ...providerRequests[1],
+      recovery: { priorSessionId: latest.sessionId, probePath: "document.md" },
+    });
 
     const reused = outputOf(await handler(recoveryRequest, callContext(workspace, "reuse-invocation", "reuse-call")));
     assert.equal(reused.nextAction.reason, "Recovery prior session has already been consumed.");
     assert.equal(reused.errorCode, "INVALID_REQUEST");
+
+    const afterHandoff = outputOf(await handler({
+      recovery: { priorSessionId: recovered.sessionId, probePath: "document.md" },
+    }, callContext(workspace, "after-handoff-invocation", "after-handoff-call")));
+    assert.equal(afterHandoff.nextAction.reason, "Recovery prior session must be not_found without a handoff.");
+    assert.equal(afterHandoff.errorCode, "INVALID_REQUEST");
+
+    const absoluteProbe = outputOf(await handler({
+      recovery: { priorSessionId: recovered.sessionId, probePath: "/workspace/document.md" },
+    }, callContext(workspace, "absolute-probe-invocation", "absolute-probe-call")));
+    assert.equal(absoluteProbe.errorCode, "INVALID_REQUEST");
     assert.equal(calls, 3);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("a committed recovery session cannot start a second chained recovery", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "freecontext-mcp-once-only-recovery-"));
+  const workspace = path.join(root, "workspace");
+  const sessions = path.join(root, "sessions");
+  try {
+    await mkdir(workspace);
+    let calls = 0;
+    const handler = createGatherContextHandler({
+      tokenCounter,
+      sessionDirectory: sessions,
+      runExplorer: async (options) => {
+        calls += 1;
+        return notFoundResult(options);
+      },
+    });
+    const initial = outputOf(await handler(request, callContext(workspace, "initial-once-only", "initial-once-only-call")));
+    const recoveredNotFound = outputOf(await handler({
+      recovery: { priorSessionId: initial.sessionId, probePath: "document.md" },
+    }, callContext(workspace, "first-recovery", "first-recovery-call")));
+    assert.equal(recoveredNotFound.status, "not_found");
+
+    const chained = outputOf(await handler({
+      recovery: { priorSessionId: recoveredNotFound.sessionId, probePath: "document.md" },
+    }, callContext(workspace, "second-recovery", "second-recovery-call")));
+    assert.equal(chained.errorCode, "INVALID_REQUEST");
+    assert.equal(chained.nextAction.reason, "Recovery cannot chain from a recovery session.");
+    assert.equal(calls, 2);
   } finally {
     await rm(root, { recursive: true, force: true });
   }

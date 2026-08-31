@@ -5,7 +5,7 @@ import path from "node:path";
 import { parseArgs, HELP_TEXT } from "./cli/args.js";
 import { runDoctor } from "./cli/doctor.js";
 import type { DoctorReport } from "./cli/doctor.js";
-import { FreeContextCallerRequestSchema, FreeContextResultSchema, serializeForModel } from "./mcp/contracts.js";
+import { FreeContextCallerFullRequestSchema, FreeContextResultSchema, serializeForModel } from "./mcp/contracts.js";
 import type { FreeContextCallerRequest } from "./mcp/contracts.js";
 import { createGatherContextHandler } from "./mcp/tool.js";
 import { GigatokenCounter } from "./runtime/gigatoken-counter.js";
@@ -68,7 +68,7 @@ function createEventReporter(stderr: CliIo["stderr"]): PiSessionEventHandler {
 }
 
 function canonicalCliRequest(taskText: string): Readonly<FreeContextCallerRequest> {
-  return FreeContextCallerRequestSchema.parse({
+  return FreeContextCallerFullRequestSchema.parse({
     taskText,
     workUnit: { outcome: "answer", goal: "Identify the decisive implementation, consumer, verification, and public contract evidence." },
     knownRefs: [],
