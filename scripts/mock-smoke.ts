@@ -27,12 +27,10 @@ try {
       arguments: {
         summary: "The sample exports answer.",
         evidence: [{
-          role: "implementation",
           question_id: "impl",
-          path: "sample.js",
+          observation_id: 1,
           start_line: 1,
           end_line: 3,
-          focus_line: 1,
           why: "Defines the exported function.",
         }],
         gaps: [{ question_id: "tests", reason: "No test was found." }],

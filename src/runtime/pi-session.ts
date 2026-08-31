@@ -7,7 +7,6 @@ import type {
 } from "@earendil-works/pi-agent-core";
 import type { AssistantMessage, SimpleStreamOptions, Usage } from "@earendil-works/pi-ai";
 import { isDeepStrictEqual } from "node:util";
-import path from "node:path";
 import type { FreeContextConfig } from "../config.js";
 import { ContextBudgetError, FreeContextError, ProviderError } from "../errors.js";
 import type { FreeContextRequest, FreeContextResult } from "../mcp/contracts.js";
@@ -251,55 +250,6 @@ type RepositorySearchCall = Readonly<{
 }>;
 
 const REPOSITORY_SEARCH_TOOLS = new Set(["glob", "rg"]);
-
-function normalizedRepositoryPath(value: unknown): string {
-  if (typeof value !== "string" || value.trim() === "") return ".";
-  const normalized = path.posix.normalize(value.trim().replace(/\\/gu, "/").replace(/^\.\//u, ""));
-  return normalized === "" ? "." : normalized;
-}
-
-function preciseKnownReferencePaths(request: Readonly<FreeContextRequest>): readonly string[] {
-  return request.knownRefs.flatMap((reference) => {
-    if (reference.kind === "path" || reference.kind === "stack") return [normalizedRepositoryPath(reference.path)];
-    return reference.path ? [normalizedRepositoryPath(reference.path)] : [];
-  });
-}
-
-function isKnownReferenceScope(target: string, knownPath: string): boolean {
-  if (target === knownPath) return true;
-  if (target === ".") return false;
-  return path.posix.dirname(knownPath) === target.replace(/\/$/u, "");
-}
-
-function boundedKnownReferenceParentProbe(toolName: string, parameters: Readonly<Record<string, unknown>>): boolean {
-  const maxResults = typeof parameters.max_results === "number" ? parameters.max_results : null;
-  if (maxResults === null || maxResults > 50) return false;
-  if (toolName === "glob") {
-    const patterns = Array.isArray(parameters.pattern) ? parameters.pattern.filter((value): value is string => typeof value === "string") : [];
-    return patterns.length > 0 && patterns.every((pattern) => !pattern.includes("**"));
-  }
-  const filters = Array.isArray(parameters.glob) ? parameters.glob.filter((value): value is string => typeof value === "string") : [];
-  return parameters.literal === true && filters.length > 0 && filters.every((pattern) => !pattern.includes("**"));
-}
-
-function knownRefFirstBlockReason(
-  toolName: string,
-  args: unknown,
-  request: Readonly<FreeContextRequest>,
-  observedReads: readonly Readonly<ObservedRead>[],
-): string | null {
-  const knownPaths = preciseKnownReferencePaths(request);
-  if (!REPOSITORY_SEARCH_TOOLS.has(toolName) || knownPaths.length === 0 || observedReads.length > 0) return null;
-  const parameters = args && typeof args === "object" ? args as Record<string, unknown> : {};
-  const target = normalizedRepositoryPath(parameters.path);
-  const exactKnownPath = knownPaths.some((knownPath) => target === knownPath);
-  if (exactKnownPath) return null;
-  const immediateParent = knownPaths.some((knownPath) => isKnownReferenceScope(target, knownPath));
-  if (immediateParent && boundedKnownReferenceParentProbe(toolName, parameters)) return null;
-  return immediateParent
-    ? "Known references are available but no file has been read yet. An immediate parent probe must use an explicit bounded pattern (no ** recursion; rg requires literal=true and a bounded glob filter); read the exact knownRef when possible."
-    : "Known references are available but no file has been read yet. Read an exact knownRef before searching its immediate parent; root and higher ancestor workspace-wide glob/rg exploration is blocked.";
-}
 
 function repositorySearchBatch(
   calls: readonly Readonly<{ name: string; arguments: unknown }>[],
@@ -878,11 +828,6 @@ async function runPiSessionWithCounter({
           block: true,
           reason: `Repository exploration emergency ceiling reached (${EXPLORER_MAX_TURNS} turns/${EXPLORER_MAX_TOOL_CALLS} tool calls). Finalize from existing evidence.`,
         };
-      }
-      const knownRefBlockReason = knownRefFirstBlockReason(toolCall.name, toolCall.arguments, finalizationRequest, observedReads);
-      if (knownRefBlockReason) {
-        blockedToolCalls += 1;
-        return { block: true, reason: knownRefBlockReason };
       }
       currentSearchBatch ??= repositorySearchBatch(calls);
       if (!previousSearchBatchHadProgress && sameRepositorySearchBatch(previousSearchBatch, currentSearchBatch)) {

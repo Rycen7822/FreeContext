@@ -22,7 +22,7 @@ provider = "primary"
 model_id = "glm-5.3-flash"
 context_window = 1000000
 max_output_tokens = 8192
-thinking_level = "low"
+thinking_level = "high"
 
 [models.primary.openai_compat]
 use_streaming = false

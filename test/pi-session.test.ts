@@ -131,10 +131,9 @@ function submissionMessage(includeRequiredTests = false) {
         summary: "Implementation found.",
         evidence: [{
           question_id: "impl",
-          path: "src/index.ts",
+          observation_id: 1,
           start_line: 1,
           end_line: 3,
-          focus_line: 2,
           why: "Defines the entry point.",
         }],
         gaps: includeRequiredTests ? [{ question_id: "tests", reason: "No test evidence was found." }] : [],
@@ -747,76 +746,46 @@ test("ordinary search output requires repeated no progress before soft-budget fi
   assert.equal(result.metrics.finalizationReason, "stagnation");
 });
 
-test("knownRef-first blocks root search until an observed read exists", async () => {
-  const config = baseConfig({ maxTurns: 3 });
-  let decisions: Array<boolean | undefined> = [];
-  const bindings = bindingsWith(async (_prompts, context, loopConfig, emit) => {
-    type TestCall = { type: "toolCall"; id: string; name: string; arguments: Record<string, unknown> };
-    const rootCall: TestCall = { type: "toolCall", id: "root", name: "rg", arguments: { pattern: "entry" } };
-    const rootGlobCall: TestCall = { type: "toolCall", id: "root-glob", name: "glob", arguments: { pattern: "**/*" } };
-    const exactCall: TestCall = { type: "toolCall", id: "exact", name: "rg", arguments: { pattern: "entry", path: "src/index.ts" } };
-    const deepParentCall: TestCall = { type: "toolCall", id: "deep-parent", name: "rg", arguments: { pattern: "entry", path: "src" } };
-    const deepBoundedParentCall: TestCall = { type: "toolCall", id: "deep-bounded-parent", name: "rg", arguments: { pattern: "entry", path: "src/deep", literal: true, glob: ["*.ts"], max_results: 20 } };
-    const deepGlobCall: TestCall = { type: "toolCall", id: "deep-glob", name: "glob", arguments: { pattern: ["**/*"], path: "src/deep" } };
-    const deepBoundedGlobCall: TestCall = { type: "toolCall", id: "deep-bounded-glob", name: "glob", arguments: { pattern: ["*.ts"], path: "src/deep", max_results: 20 } };
-    const readCall: TestCall = { type: "toolCall", id: "read", name: "read", arguments: { path: "src/index.ts" } };
-    const rootAfterRead: TestCall = { type: "toolCall", id: "root-after", name: "rg", arguments: { pattern: "entry" } };
-    const message = (call: TestCall) => assistantText("", { content: [call as never], stopReason: "toolUse" });
-    decisions.push((await loopConfig.beforeToolCall?.({ assistantMessage: message(rootCall), toolCall: rootCall, args: rootCall.arguments, context }))?.block);
-    decisions.push((await loopConfig.beforeToolCall?.({ assistantMessage: message(rootGlobCall), toolCall: rootGlobCall, args: rootGlobCall.arguments, context }))?.block);
-    decisions.push((await loopConfig.beforeToolCall?.({ assistantMessage: message(exactCall), toolCall: exactCall, args: exactCall.arguments, context }))?.block);
-    decisions.push((await loopConfig.beforeToolCall?.({ assistantMessage: message(deepParentCall), toolCall: deepParentCall, args: deepParentCall.arguments, context }))?.block);
-    decisions.push((await loopConfig.beforeToolCall?.({ assistantMessage: message(deepBoundedParentCall), toolCall: deepBoundedParentCall, args: deepBoundedParentCall.arguments, context }))?.block);
-    decisions.push((await loopConfig.beforeToolCall?.({ assistantMessage: message(deepGlobCall), toolCall: deepGlobCall, args: deepGlobCall.arguments, context }))?.block);
-    decisions.push((await loopConfig.beforeToolCall?.({ assistantMessage: message(deepBoundedGlobCall), toolCall: deepBoundedGlobCall, args: deepBoundedGlobCall.arguments, context }))?.block);
-    decisions.push((await loopConfig.beforeToolCall?.({ assistantMessage: message(readCall), toolCall: readCall, args: readCall.arguments, context }))?.block);
-    await emit({ type: "tool_execution_end", toolCallId: "read", toolName: "read", result: observedReadResult, isError: false });
-    decisions.push((await loopConfig.beforeToolCall?.({ assistantMessage: message(rootAfterRead), toolCall: rootAfterRead, args: rootAfterRead.arguments, context }))?.block);
-    return [assistantText("done")];
-  });
-  await runPiSession({
-    bindings,
-    model: createModel(config),
-    requestOptions: createRequestOptions(config),
-    config,
-    systemPrompt: "system",
-    promptText: "prompt",
-    tools: [readTool],
-    finalizationRequest: {
-      ...baseRequest(),
-      knownRefs: [
-        { kind: "path", path: "src/index.ts" },
-        { kind: "path", path: "src/deep/file.ts" },
-      ],
-    },
-  });
-  assert.deepEqual(decisions.map((value) => value === true), [true, true, false, true, false, true, false, false, false]);
-});
-
-test("knownRef-first keeps pathless exact symbol probes available", async () => {
-  const config = baseConfig({ maxTurns: 2 });
-  let blocked: boolean | undefined;
-  const bindings = bindingsWith(async (_prompts, context, loopConfig) => {
-    const call = { type: "toolCall" as const, id: "symbol", name: "rg", arguments: { pattern: "entry", literal: true, max_results: 10 } };
-    blocked = (await loopConfig.beforeToolCall?.({
-      assistantMessage: assistantText("", { content: [call], stopReason: "toolUse" }),
-      toolCall: call,
-      args: call.arguments,
-      context,
-    }))?.block;
-    return [assistantText("done")];
-  });
-  await runPiSession({
-    bindings,
-    model: createModel(config),
-    requestOptions: createRequestOptions(config),
-    config,
-    systemPrompt: "system",
-    promptText: "prompt",
-    tools: [],
-    finalizationRequest: { ...baseRequest(), knownRefs: [{ kind: "symbol", symbol: "entry" }] },
-  });
-  assert.notEqual(blocked, true);
+test("path-backed known references do not block the first bounded root search", async () => {
+  for (const [name, arguments_] of [
+    ["rg", { pattern: "entry", path: "." }],
+    ["glob", { pattern: "**/*.ts", path: "." }],
+  ] as const) {
+    let decision: Awaited<ReturnType<NonNullable<AgentLoopConfig["beforeToolCall"]>>> | undefined;
+    const tool: AgentTool = { ...readTool, name, label: name };
+    const call = assistantText("", {
+      content: [{ type: "toolCall" as const, id: `${name}-root`, name, arguments: arguments_ }],
+      stopReason: "toolUse",
+    });
+    const bindings = bindingsWith(async (prompts, context, loopConfig, emit) => {
+      const toolCall = call.content[0];
+      if (!toolCall || toolCall.type !== "toolCall") throw new Error("missing root search call");
+      await emit({ type: "turn_start" });
+      decision = await loopConfig.beforeToolCall?.({
+        assistantMessage: call,
+        toolCall,
+        args: toolCall.arguments,
+        context,
+      });
+      await emit({ type: "turn_end", message: call, toolResults: [] });
+      return [...prompts, call];
+    });
+    const result = await runPiSession({
+      bindings,
+      model: createModel(baseConfig()),
+      requestOptions: createRequestOptions(baseConfig()),
+      config: baseConfig(),
+      systemPrompt: "system",
+      promptText: "prompt",
+      finalizationRequest: {
+        ...baseRequest(),
+        knownRefs: [{ kind: "path", path: "src/index.ts" }],
+      },
+      tools: [tool],
+    });
+    assert.equal(decision, undefined, name);
+    assert.equal(result.metrics.blockedToolCalls, 0, name);
+  }
 });
 
 test("a repeated no-progress search batch is blocked before execution and redirected to a read", async () => {
@@ -938,7 +907,18 @@ test("invalid finalizer arguments receive one bounded correction turn", async ()
     content: [{ type: "text" as const, text: "Validation failed for tool submit_evidence." }],
     isError: true,
   };
-  const corrected = submissionMessage();
+  const corrected = assistantText("", {
+    content: [{
+      type: "toolCall",
+      id: "submit-corrected",
+      name: "submit_evidence",
+      arguments: {
+        summary: "Implementation found.",
+        evidence: [],
+        gaps: [{ question_id: "impl", reason: "No observed implementation span was available." }],
+      },
+    }],
+  });
   const bindings = fakeBindings(
     async (prompts, context, loopConfig, emit) => {
       let activeContext: AgentContext = { ...context, messages: [...prompts] };

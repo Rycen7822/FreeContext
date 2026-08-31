@@ -74,7 +74,7 @@ test("read, rg, and glob expose bounded repository evidence", async () => {
     assert.match(toolText(rg), /src\/app\.js:5:/u);
 
     const glob = await findTool(toolset.tools, "glob").execute("glob-1", {
-      pattern: ["**/*"],
+      pattern: "**/*",
       path: ".",
     });
     assert.match(toolText(glob), /src\/app\.js/u);
@@ -110,7 +110,7 @@ test("model globs cannot re-include protected files", async () => {
     const toolset = await createRepositoryTools({ Type: FakeType, workspace, config: baseConfig() });
 
     const glob = await findTool(toolset.tools, "glob").execute("glob-sensitive", {
-      pattern: ["**/.env", "**/*"],
+      pattern: "**/*",
       path: ".",
     });
     assert.doesNotMatch(toolText(glob), /(^|\n)\.env($|\n)/u);
@@ -119,7 +119,7 @@ test("model globs cannot re-include protected files", async () => {
       pattern: "SECRET=hidden",
       path: ".",
       literal: true,
-      glob: ["**/.env", "**/*"],
+      glob: "**/*",
     });
     assert.match(toolText(rg), /<no matches>/u);
     assert.doesNotMatch(toolText(rg), /SECRET=hidden/u);

@@ -45,10 +45,7 @@ export function createRgTool({ Type, workspace, semaphore, config, executable }:
     pattern: Type.String({ minLength: 1, maxLength: 4000, description: "Regex or literal search pattern." }),
     path: Type.Optional(Type.String({ description: "Repository-relative file or directory; defaults to workspace root." })),
     glob: Type.Optional(
-      Type.Array(Type.String({ minLength: 1, maxLength: 512 }), {
-        maxItems: 16,
-        description: "Optional ripgrep glob filters, for example **/*.ts or !**/generated/**.",
-      }),
+      Type.String({ minLength: 1, maxLength: 512, description: "Optional ripgrep glob filter, for example **/*.ts or !**/generated/**." }),
     ),
     literal: Type.Optional(Type.Boolean({ description: "Treat pattern as a fixed string." })),
     ignore_case: Type.Optional(Type.Boolean({ description: "Case-insensitive matching." })),
@@ -61,7 +58,7 @@ export function createRgTool({ Type, workspace, semaphore, config, executable }:
     name: "rg",
     label: "Ripgrep repository",
     description:
-      "Search repository text with ripgrep. With path-backed knownRefs and no observed read, read the exact knownRef first; an immediate-parent probe is allowed only with literal=true, an explicit non-recursive glob filter, and a small result bound. Root, higher-ancestor, and broad recursive first-pass search is blocked. Read-only; no shell is involved.",
+      "Search repository text with ripgrep and one optional glob filter. Known references are preferred starting points but do not gate discovery. Read-only; no shell is involved.",
     parameters,
     executionMode: "parallel",
     execute: async (_toolCallId: string, params: Static<typeof parameters>, signal?: AbortSignal) =>
@@ -88,7 +85,7 @@ export function createRgTool({ Type, workspace, semaphore, config, executable }:
         if (after) args.push("--after-context", String(after));
         // User filters come first. Mandatory exclusions are deliberately last so
         // a model-supplied positive glob cannot re-include protected files.
-        for (const glob of params.glob || []) args.push("--glob", glob);
+        if (params.glob) args.push("--glob", params.glob);
         if (target.stat.isDirectory()) {
           for (const glob of SENSITIVE_RG_GLOBS) args.push("--glob", glob);
         }

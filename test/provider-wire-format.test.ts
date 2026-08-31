@@ -56,13 +56,14 @@ async function withTomlFixture<T>(source: string, run: (configFile: string) => P
   }
 }
 
-function assertLowReasoningPayload(
+function assertReasoningPayload(
   payload: Record<string, unknown>,
   expectedModel = "glm-5.3-flash",
+  expectedReasoning = "low",
 ): void {
   assert.equal(payload.model, expectedModel);
   assert.deepEqual(payload.thinking, { type: "enabled" });
-  assert.equal(payload.reasoning_effort, "low");
+  assert.equal(payload.reasoning_effort, expectedReasoning);
 }
 
 function completionResponse(
@@ -92,7 +93,7 @@ test("bundled primary config produces the accepted Pi Chat Completions wire shap
   assert.equal(config.target, "primary");
   assert.equal(config.provider, "primary");
   assert.equal(config.model, "glm-5.3-flash");
-  assert.equal(config.thinkingLevel, "low");
+  assert.equal(config.thinkingLevel, "high");
   assert.equal(config.openAICompat.supportsReasoningEffort, true);
   const model = createModel(config);
   assert.equal(model.api, "openai-completions");
@@ -157,7 +158,7 @@ test("bundled primary config produces the accepted Pi Chat Completions wire shap
     "thinking",
     "tools",
   ]);
-  assertLowReasoningPayload(payload, "glm-5.3-flash");
+  assertReasoningPayload(payload, "glm-5.3-flash", "high");
   assert.equal(payload.stream, false);
   assert.equal(payload.max_tokens, 8192);
   assert.equal(payload.temperature, 0);
@@ -252,7 +253,7 @@ test("the non-stream transport retries a TokenRhythm 200 SERVICE_BUSY body throu
     globalThis.fetch = originalFetch;
   }
   assert.equal(payloads.length, 2);
-  for (const payload of payloads) assertLowReasoningPayload(payload, "deepseek-v4-flash-0731");
+  for (const payload of payloads) assertReasoningPayload(payload, "deepseek-v4-flash-0731");
 });
 
 test("isolated finalization sends required submit_evidence without provider strict mode", async () => {
@@ -317,7 +318,7 @@ test("isolated finalization sends required submit_evidence without provider stri
 
   assert.equal(fetchCalls, 4);
   assert.equal(payloads.length, 4);
-  for (const payload of payloads) assertLowReasoningPayload(payload);
+  for (const payload of payloads) assertReasoningPayload(payload, "glm-5.3-flash", "high");
   assert.equal(Object.hasOwn(payloads[0] ?? {}, "tool_choice"), false);
   assert.equal(Object.hasOwn(payloads[1] ?? {}, "tool_choice"), false);
   assert.equal(payloads[2]?.tool_choice, "required");
@@ -363,10 +364,9 @@ test("provider probe preserves one isolated context across a connection retry", 
             summary: "The fixture export is defined.",
             evidence: [{
               question_id: "impl",
-              path: "fixture.ts",
+              observation_id: 1,
               start_line: 1,
               end_line: 1,
-              focus_line: 1,
               why: "Defines the fixture export.",
             }],
             gaps: [{ question_id: "tests", reason: "No test observation was supplied." }],
@@ -408,7 +408,7 @@ test("provider probe preserves one isolated context across a connection retry", 
 
   assert.equal(fetchCalls, 2);
   assert.equal(payloads.length, 2);
-  for (const payload of payloads) assertLowReasoningPayload(payload);
+  for (const payload of payloads) assertReasoningPayload(payload, "glm-5.3-flash", "high");
   assert.equal(payloads[0]?.tool_choice, "auto");
   assert.equal(payloads[1]?.tool_choice, "auto");
   assert.deepEqual(payloads[1]?.messages, payloads[0]?.messages);
@@ -419,6 +419,10 @@ test("provider probe preserves one isolated context across a connection retry", 
   assert.equal(Object.hasOwn(tools[0]?.function ?? {}, "strict"), false);
   const toolSchema = JSON.stringify(tools[0]?.function?.parameters);
   assert.equal(toolSchema.includes('"role"'), false);
+  assert.equal(toolSchema.includes('"observation_id"'), true);
+  assert.equal(toolSchema.includes('"target_id"'), false);
+  assert.equal(toolSchema.includes('"focus_line"'), false);
+  assert.equal(toolSchema.includes('"path"'), false);
   for (const unsupported of ["anyOf", "oneOf", "allOf", "const", "pattern", "minLength", "maxLength", "minimum", "maximum", "maxItems"]) {
     assert.equal(toolSchema.includes(`\"${unsupported}\"`), false, unsupported);
   }
@@ -426,11 +430,20 @@ test("provider probe preserves one isolated context across a connection retry", 
   assert.deepEqual(messages.map((message) => message.role), ["system", "user"]);
   assert.equal(String(messages[0]?.content).includes("Repository tools are unavailable"), true);
   const packet = JSON.parse(String(messages[1]?.content)) as {
+    readonly questions?: readonly Record<string, unknown>[];
     readonly submissionRules?: { readonly question_id?: string };
     readonly repositoryObservations?: readonly Record<string, unknown>[];
   };
-  assert.equal(packet.submissionRules?.question_id, "exact questions[].id; omit role because the harness derives it");
+  assert.equal(packet.submissionRules?.question_id, "exact questions[].id; the harness derives the single canonical target and role");
+  assert.equal(JSON.stringify(packet).includes("target_id"), false);
+  assert.equal(packet.questions?.[0]?.id, "impl");
+  assert.deepEqual(packet.questions?.[0]?.target, {
+    subject: { kind: "topic", topic: "implementation" },
+    factKind: "location",
+    coverageMode: "single",
+  });
   assert.equal(packet.repositoryObservations?.[0]?.path, "fixture.ts");
   assert.equal(packet.repositoryObservations?.[0]?.content, "1 export const fixture = true;");
+  assert.equal(packet.repositoryObservations?.[0]?.id, 1);
   assert.equal(Object.hasOwn(packet.repositoryObservations?.[0] ?? {}, "tool"), false);
 });

@@ -47,28 +47,24 @@ COMMON_TASK_EFFECT_POLICY = (
     "Solve only from the workspace and existing local caches. Do not use web search, curl, wget, raw GitHub, remote git clone/ls-remote/fetch, npm view/pack, remote module or package queries, or any other upstream source discovery for the task solution or patch. Provider, Pier, and benchmark-controller network traffic is infrastructure and does not authorize task-solution network access."
 )
 COMMON_DIAGNOSTIC_CHECKPOINT = (
-    "[Benchmark common whole-phase FreeContext checkpoint]\n"
-    "Before starting or changing a task phase, judge whether the whole upcoming phase may require searching or reading many files or substantial content. "
-    "Use native repository reading only when you clearly know one small bounded read is enough; otherwise call gather_context before searching or reading. "
-    "Repeat this decision after Evidence, an edit, a check, or another phase change. Exact errors, changed hunks, tests, edits, checks, and diff/status remain direct when they need no broader reading. "
-    "A rejected request affects only that request; judge a different later phase normally."
+    "[Benchmark common FreeContext routing reference]\n"
+    "When available, the tracked FreeContext skill and enabled gather_context tool description are the sole detailed routing authority. Arm assignment does not require a FreeContext call."
 )
 TREATMENT_DIAGNOSTIC_ROUTE = (
-    "FreeContext is available in this treatment. Follow the common whole-phase checkpoint; use native repository reading only for a clearly small bounded phase and otherwise call gather_context before searching or reading. A later call is never mechanically forced."
+    "FreeContext is available in this treatment; arm assignment does not require a call."
 )
 CONTROL_DIAGNOSTIC_ROUTE = (
-    "FreeContext is unavailable in this control arm. Apply the common whole-phase checkpoint as a fair counterfactual, but continue with native repository tools whenever it would call and do not invoke FreeContext."
+    "FreeContext is unavailable in this control arm; use native repository tools."
 )
 CONDITIONAL_FC_TREATMENT_POLICY = (
     "[Benchmark arm policy: conditional_fc_treatment]\n"
-    "FreeContext is available in this treatment but arm enablement does not make a call automatic. Follow the installed skill and apply the whole-phase decision initially and after Evidence, an edit, or a check. When called, gather_context is the only tool in that assistant batch/code cell: never parallelize, and do no native or other tool work during dispatch. If a cell ID returns, exclusively call functions.wait with yield_time_ms=300000 until terminal. Consume inline Evidence, handoff, and nextAction directly. Ready/partial and listed gaps do not themselves authorize reentry; only a new typed child evidence question exposed by Evidence/edit/check may reenter, while normalized same-target/scope/fact replay remains invalid. Rejection of one continuation affects only that request."
+    "FreeContext is available in this treatment. When the tracked skill and gather_context description select it, gather_context is the only tool in that assistant batch/code cell: never parallelize or do other work during dispatch. If a cell ID returns, exclusively call functions.wait with yield_time_ms=300000 until terminal. Consume the returned Evidence, handoff, and nextAction directly."
     "\n"
     + TREATMENT_DIAGNOSTIC_ROUTE
 )
 EXPLICIT_NATIVE_ONLY_POLICY = (
     "[Benchmark arm policy: explicit_native_only]\n"
-    "FreeContext is disabled for this arm. Use native repository tools for exploration "
-    "and do not invoke FreeContext.\n"
+    "FreeContext is unavailable in this control arm; use native repository tools.\n"
     + CONTROL_DIAGNOSTIC_ROUTE
 )
 

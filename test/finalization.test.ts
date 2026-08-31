@@ -27,10 +27,9 @@ const validArguments = {
   summary: "The implementation is verified.",
   evidence: [{
     question_id: "impl",
-    path: "src/index.ts",
+    observation_id: 1,
     start_line: 4,
     end_line: 8,
-    focus_line: 4,
     why: "Defines the exported value.",
   }],
   gaps: [{ question_id: "tests", reason: "No test evidence was observed." }],
@@ -72,7 +71,7 @@ test("submit_evidence retries an incomplete structural header and accepts its se
   });
   const incomplete = {
     ...validArguments,
-    evidence: [{ ...validArguments.evidence[0], path: "src/result.py", start_line: 24, end_line: 24, focus_line: 24 }],
+    evidence: [{ ...validArguments.evidence[0], start_line: 24, end_line: 24 }],
   };
   await assert.rejects(tool.execute("submit-header", incomplete), /incomplete_structural_evidence/u);
   assert.equal(state.failureKind, null);
@@ -95,7 +94,7 @@ test("submit_evidence retries an incomplete structural header and accepts its se
   assert.deepEqual(finalState.candidate?.gaps.map((gap) => gap.questionId), ["tests", "impl"]);
 });
 
-test("submit_evidence clips an adjacent merged range to the focus observation", async () => {
+test("submit_evidence maps an observation id and preserves its selected range", async () => {
   const state = createTerminalSubmissionState();
   const tool = createSubmitEvidenceTool({
     Type,
@@ -107,14 +106,37 @@ test("submit_evidence clips an adjacent merged range to the focus observation", 
     state,
     isFinalizing: () => true,
   });
-  await tool.execute("submit-adjacent", {
+  await tool.execute("submit-observation", {
     ...validArguments,
-    evidence: [{ ...validArguments.evidence[0], start_line: 77, end_line: 106, focus_line: 94 }],
+    evidence: [{ ...validArguments.evidence[0], observation_id: 2, start_line: 90, end_line: 106 }],
   });
   assert.deepEqual(
-    { startLine: state.candidate?.evidence[0]?.startLine, endLine: state.candidate?.evidence[0]?.endLine },
-    { startLine: 80, endLine: 106 },
+    { path: state.candidate?.evidence[0]?.path, startLine: state.candidate?.evidence[0]?.startLine, endLine: state.candidate?.evidence[0]?.endLine },
+    { path: "src/index.ts", startLine: 90, endLine: 106 },
   );
+});
+
+test("submit_evidence maps exhaustive question coverage to its canonical target", async () => {
+  const base = baseRequest();
+  const request = {
+    ...base,
+    evidenceQuestions: base.evidenceQuestions.map((question) => question.id === "impl"
+      ? { ...question, coverageTargets: [topicTarget("impl-target", "implementation", "behavior", "exhaustive")] }
+      : question),
+  };
+  const state = createTerminalSubmissionState();
+  const tool = createSubmitEvidenceTool({
+    Type,
+    request,
+    observedReads: () => [observedRead],
+    state,
+    isFinalizing: () => false,
+  });
+  await tool.execute("submit-exhaustive", {
+    ...validArguments,
+    coverage: [{ question_id: "impl", members: ["member"], gaps: [] }],
+  });
+  assert.equal(state.candidate?.coverage?.[0]?.targetId, "impl-target");
 });
 
 test("submit_evidence canonicalizes descriptive text before storing the private candidate", async () => {
@@ -149,6 +171,8 @@ test("submit_evidence exposes only portable shape constraints to the provider", 
   const schema = JSON.stringify(tool.parameters);
   assert.match(tool.description, /at most 6 self-contained observed evidence items.*required allocation.*reserved slots.*never submit a seventh/iu);
   assert.match(tool.description, /existing owner that proves absence as complete negative evidence/iu);
+  assert.match(schema, /observation_id/iu);
+  assert.doesNotMatch(schema, /target_id|focus_line|"path"/iu);
   assert.match(tool.description, /1 reserved slots/iu);
   assert.match(tool.description, /minimumSpans/iu);
   assert.equal(schema.includes('"role"'), false);
@@ -162,7 +186,7 @@ test("local submission validation records exact limits removed from the provider
     [{ ...validArguments, evidence: Array.from({ length: 7 }, () => validArguments.evidence[0]) }, ["too_many_evidence"]],
     [{ ...validArguments, gaps: Array.from({ length: 7 }, () => validArguments.gaps[0]) }, ["too_many_gaps"]],
     [{ ...validArguments, evidence: [{ ...validArguments.evidence[0], question_id: "bad\nid" }] }, ["invalid_evidence_question_id", "unknown_evidence_question"]],
-    [{ ...validArguments, evidence: [{ ...validArguments.evidence[0], path: "" }] }, ["empty_evidence_path", "unobserved_range"]],
+    [{ ...validArguments, evidence: [{ ...validArguments.evidence[0], observation_id: 0 }] }, ["invalid_evidence_observation_id"]],
     [{ ...validArguments, evidence: [{ ...validArguments.evidence[0], start_line: 0 }] }, ["invalid_evidence_line_numbers", "unobserved_range"]],
     [{ ...validArguments, gaps: [{ ...validArguments.gaps[0], question_id: "bad\nid" }] }, ["invalid_gap_question_id", "unknown_gap_question"]],
   ] as const;
@@ -220,7 +244,7 @@ test("finalizer turns missing allocation into an explicit partial-coverage gap",
     ...validArguments,
     evidence: [
       ...validArguments.evidence,
-      { ...validArguments.evidence[0], start_line: 9, end_line: 12, focus_line: 10 },
+      { ...validArguments.evidence[0], start_line: 9, end_line: 12 },
     ],
   });
   assert.equal(complete.candidate?.evidence.length, 2);
@@ -255,7 +279,7 @@ test("finalizer preserves bounded partial evidence when a required gap remains",
     evidence: allocations.map((question_id, index) => ({
       ...validArguments.evidence[0],
       question_id,
-      path: reads[index]!.path,
+      observation_id: index + 1,
     })),
     gaps: [{ question_id: "contract", reason: "No authoritative contract span was observed." }],
   });
@@ -284,6 +308,7 @@ test("finalizer preserves a semantic gap alongside evidence for the same questio
   assert.equal(state.candidate?.evidence.length, 6);
   assert.deepEqual(state.candidate?.gaps, [{
     questionId: "impl",
+    targetId: "impl-target",
     reason: "The implementation was not found.",
   }]);
 });
@@ -301,7 +326,7 @@ test("finalizer preserves observed evidence and turns an unobserved citation int
     ...validArguments,
     evidence: [
       validArguments.evidence[0]!,
-      { ...validArguments.evidence[0]!, question_id: "tests", path: "tests/missing.py" },
+      { ...validArguments.evidence[0]!, question_id: "tests", start_line: 9, end_line: 9 },
     ],
   });
   assert.equal(result.terminate, true);
@@ -314,7 +339,7 @@ test("finalizer preserves observed evidence and turns an unobserved citation int
 test("finalizer records bounded semantic rejection categories without argument values", async () => {
   const cases = [
     [{ ...validArguments, evidence: [{ ...validArguments.evidence[0], question_id: "unknown" }] }, "unknown_evidence_question"],
-    [{ ...validArguments, evidence: [{ ...validArguments.evidence[0], focus_line: 9 }] }, "focus_outside_range"],
+    [{ ...validArguments, evidence: [{ ...validArguments.evidence[0], observation_id: 99 }] }, "unknown_observation_id"],
     [{ ...validArguments, gaps: [{ ...validArguments.gaps[0], question_id: "unknown" }] }, "unknown_gap_question"],
   ] as const;
   for (const [index, [invalid, expected]] of cases.entries()) {
@@ -351,27 +376,49 @@ test("isolated packet marks exploration complete and omits repository tool origi
   const packet = buildFinalizationPacket(baseRequest(), [observedRead], latestCompactionSummary(messages));
   const parsed = JSON.parse(packet) as Record<string, unknown>;
   assert.equal(parsed.workingSummary, "latest summary");
+  assert.deepEqual(parsed.questions, [{
+    id: "impl",
+    role: "implementation",
+    question: "Where is the implementation?",
+    required: true,
+    target: {
+      subject: { kind: "topic", topic: "implementation" },
+      factKind: "location",
+      coverageMode: "single",
+    },
+  }, {
+    id: "tests",
+    role: "test",
+    question: "Where is it tested?",
+    required: false,
+    target: {
+      subject: { kind: "topic", topic: "tests" },
+      factKind: "verification",
+      coverageMode: "single",
+    },
+  }]);
+  assert.equal(packet.includes("target_id"), false);
   assert.deepEqual(parsed.submissionRules, {
     maxItems: { evidence: 6, gaps: 6 },
     requiredMinimumSpans: 1,
     requiredAllocation: [
-      { question_id: "impl", role: "implementation", slots: 1, remainingSlots: 1, targets: [{ target_id: "impl-target", slots: 1 }], eligibleObservedSpanIds: [1] },
+      { question_id: "impl", remainingSlots: 1, eligibleObservationIds: [1] },
     ],
-    question_id: "exact questions[].id; omit role because the harness derives it",
-    citation: "non-empty repository-relative path; integer 1 <= start_line <= focus_line <= end_line <= 10000000; smallest self-contained range within one matching repositoryObservation",
-    coverage: "Treat requiredAllocation as reserved quotas: fill every target quota and remaining minimum-spans quota with distinct role-matched observed spans before any surplus. A slot is covered only by self-contained observed evidence that answers the full declared question or target, not a declaration or keyword match. Count evidence and gaps before the call; evidence.length must be at most maxItems.evidence, and when requiredAllocation fills the six evidence slots there is no surplus slot. Cite relevant partial observations instead of replacing their quota with surplus; if a quota still cannot be met, include that exact question ID and target_id in gaps. Test role requires an actual test/spec file or inline test block, never a production helper whose name contains test. Never substitute another role or claim a present role-matched observation is absent.",
+    question_id: "exact questions[].id; the harness derives the single canonical target and role",
+    citation: "integer observation_id matching repositoryObservations[].id; integer 1 <= start_line <= end_line <= 10000000, with the range inside that observed span",
+    coverage: "Treat requiredAllocation as reserved quotas: fill every remainingSlots quota with distinct role-matched observed spans before any surplus. A slot is covered only by self-contained observed evidence that answers the full declared question or target, not a declaration or keyword match. Count evidence and gaps before the call; evidence.length must be at most maxItems.evidence, and when requiredAllocation fills the six evidence slots there is no surplus slot. Cite relevant partial observations instead of replacing their quota with surplus; if a quota still cannot be met, include that exact question ID in gaps. Test role requires an actual test/spec file or inline test block, never a production helper whose name contains test. Never substitute another role or claim a present role-matched observation is absent.",
   });
   const { tool: _tool, ...modelObservation } = observedRead;
   assert.equal(_tool, "read");
-  assert.deepEqual(parsed.repositoryObservations, [{ ...modelObservation, content: "4 export const value = 1;" }]);
+  assert.deepEqual(parsed.repositoryObservations, [{ id: 1, ...modelObservation, content: "4 export const value = 1;" }]);
   assert.equal(packet.includes("raw history must not return"), false);
   assert.equal(packet.includes("[read src/index.ts:4-8]"), false);
   assert.equal(FINALIZATION_SYSTEM_PROMPT.includes("completed repository exploration"), true);
   assert.equal(FINALIZATION_SYSTEM_PROMPT.includes("Repository tools are unavailable"), true);
   assert.equal(FINALIZATION_SYSTEM_PROMPT.includes("never submit a seventh evidence item"), true);
   assert.equal(FINALIZATION_SYSTEM_PROMPT.includes("submissionRules.requiredAllocation"), true);
-  assert.equal(FINALIZATION_SYSTEM_PROMPT.includes("eligibleObservedSpanIds"), true);
-  assert.equal(FINALIZATION_SYSTEM_PROMPT.includes("A wider adjacent range is clipped"), true);
+  assert.equal(FINALIZATION_SYSTEM_PROMPT.includes("eligibleObservationIds"), true);
+  assert.equal(FINALIZATION_SYSTEM_PROMPT.includes("observation_id"), true);
   assert.equal(FINALIZATION_SYSTEM_PROMPT.includes("smallest self-contained observed evidence"), true);
   assert.equal(FINALIZATION_SYSTEM_PROMPT.includes("declaration or keyword line alone is insufficient"), true);
   assert.equal(FINALIZATION_SYSTEM_PROMPT.includes("complete negative answer"), true);
@@ -390,10 +437,10 @@ test("isolated packet marks exploration complete and omits repository tool origi
     submissionRules: { requiredAllocation: unknown };
   };
   assert.deepEqual(quotaPacket.submissionRules.requiredAllocation, [
-    { question_id: "implementation", role: "implementation", slots: 2, remainingSlots: 2, targets: [{ target_id: "implementation-quota", slots: 1 }], eligibleObservedSpanIds: [1] },
-    { question_id: "application", role: "caller", slots: 2, remainingSlots: 2, targets: [{ target_id: "application-quota", slots: 1 }], eligibleObservedSpanIds: [1] },
-    { question_id: "contract", role: "contract", slots: 1, remainingSlots: 1, targets: [{ target_id: "contract-quota", slots: 1 }], eligibleObservedSpanIds: [1] },
-    { question_id: "tests", role: "test", slots: 1, remainingSlots: 1, targets: [{ target_id: "tests-quota", slots: 1 }], eligibleObservedSpanIds: [1] },
+    { question_id: "implementation", remainingSlots: 2, eligibleObservationIds: [1] },
+    { question_id: "application", remainingSlots: 2, eligibleObservationIds: [1] },
+    { question_id: "contract", remainingSlots: 1, eligibleObservationIds: [1] },
+    { question_id: "tests", remainingSlots: 1, eligibleObservationIds: [1] },
   ]);
 });
 

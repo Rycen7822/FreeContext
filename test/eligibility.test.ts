@@ -10,145 +10,53 @@ import type { FreeContextEligibilityFacts } from "../src/mcp/eligibility.js";
 import type { ReentryBlockingGap } from "../src/mcp/contracts.js";
 import { baseRequest, topicTarget } from "./helpers.js";
 
-const implementationQuestion = {
-  id: "implementation",
-  role: "implementation" as const,
-  question: "Where is this implemented?",
-  required: true,
-  coverageTargets: [topicTarget("implementation-target", "implementation", "location")],
-};
-
 function facts(overrides: Partial<FreeContextEligibilityFacts> = {}): FreeContextEligibilityFacts {
   return {
-    evidenceQuestions: [implementationQuestion],
-    knownRefs: [],
-    crossModuleCallChain: false,
-    jointConfigCount: 0,
-    crossDocumentSynthesis: false,
-    longDocumentMultiFact: false,
-    sourceBoundPurpose: null,
-    nativeSearchBatchCount: 0,
-    distinctNonEvidenceReadPathCount: 0,
+    concreteExplorationGap: false,
     boundedReadSufficient: false,
-    exactCandidateCount: null,
     forbiddenActions: [],
     ...overrides,
   };
 }
 
 test("one immutable policy owns gate order, tool text, and host route metadata", () => {
-  assert.equal(FREECONTEXT_ELIGIBILITY_POLICY.id, "freecontext-eligibility-v5");
-  assert.deepEqual(FREECONTEXT_ELIGIBILITY_POLICY.gates.map(({ order }) => order), [1, 2, 3, 4, 5]);
+  assert.equal(FREECONTEXT_ELIGIBILITY_POLICY.id, "freecontext-eligibility-v6");
+  assert.deepEqual(FREECONTEXT_ELIGIBILITY_POLICY.gates.map(({ order }) => order), [1, 2, 3]);
   assert.equal(FREECONTEXT_HOST_ROUTE_METADATA.gates, FREECONTEXT_ELIGIBILITY_POLICY.gates);
   assert.equal(FREECONTEXT_HOST_ROUTE_METADATA.invariants, FREECONTEXT_ELIGIBILITY_POLICY.invariants);
   for (const gate of FREECONTEXT_ELIGIBILITY_POLICY.gates) {
     assert.ok(TOOL_DESCRIPTION.includes(gate.instruction));
   }
-  assert.match(TOOL_DESCRIPTION, /one structured path, symbol, or topic fact target/iu);
-  assert.match(TOOL_DESCRIPTION, /invocation is not a repository map/iu);
-  assert.match(TOOL_DESCRIPTION, /whole upcoming phase/iu);
-  assert.match(TOOL_DESCRIPTION, /native repository reading only when one small bounded read is clearly enough/iu);
+  assert.match(TOOL_DESCRIPTION, /specific next multi-file or multi-relation repository exploration gap/iu);
+  assert.match(TOOL_DESCRIPTION, /known references are priority starting hints, not a precondition/iu);
+  assert.match(TOOL_DESCRIPTION, /exact paths.*symbols.*failure locations.*one bounded read.*diff or status.*edits.*tests.*direct checks stay native/iu);
+  assert.match(TOOL_DESCRIPTION, /do not call because work starts.*phase changes.*task looks complex.*probability threshold/iu);
   assert.match(TOOL_DESCRIPTION, /rejected request affects only that request/iu);
-  assert.doesNotMatch(TOOL_DESCRIPTION, /Familiarity, known files, or keywords never weaken/iu);
-  assert.doesNotMatch(TOOL_DESCRIPTION, /at task start|first read-only exploration action/iu);
-  assert.match(TOOL_DESCRIPTION, /only a new typed child evidence question exposed while consuming Evidence or by edit\/check may start another invocation/iu);
+  assert.match(TOOL_DESCRIPTION, /Evidence-origin reentry is only for an independent child/iu);
 });
 
-test("complex scopes call FreeContext before any repository probe", () => {
-  const cases: readonly Partial<FreeContextEligibilityFacts>[] = [
-    {
-      evidenceQuestions: [
-        implementationQuestion,
-        { id: "tests", role: "test", question: "Where is this tested?", required: true, coverageTargets: [topicTarget("tests-target", "tests", "verification")] },
-      ],
-    },
-    { crossModuleCallChain: true },
-    { jointConfigCount: 2 },
-    { crossDocumentSynthesis: true },
-    { longDocumentMultiFact: true },
-    { sourceBoundPurpose: "planning" },
-    { sourceBoundPurpose: "review" },
-    { sourceBoundPurpose: "diagnosis" },
-  ];
-  for (const selected of cases) {
-    assert.deepEqual(
-      decideFreeContextEligibility(facts(selected)).outcome,
-      "call",
-      JSON.stringify(selected),
-    );
-    assert.equal(decideFreeContextEligibility(facts(selected)).gate, 2);
-  }
+test("only a concrete multi-file exploration gap calls FreeContext", () => {
+  const decision = decideFreeContextEligibility(facts({ concreteExplorationGap: true }));
+  assert.deepEqual({ outcome: decision.outcome, gate: decision.gate }, { outcome: "call", gate: 2 });
 });
 
-test("one sufficient precise location stays direct before complexity or native escalation", () => {
-  for (const knownRef of [
-    { kind: "path" as const, path: "src/index.ts" },
-    { kind: "stack" as const, path: "src/index.ts", line: 10 },
-    { kind: "symbol" as const, symbol: "run", path: "src/index.ts" },
-  ]) {
-    const decision = decideFreeContextEligibility(facts({
-      knownRefs: [knownRef],
-      boundedReadSufficient: true,
-    }));
-    assert.equal(decision.outcome, "direct_read");
-    assert.equal(decision.gate, 1);
-  }
-  const preciseComplex = decideFreeContextEligibility(facts({
-    knownRefs: [{ kind: "path", path: "src/index.ts" }],
+test("complexity and phase changes alone stay native", () => {
+  const decision = decideFreeContextEligibility(facts());
+  assert.deepEqual({ outcome: decision.outcome, gate: decision.gate }, { outcome: "exact_probe", gate: 3 });
+});
+
+test("one sufficient bounded location stays direct before the concrete-gap decision", () => {
+  const decision = decideFreeContextEligibility(facts({
     boundedReadSufficient: true,
-    crossModuleCallChain: true,
-    nativeSearchBatchCount: 3,
+    concreteExplorationGap: true,
   }));
-  assert.deepEqual({ outcome: preciseComplex.outcome, gate: preciseComplex.gate }, { outcome: "direct_read", gate: 1 });
-  assert.equal(decideFreeContextEligibility(facts({
-    knownRefs: [{ kind: "stack", path: "src/index.ts", line: 10 }],
-    boundedReadSufficient: false,
-  })).outcome, "exact_probe");
-  const bareSymbol = decideFreeContextEligibility(facts({
-    knownRefs: [{ kind: "symbol", symbol: "run" }],
-    boundedReadSufficient: true,
-  }));
-  assert.deepEqual({ outcome: bareSymbol.outcome, gate: bareSymbol.gate }, { outcome: "exact_probe", gate: 5 });
+  assert.deepEqual({ outcome: decision.outcome, gate: decision.gate }, { outcome: "direct_read", gate: 1 });
 });
 
-test("native expansion with an unresolved bounded read escalates before broader exploration", () => {
-  for (const selected of [
-    { nativeSearchBatchCount: 1, distinctNonEvidenceReadPathCount: 0 },
-    { nativeSearchBatchCount: 99, distinctNonEvidenceReadPathCount: 99 },
-  ]) {
-    const decision = decideFreeContextEligibility(facts({
-      knownRefs: [{ kind: "stack", path: "src/index.ts", line: 10 }],
-      boundedReadSufficient: false,
-      ...selected,
-    }));
-    assert.equal(decision.outcome, "call");
-    assert.equal(decision.gate, 3);
-  }
-});
-
-test("candidate counts are observations, not a coverage threshold", () => {
-  for (const count of [0, 7]) {
-    const decision = decideFreeContextEligibility(facts({
-      exactCandidateCount: count,
-      knownRefs: [{ kind: "path", path: "src/index.ts" }],
-      boundedReadSufficient: true,
-    }));
-    assert.equal(decision.outcome, "direct_read");
-    assert.equal(decision.gate, 1);
-  }
-  const unresolved = decideFreeContextEligibility(facts({
-    exactCandidateCount: 7,
-    knownRefs: [{ kind: "path", path: "src/index.ts" }],
-    boundedReadSufficient: false,
-  }));
-  assert.deepEqual({ outcome: unresolved.outcome, gate: unresolved.gate }, { outcome: "call", gate: 4 });
+test("invalid route facts fail closed", () => {
   assert.throws(
-    () => decideFreeContextEligibility(facts({ exactCandidateCount: -1 })),
-    /non-negative integer/u,
-  );
-  assert.throws(
-    () => decideFreeContextEligibility(facts({ nativeSearchBatchCount: -1 })),
-    /non-negative integers/u,
+    () => decideFreeContextEligibility(facts({ concreteExplorationGap: undefined as never })),
+    /must be booleans/u,
   );
 });
 

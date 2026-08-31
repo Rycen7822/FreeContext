@@ -127,7 +127,7 @@ test("no-network MCP loopback awaits one terminal Promise and never emits an int
     assert.equal(tool?.title, "Gather context with FreeContext");
     assert.equal(tool?.description, TOOL_DESCRIPTION);
     assert.ok(tool?.description?.startsWith(
-      "Before starting or changing a task phase, judge the whole upcoming phase. Use native repository reading only when one small bounded read is clearly enough; otherwise call FreeContext before searching or reading. A rejected request affects only that request; reassess a different later phase normally. ",
+      "Use FreeContext only for a specific next multi-file or multi-relation repository exploration gap that native bounded reads cannot close. A rejected request affects only that request; later eligibility is judged from the new evidence need. ",
     ));
     let previousGateIndex = -1;
     for (const gate of FREECONTEXT_ELIGIBILITY_POLICY.gates) {

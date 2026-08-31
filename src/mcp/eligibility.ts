@@ -15,17 +15,8 @@ import type {
 export type ForbiddenFreeContextAction = "edit" | "test" | "git" | "package_manager" | "web" | "credentials";
 
 export interface FreeContextEligibilityFacts {
-  readonly evidenceQuestions: readonly EvidenceQuestion[];
-  readonly knownRefs: readonly KnownReference[];
-  readonly crossModuleCallChain: boolean;
-  readonly jointConfigCount: number;
-  readonly crossDocumentSynthesis: boolean;
-  readonly longDocumentMultiFact: boolean;
-  readonly sourceBoundPurpose: "planning" | "review" | "diagnosis" | null;
-  readonly nativeSearchBatchCount: number;
-  readonly distinctNonEvidenceReadPathCount: number;
+  readonly concreteExplorationGap: boolean;
   readonly boundedReadSufficient: boolean;
-  readonly exactCandidateCount: number | null;
   readonly forbiddenActions: readonly ForbiddenFreeContextAction[];
 }
 
@@ -151,16 +142,6 @@ function gate(order: FreeContextEligibilityGate["order"]): FreeContextEligibilit
   return value;
 }
 
-function requiredRoles(questions: readonly EvidenceQuestion[]): ReadonlySet<EvidenceQuestion["role"]> {
-  return new Set(questions.filter((question) => question.required).map((question) => question.role));
-}
-
-function hasPreciseReference(references: readonly KnownReference[]): boolean {
-  return references.some((reference) =>
-    reference.kind === "path" || reference.kind === "stack" ||
-    (reference.kind === "symbol" && reference.path !== undefined));
-}
-
 export function decideFreeContextEligibility(
   facts: Readonly<FreeContextEligibilityFacts>,
 ): Readonly<FreeContextEligibilityDecision> {
@@ -171,43 +152,19 @@ export function decideFreeContextEligibility(
       reason: `FreeContext cannot perform: ${[...new Set(facts.forbiddenActions)].sort().join(", ")}.`,
     });
   }
-  if (!Number.isInteger(facts.jointConfigCount) || facts.jointConfigCount < 0) {
-    throw new RangeError("jointConfigCount must be a non-negative integer.");
+  if (typeof facts.concreteExplorationGap !== "boolean" || typeof facts.boundedReadSufficient !== "boolean") {
+    throw new TypeError("concreteExplorationGap and boundedReadSufficient must be booleans.");
   }
-  if (!Number.isInteger(facts.nativeSearchBatchCount) || facts.nativeSearchBatchCount < 0 ||
-      !Number.isInteger(facts.distinctNonEvidenceReadPathCount) || facts.distinctNonEvidenceReadPathCount < 0) {
-    throw new RangeError("Native search batches and distinct read paths must be non-negative integers.");
-  }
-  if (facts.exactCandidateCount !== null &&
-      (!Number.isInteger(facts.exactCandidateCount) || facts.exactCandidateCount < 0)) {
-    throw new RangeError("exactCandidateCount must be null or a non-negative integer.");
-  }
-
-  const roles = requiredRoles(facts.evidenceQuestions);
-  if (hasPreciseReference(facts.knownRefs) && facts.boundedReadSufficient) {
+  if (facts.boundedReadSufficient) {
     const selected = gate(1);
     return Object.freeze({ outcome: "direct_read", gate: selected.order, reason: selected.instruction });
   }
 
-  const complex = roles.size >= 2 || facts.crossModuleCallChain || facts.jointConfigCount >= 2 ||
-    facts.crossDocumentSynthesis || facts.longDocumentMultiFact || facts.sourceBoundPurpose !== null;
-  if (complex) {
+  if (facts.concreteExplorationGap) {
     const selected = gate(2);
     return Object.freeze({ outcome: "call", gate: selected.order, reason: selected.instruction });
   }
 
-  const nativeExpansionObserved = facts.nativeSearchBatchCount > 0 || facts.distinctNonEvidenceReadPathCount > 0;
-  if (nativeExpansionObserved && !facts.boundedReadSufficient) {
-    const selected = gate(3);
-    return Object.freeze({ outcome: "call", gate: selected.order, reason: selected.instruction });
-  }
-
-  if (facts.exactCandidateCount !== null &&
-      !(hasPreciseReference(facts.knownRefs) && facts.boundedReadSufficient)) {
-    const selected = gate(4);
-    return Object.freeze({ outcome: selected.outcome, gate: selected.order, reason: selected.instruction });
-  }
-
-  const selected = gate(5);
+  const selected = gate(3);
   return Object.freeze({ outcome: "exact_probe", gate: selected.order, reason: selected.instruction });
 }

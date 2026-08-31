@@ -14,11 +14,7 @@ interface GlobToolDetails {
 export function createGlobTool({ Type, workspace, semaphore, config, executable }: ExternalToolContext) {
   const parameters = Type.Object({
     pattern: Type.Optional(
-      Type.Array(Type.String({ minLength: 1, maxLength: 512 }), {
-        minItems: 1,
-        maxItems: 16,
-        description: "Glob patterns; defaults to all files. Example: **/*.py.",
-      }),
+      Type.String({ minLength: 1, maxLength: 512, description: "Optional glob pattern; defaults to all files. Example: **/*.py." }),
     ),
     path: Type.Optional(Type.String({ description: "Repository-relative directory; defaults to root." })),
     max_results: Type.Optional(Type.Integer({ minimum: 1, maximum: 1000 })),
@@ -27,7 +23,7 @@ export function createGlobTool({ Type, workspace, semaphore, config, executable 
     name: "glob",
     label: "List repository paths",
     description:
-      "List files matching glob patterns using ripgrep's file walker. With path-backed knownRefs and no observed read, read the exact knownRef first; an immediate-parent probe is allowed only with an explicit non-recursive pattern and a small result bound. Root, higher-ancestor, default-all, and ** recursive first-pass listings are blocked. Read-only.",
+      "List files matching one optional glob pattern using ripgrep's file walker; defaults to all files. Known references are preferred starting points but do not gate discovery. Read-only.",
     parameters,
     executionMode: "parallel",
     execute: async (_toolCallId: string, params: Static<typeof parameters>, signal?: AbortSignal) =>
@@ -37,7 +33,7 @@ export function createGlobTool({ Type, workspace, semaphore, config, executable 
         const args = ["--files", "--hidden", "--no-messages"];
         // Mandatory exclusions are appended after model-controlled patterns so
         // protected paths cannot be re-included by glob precedence.
-        for (const glob of params.pattern || ["**/*"]) args.push("--glob", glob);
+        args.push("--glob", params.pattern || "**/*");
         for (const glob of SENSITIVE_RG_GLOBS) args.push("--glob", glob);
         args.push("--", target.relative);
         const result = await runCommand({

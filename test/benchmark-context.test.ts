@@ -1280,14 +1280,10 @@ test("canonical Pier adapter registers direct MCP without legacy CLI wrappers", 
     "COMMON_TASK_EFFECT_POLICY = (",
     "Do not use web search, curl, wget, raw GitHub, remote git clone/ls-remote/fetch, npm view/pack",
     "CONDITIONAL_FC_TREATMENT_POLICY = (",
-    "arm enablement does not make a call automatic",
-    "apply the whole-phase decision initially and after Evidence, an edit, or a check",
+    "FreeContext is available in this treatment",
     "is the only tool in that assistant batch/code cell",
-    "never parallelize, and do no native or other tool work during dispatch",
+    "never parallelize or do other work during dispatch",
     "If a cell ID returns, exclusively call functions.wait with yield_time_ms=300000 until terminal",
-    "Ready/partial and listed gaps do not themselves authorize reentry",
-    "only a new typed child evidence question exposed by Evidence/edit/check may reenter",
-    "Rejection of one continuation affects only that request",
     "COMMON_DIAGNOSTIC_CHECKPOINT = (",
     "TREATMENT_DIAGNOSTIC_ROUTE = (",
     "CONTROL_DIAGNOSTIC_ROUTE = (",
@@ -1295,12 +1291,18 @@ test("canonical Pier adapter registers direct MCP without legacy CLI wrappers", 
     "EXPLICIT_NATIVE_ONLY_POLICY = (",
   ]) assert.equal(source.includes(fragment), true, `explicit arm policy fragment drifted: ${fragment}`);
   const commonCheckpoint = source.match(/COMMON_DIAGNOSTIC_CHECKPOINT = \(([\s\S]*?)\n\)/u)?.[1] ?? "";
-  assert.match(commonCheckpoint, /whole upcoming phase[\s\S]*many files or substantial content/iu);
-  assert.match(commonCheckpoint, /native repository reading only when[\s\S]*one small bounded read is enough[\s\S]*otherwise call gather_context before searching or reading/iu);
-  assert.match(commonCheckpoint, /Repeat this decision after Evidence, an edit, a check, or another phase change/iu);
-  assert.match(commonCheckpoint, /rejected request affects only that request[\s\S]*different later phase normally/iu);
-  assert.match(source, /TREATMENT_DIAGNOSTIC_ROUTE = \([\s\S]*common whole-phase checkpoint[\s\S]*clearly small bounded phase[\s\S]*never mechanically forced/iu);
-  assert.match(source, /CONTROL_DIAGNOSTIC_ROUTE = \([\s\S]*native repository tools[\s\S]*do not invoke FreeContext/iu);
+  assert.match(commonCheckpoint, /tracked FreeContext skill[\s\S]*gather_context tool description[\s\S]*sole detailed routing authority/iu);
+  assert.match(commonCheckpoint, /Arm assignment does not require a FreeContext call/iu);
+  assert.doesNotMatch(commonCheckpoint, /multi-file|exact path|phase|probability|Evidence-origin|edit|check/iu);
+  assert.match(source, /TREATMENT_DIAGNOSTIC_ROUTE = \([\s\S]*FreeContext is available[\s\S]*does not require a call/iu);
+  assert.match(source, /CONTROL_DIAGNOSTIC_ROUTE = \([\s\S]*FreeContext is unavailable[\s\S]*native repository tools/iu);
+  for (const detail of [
+    "specific next multi-file",
+    "native bounded reads cannot close",
+    "Exact paths",
+    "probability threshold",
+    "Evidence-origin",
+  ]) assert.equal(source.includes(detail), false, `benchmark injection repeats routing detail: ${detail}`);
   for (const retired of [
     "complete unresolved question",
     "same-work-unit follow-up",
@@ -1380,7 +1382,7 @@ test("canonical Pier adapter registers direct MCP without legacy CLI wrappers", 
   assert.match(freeContextConfig, /^\[models\.primary\]$/mu);
   assert.match(freeContextConfig, /^provider = "primary"$/mu);
   assert.match(freeContextConfig, /^model_id = "glm-5\.3-flash"$/mu);
-  assert.match(freeContextConfig, /^thinking_level = "low"$/mu);
+  assert.match(freeContextConfig, /^thinking_level = "high"$/mu);
   assert.match(freeContextConfig, /^supports_reasoning_effort = true$/mu);
   assert.match(freeContextConfig, /^models = \["primary"\]$/mu);
   assert.match(freeContextConfig, /^credential_env = "FREECONTEXT_PROVIDER_API_KEY"$/mu);

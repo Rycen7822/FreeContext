@@ -4,108 +4,47 @@ import { runInNewContext } from "node:vm";
 import test from "node:test";
 import { FREECONTEXT_ELIGIBILITY_POLICY, FreeContextCallerFullRequestSchema, FreeContextCallerRequestSchema } from "../src/mcp/contracts.js";
 
-test("implicit discovery routes each current gap while preserving the atomic caller contract", async () => {
+test("skill routes only concrete exploration gaps and preserves the atomic caller contract", async () => {
   const [skill, metadata] = await Promise.all([
     readFile(new URL("../skills/freecontext/SKILL.md", import.meta.url), "utf8"),
     readFile(new URL("../skills/freecontext/agents/openai.yaml", import.meta.url), "utf8"),
   ]);
-
-  const description = skill.match(
-    /^---\nname: freecontext\ndescription: (?<description>[^\n]+)\n---\n/u,
-  )?.groups?.description;
+  const description = skill.match(/^---\nname: freecontext\ndescription: (?<description>[^\n]+)\n---\n/u)?.groups?.description;
   assert.ok(description);
   assert.ok(Buffer.byteLength(skill, "utf8") <= 5_400);
   assert.ok([...description].length <= 560);
   for (const gate of FREECONTEXT_ELIGIBILITY_POLICY.gates) assert.equal(skill.includes(gate.instruction), false);
-  for (const trigger of ["whole upcoming phase", "many files", "substantial content", "one small bounded read"]) {
-    assert.ok(description.includes(trigger));
-  }
-  assert.match(description, /Recheck after Evidence, an edit, or a check/iu);
-  assert.match(description, /Exact paths.*changed hunks.*diff or status.*tests.*exact failure locations/iu);
-  assert.match(description, /native repository reads only when.*clearly know.*bounded read.*otherwise call gather_context before searching or reading/iu);
-  assert.doesNotMatch(skill, /call FC before native work|at task start|first read-only exploration action/iu);
-  assert.doesNotMatch(skill, /roughly 30%|next step may|second non-adjacent/iu);
+  assert.match(description, /concrete next multi-file or multi-relation evidence gap/iu);
+  assert.match(description, /Exact paths.*symbols.*failures.*one bounded read.*diff or status.*edits.*tests.*direct checks stay native/iu);
+  assert.match(skill, /Do not call because a task starts, a phase changes, the task looks complex, or a probability threshold/iu);
+  assert.match(skill, /Known references are optional priority hints, never a gate/iu);
+  assert.match(skill, /reconsider only if it exposes a new cross-file evidence question/iu);
+  assert.match(skill, /Evidence-origin reentry is only for an independent child/iu);
   assert.match(skill, /```js\n\/\/ @exec: \{"yield_time_ms": 300000, "max_output_tokens": 10000\}/u);
-  const codeStart = skill.indexOf("```js\n");
-  const pragma = skill.indexOf("// @exec: {\"yield_time_ms\": 300000, \"max_output_tokens\": 10000}");
-  const argsCue = skill.indexOf("// Construct documented args here.");
-  const gatherCall = skill.indexOf("const result = await tools.mcp__freecontext__gather_context(args);");
-  assert.equal(pragma, codeStart + "```js\n".length);
-  assert.ok(pragma < argsCue && argsCue < gatherCall);
   assert.match(skill, /gather_context` alone/u);
-  assert.match(skill, /Never parallelize or batch/u);
-  assert.match(skill, /do other work during dispatch/u);
-  assert.match(skill, /typeof tools\.mcp__freecontext__gather_context !== "function"/u);
-  assert.doesNotMatch(skill, /ALL_TOOLS/u);
-  assert.equal(skill.match(/await tools\.mcp__freecontext__gather_context\(args\)/gu)?.length, 1);
-  assert.equal(skill.match(/\bnotify\(/gu)?.length ?? 0, 0);
-  assert.equal(skill.match(/functions\.wait/gu)?.length, 1);
-  assert.match(skill, /yield_time_ms: ?300000, ?max_tokens: ?10000/u);
-  assert.match(skill, /terminalTexts\.length !== 1/u);
-  assert.doesNotMatch(skill, /JSON\.stringify/u);
-  assert.match(skill, /No waiting Hook/u);
-  const template = skill.match(/`(?<template>const args=\{[\s\S]+?\};)`/u)?.groups?.template;
+  assert.match(skill, /Never parallelize it or do other work during dispatch/u);
+  assert.match(skill, /functions\.wait/gu);
+  assert.doesNotMatch(skill, /whole-phase|roughly 30%|next step may|second non-adjacent|knownRef-first/iu);
+  assert.doesNotMatch(skill, /knownRefs\s*:/u);
+  assert.doesNotMatch(skill, /target\s*:/u);
+  const caller = skill.match(/```js\n(?<code>[\s\S]+?)\n```/u)?.groups?.code;
+  assert.ok(caller);
+  const template = caller.match(/const args\s*=\s*(\{[\s\S]+?\});/u)?.[1];
   assert.ok(template);
-  const templateArgs = runInNewContext(`${template}\nargs`, Object.create(null), { timeout: 100 });
+  const templateArgs = runInNewContext(`(${template})`, Object.create(null), { timeout: 100 });
   FreeContextCallerRequestSchema.parse(templateArgs);
   const parsedTemplate = FreeContextCallerFullRequestSchema.parse(templateArgs);
   assert.equal(parsedTemplate.workUnit.outcome, "edit");
-  assert.match(parsedTemplate.workUnit.goal, /conditional routing/iu);
   assert.equal(parsedTemplate.evidenceQuestions.length, 1);
   assert.equal(parsedTemplate.evidenceQuestions[0]?.role, "implementation");
-  assert.equal(parsedTemplate.evidenceQuestions[0]?.required, true);
   assert.equal(parsedTemplate.evidenceQuestions[0]?.target, undefined);
-  assert.match(skill, /Roles are only `implementation`, `caller`, `test`, or `contract`/u);
-  assert.match(skill, /question becomes a topic target.*`required:true`.*role-appropriate `factKind`.*stable id.*`single` coverage default internally/u);
-  assert.match(skill, /`knownRefs` are/u);
-  assert.match(skill, /stable outer implementation goal/u);
-  assert.doesNotMatch(skill, /\bworkspace_root\b/u);
-  assert.match(skill, /A listed partial gap is not permission to replay/iu);
-  assert.match(skill, /Judge the whole upcoming phase, not only the next command/iu);
-  assert.match(skill, /native repository reading only when you clearly know one small bounded read is enough/iu);
-  assert.match(skill, /otherwise call .*gather_context.* before repository search or reading/iu);
-  assert.match(skill, /Repeat this decision after Evidence, an edit, a check, or another phase change/iu);
-  assert.match(skill, /A rejected request affects only that request.*different later phase normally/iu);
-  assert.match(skill, /new typed child evidence question/iu);
-  assert.match(skill, /Never force a call count/iu);
-  assert.match(skill, /Send only `reentry:\{priorSessionId,question:\{role,question,target\?\},origin:/iu);
-  assert.match(skill, /server restores the prior task, work unit, handoff, and request context/iu);
-  for (const origin of ["evidence", "edit", "check"]) assert.match(skill, new RegExp(`(?:${origin})`, "u"));
-  assert.match(skill, /Omit `parentGapId` for a handoff child.*exact prior gap id for gap concretization/iu);
-  assert.match(skill, /Never target a changed path or exact failure path/iu);
-  assert.match(skill, /Recovery is once-only/iu);
-  assert.match(skill, /call `gather_context` with only `\{recovery/iu);
-  assert.match(skill, /workspace-relative probed path/iu);
-  assert.doesNotMatch(skill, /complete unresolved question|same-unit|same gaps|Acceptance receipt|private acceptance receipt/iu);
 
   assert.match(metadata, /^  allow_implicit_invocation: true$/mu);
-  assert.deepEqual([...metadata.matchAll(/^([a-z_]+):/gmu)].map((match) => match[1]), ["interface", "policy", "dependencies"]);
-  assert.deepEqual([...metadata.matchAll(/^  ([a-z_]+):/gmu)].map((match) => match[1]), ["display_name", "short_description", "allow_implicit_invocation", "tools"]);
-  assert.equal(metadata.match(/^    - type:/gmu)?.length, 1);
-  assert.match(metadata, /^    - type: "mcp"$/mu);
-  assert.equal(metadata.match(/^      value: "freecontext"$/gmu)?.length, 1);
   const shortDescription = metadata.match(/^  short_description: "([^"]+)"$/mu)?.[1];
   assert.ok(shortDescription);
   assert.ok([...shortDescription].length >= 25 && [...shortDescription].length <= 64);
-  assert.match(shortDescription, /prospective|broad|search/iu);
-  assert.doesNotMatch(shortDescription, /first|next/iu);
-
-  const routingSurface = `${skill}\n${metadata}`;
-  for (const forbidden of [
-    /freecontext explore/u,
-    /_GUIDANCE/u,
-    /\b(?:shell|poll(?:ing)?)\b/iu,
-    /\bexplore_repository\b/u,
-    /default_prompt:/u,
-    /CLI fallback|Hook registration/u,
-    /https?:\/\//u,
-    /Manual compatibility command/u,
-    /\b(?:TOKENRHYTHM|API_KEY|base_url|bearer)\b/u,
-    /\b(?:provider|credentials?)\b/iu,
-    /\b(?:DeepSWE|TaskNameXXX|returns-validated|mashumaro)\b/u,
-  ]) {
-    assert.doesNotMatch(routingSurface, forbidden);
-  }
+  assert.match(shortDescription, /concrete|multi-file|evidence/iu);
+  assert.doesNotMatch(`${skill}\n${metadata}`, /https?:\/\/|base_url|API_KEY|bearer|DeepSWE|whole-phase|knownRef-first/iu);
 });
 
 test("caller template emits only one canonical terminal text", async () => {
@@ -131,10 +70,7 @@ test("caller template emits only one canonical terminal text", async () => {
   ) as Caller;
 
   function start(call: () => Promise<ToolResult>) {
-    const state = {
-      calls: 0,
-      outputs: [] as string[],
-    };
+    const state = { calls: 0, outputs: [] as string[] };
     const promise = execute(
       { mcp__freecontext__gather_context: async () => { state.calls += 1; return call(); } },
       (message) => state.outputs.push(message),

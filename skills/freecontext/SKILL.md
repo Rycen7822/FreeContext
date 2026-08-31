@@ -1,36 +1,29 @@
 ---
 name: freecontext
-description: Before starting or changing a task phase, judge whether the whole upcoming phase may require searching or reading many files or substantial content. Use native repository reads only when you clearly know one small bounded read is enough; otherwise call gather_context before searching or reading. Recheck after Evidence, an edit, or a check. Exact paths, changed hunks, diff or status, tests, and exact failure locations stay direct when no broader reading is needed.
+description: Use before repository exploration only when the main Agent can state a concrete next multi-file or multi-relation evidence gap that native bounded reads cannot close. Exact paths, symbols, failures, one bounded read, diff or status, edits, tests, and direct checks stay native; reconsider after an edit or check only for a new cross-file question.
 ---
 
 # FreeContext routing
 
-Judge the whole upcoming phase, not only the next command. Do this before starting work and whenever the work changes phase.
+Call `tools.mcp__freecontext__gather_context` only when the main Agent can name a specific next repository exploration spanning multiple files or relationships, and native bounded reads cannot close it. Do not call because a task starts, a phase changes, the task looks complex, or a probability threshold is reached. Known references are optional priority hints, never a gate.
 
-## Choose the route
+Use native repository tools for exact paths, symbols, failure locations, one bounded read, diff/status, edits, tests, and direct checks. After an edit or check, reconsider only if it exposes a new cross-file evidence question. Evidence-origin reentry is only for an independent child exposed by Evidence and needed before acting; prefer edit/check origins and do not broaden the same topic. A verification read of the decisive implementation owner is allowed after Evidence.
 
-- **Direct:** use native repository reading only when you clearly know one small bounded read is enough. Exact locations, changed hunks, Git diff/status, tests, edits, and checks stay direct when they need no broader reading.
-- **Gather:** otherwise call `tools.mcp__freecontext__gather_context` before repository search or reading.
+The main Agent owns edits, checks, Git, packages, and web; FreeContext is read-only. Do not force a call count. Consume returned Evidence and `nextAction` directly. A `ready` or `partial` handoff, a listed gap, or a rejected request does not itself authorize replay or reentry.
 
-Repeat this decision after Evidence, an edit, a check, or another phase change. A rejected request affects only that request; judge a different later phase normally. Never force a call count.
+## One atomic request
 
-The main agent owns edits, checks, Git, packages, and web; FreeContext is read-only.
+Call `gather_context` alone in one cell. Never parallelize it or do other work during dispatch. If an exec cell returns a call ID, exclusively await `functions.wait({cell_id,yield_time_ms:300000,max_tokens:10000})` until terminal.
 
-## Make one atomic request
-
-Call `gather_context` alone in one cell. Never parallelize or batch it or do other work during dispatch. If an exec cell returns, exclusively await `functions.wait({cell_id,yield_time_ms:300000,max_tokens:10000})` until terminal.
-
-`workUnit` names the stable outer implementation goal, not a lookup. Roles are only `implementation`, `caller`, `test`, or `contract`. `knownRefs` are `{kind:"path",path}`, `{kind:"symbol",symbol,path?}`, or `{kind:"stack",path,line}`. Initially provide `role` and `question`; the question becomes a topic target and `required:true`, role-appropriate `factKind`, a stable id, and `single` coverage default internally. Add `target:{subject}` only for a known path, symbol, or topic. For new behavior, ask for the nearest seam without assuming a new symbol.
-
-This compact edit request is parsed by `FreeContextCallerRequestSchema`:
-
-`const args={taskText:"Update routing.",workUnit:{outcome:"edit",goal:"Implement conditional routing without changing the public request contract."},knownRefs:[{kind:"symbol",symbol:"route",path:"src/router.ts"}],evidenceQuestions:[{role:"implementation",question:"Where is the decisive routing branch?"}]};`
-
-One cell:
+`workUnit` names the stable outer goal, not a lookup. Roles are only `implementation`, `caller`, `test`, or `contract`. Initially send only the required `taskText`, `workUnit`, and one `evidenceQuestions` item with `role` and `question`; `knownRefs` and `target` are optional and omitted unless they materially narrow the gap. The server assigns the question and its one target, role-appropriate fact kind, required flag, stable IDs, and `single` coverage default.
 
 ```js
 // @exec: {"yield_time_ms": 300000, "max_output_tokens": 10000}
-// Construct documented args here.
+const args = {
+  taskText: "Trace the repository-wide owner relationship needed for this change.",
+  workUnit: { outcome: "edit", goal: "Implement the requested change without altering its public contract." },
+  evidenceQuestions: [{ role: "implementation", question: "Which concrete multi-file relationship must be verified?" }],
+};
 if (typeof tools.mcp__freecontext__gather_context !== "function") throw new Error("FC unavailable.");
 const result = await tools.mcp__freecontext__gather_context(args);
 const terminalTexts = result?.content?.filter((item) => item?.type === "text") ?? [];
@@ -38,14 +31,8 @@ if (terminalTexts.length !== 1 || typeof terminalTexts[0].text !== "string") thr
 text(terminalTexts[0].text);
 ```
 
-No waiting Hook; no replay/session inspection.
+## Continuation and recovery
 
-## Consume and continue
+For a new typed child question exposed by Evidence, an edit, or a check, send only `reentry:{priorSessionId,question:{role,question,target?},origin:{kind:"evidence"|"edit"|"check",...},knownRefs?,parentGapId?}`. The server restores the prior task, work unit, handoff, and request context. Omit `parentGapId` for a handoff child; provide the exact prior gap ID only for gap concretization. Never target a changed path or exact failure path.
 
-`ready` and `partial` include a handoff. Consume Evidence and `nextAction` directly. Do not reread covered content; one cited or adjacent read is allowed for omitted change-critical context. A listed partial gap is not permission to replay; ready/partial alone never justifies reentry.
-
-After Evidence, an edit, or a check, apply the same whole-phase decision. One exact failure read stays native only when you clearly know it is enough; a new phase that may need many files or substantial content should reenter before searching or reading.
-
-Reenter only for a **new typed child evidence question** exposed by Evidence, an edit, or a check and needing gather-level exploration. A rejected continuation affects only that request and does not disable a different later broad phase. Send only `reentry:{priorSessionId,question:{role,question,target?},origin:{kind:"evidence"|"edit"|"check",...},knownRefs?,parentGapId?}`. The server restores the prior task, work unit, handoff, and request context. Omit `parentGapId` for a handoff child; provide the exact prior gap id for gap concretization. Reusing a prior session, scope/fact, or wrong origin is invalid. Never target a changed path or exact failure path.
-
-For `not_found`, make the exact probe required by `nextAction`, then call `gather_context` with only `{recovery:{priorSessionId:<exact nextAction.recovery.priorSessionId>,probePath:"<workspace-relative probed path>"}}`. Send no `taskText`, `workUnit`, `knownRefs`, `evidenceQuestions`, or handoff; the server restores them from the committed session. Recovery is once-only and invalid after partial, ready, failure, broad exploration, or bypass. With a handoff use typed reentry; fix `INVALID_REQUEST`; never use broad fallback.
+For `not_found`, make the exact probe named by `nextAction`, then send only `{recovery:{priorSessionId:<exact nextAction.recovery.priorSessionId>,probePath:"<workspace-relative probed path>"}}`. Recovery is once-only and invalid after partial, ready, failure, broad exploration, or bypass. Fix `INVALID_REQUEST`; never use a broad fallback.
