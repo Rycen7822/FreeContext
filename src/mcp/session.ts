@@ -1,8 +1,5 @@
-import { readdir, readFile, realpath, stat } from "node:fs/promises";
 import path from "node:path";
 import {
-  FreeContextCallerRequestSchema,
-  FreeContextInvocationContextSchema,
   FreeContextRequestSchema,
   FreeContextResultSchema,
 } from "./contracts.js";
@@ -15,7 +12,6 @@ import type {
 import type { ExplorerCapturedError, ExplorerSessionCapture } from "../runtime/session-capture.js";
 import type { PiSessionEventState } from "../runtime/pi-session.js";
 import { cancelSessionFile, commitSessionFile, reserveSessionFile } from "../session/store.js";
-import { defaultSessionDirectory } from "../session/store.js";
 import type { SessionFileReservation } from "../session/store.js";
 import type { TerminalDecision } from "./lifecycle.js";
 
@@ -47,66 +43,6 @@ export interface McpSessionDocument {
 
 export interface McpSessionCommit {
   readonly sessionFile: string;
-}
-
-export type CommittedContinuationResolution = Readonly<{
-  accepted: true;
-  reason: string;
-  request: Readonly<FreeContextRequest>;
-}> | Readonly<{
-  accepted: false;
-  reason: string;
-}>;
-
-async function findSession(
-  sessionDirectory: string,
-  sessionId: string,
-  workspaceRoot: string,
-): Promise<McpSessionDocument | null> {
-  const canonicalWorkspace = await realpath(workspaceRoot).catch(() => null);
-  if (!canonicalWorkspace) return null;
-  let names: string[];
-  try { names = (await readdir(sessionDirectory)).filter((name) => name.endsWith(".json")); } catch { return null; }
-  for (const name of names) {
-    try {
-      const text = await readFile(path.join(sessionDirectory, name), "utf8");
-      const value: unknown = JSON.parse(text);
-      if (!value || typeof value !== "object") continue;
-      const document = value as McpSessionDocument;
-      if (document.schemaVersion !== "freecontext-mcp-session-v4" || document.transport !== "mcp") continue;
-      if (document.invocation.sessionId !== sessionId || path.resolve(document.invocation.workspaceRoot) !== canonicalWorkspace) continue;
-      if (!FreeContextInvocationContextSchema.safeParse(document.invocation).success
-        || !FreeContextRequestSchema.safeParse(document.request).success
-        || !FreeContextResultSchema.safeParse(document.result).success) continue;
-      return document;
-    } catch { /* Ignore unrelated or incomplete files. */ }
-  }
-  return null;
-}
-
-export async function restoreCommittedContinuation({
-  sessionId,
-  question,
-  hints,
-  workspaceRoot,
-  sessionDirectory = defaultSessionDirectory(),
-}: Readonly<{
-  sessionId: string;
-  question: string;
-  hints?: string;
-  workspaceRoot: string;
-  sessionDirectory?: string;
-}>): Promise<CommittedContinuationResolution> {
-  const prior = await findSession(sessionDirectory, sessionId, workspaceRoot);
-  if (!prior) return Object.freeze({ accepted: false, reason: "Continuation session is not available in this workspace." });
-  const priorText = prior.result.text.trim();
-  const inheritedHints = priorText ? `Prior FreeContext answer:\n${priorText}` : undefined;
-  const combinedHints = [hints?.trim(), inheritedHints].filter((value): value is string => Boolean(value)).join("\n\n");
-  const request = FreeContextCallerRequestSchema.parse({
-    question,
-    ...(combinedHints ? { hints: combinedHints.slice(0, 4_000) } : {}),
-  });
-  return Object.freeze({ accepted: true, reason: "Continuation restored prior answer context.", request: Object.freeze(request) });
 }
 
 export async function reserveMcpSession({

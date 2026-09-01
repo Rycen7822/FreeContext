@@ -20,19 +20,7 @@ Send one small object:
 
 The worker returns ordinary assistant text directly. Treat it as useful context, not as a response schema or item limit. Consume the answer, verify only positions that matter, and keep ownership of edits and checks in the main agent.
 
-## Continuation
-
-To ask a follow-up, send the latest `sessionId` with a new question and optional hints:
-
-```js
-{
-  sessionId: "<prior session id>",
-  question: "What is the caller's error path?",
-  hints: "Optional focus"
-}
-```
-
-Continuation inherits the prior answer as context. A missing or stale session is an ordinary failed request; continue with native exploration.
+If information from an earlier FreeContext call is needed, put it directly into the new `question` or `hints`.
 
 ## Dispatch
 

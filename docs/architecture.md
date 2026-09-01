@@ -2,7 +2,7 @@
 
 ## Scope
 
-FreeContext performs one operation: read-only repository exploration for a parent coding agent. The public boundary accepts `{question, hints?, sessionId?}`. The worker's ordinary assistant text is returned directly; no result schema sits between worker and parent.
+FreeContext performs one operation: read-only repository exploration for a parent coding agent. The public boundary accepts `{question, hints?}`. The worker's ordinary assistant text is returned directly; no result schema sits between worker and parent.
 
 ## Runtime layers
 
@@ -31,9 +31,9 @@ The default catalog is `$XDG_CONFIG_HOME/freecontext/config.toml`, falling back 
 
 The route resolver may try a later target only for an allowed transient provider failure before useful text or accepted tool work exists. Provider errors are redacted before they leave the runtime. Model context compaction is an internal optimization, not a result-format stage.
 
-## Context and continuation
+## Context and session records
 
-The worker receives its own search transcript and tool outputs. The parent receives only the final text. A committed private session keeps the request, invocation identity, result text, and diagnostic capture needed for a follow-up; continuation looks up `sessionId`, adds the prior answer as context, and runs a new question without a separate ancestry or replay protocol.
+The worker receives its own search transcript and tool outputs. The parent receives only the final text. A committed private session keeps the request, invocation identity, result text, and diagnostic capture for transport, debugging, and benchmark association. If earlier findings matter, the parent places them directly in a new question or hints.
 
 ## Soft finalization and failure
 

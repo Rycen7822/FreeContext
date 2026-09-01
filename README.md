@@ -18,7 +18,7 @@ The repository-exploration protocol is based on [FastContext: Training Efficient
 
 ### Core Contract
 
-The public MCP request is `{ question, hints?, sessionId? }`. The worker returns ordinary assistant text directly; the transport does not parse, size-fit, or validate a result format. The MCP content appends a short `Session: <id>` line so the main agent can continue with that id when useful. Formatting guidance lives in the worker system prompt.
+The public MCP request is `{ question, hints? }`. The worker returns ordinary assistant text directly; the transport does not parse, size-fit, or validate a result format. The MCP content appends a short `Session: <id>` line for transport and benchmark association; put any needed prior findings directly into a new question or hints value. Formatting guidance lives in the worker system prompt.
 
 ### Architecture
 
@@ -288,7 +288,7 @@ FreeContext 是面向 Codex 的只读代码仓库探索子代理。它把高噪�
 
 ### 核心契约
 
-公开 MCP 请求只有 `{ question, hints?, sessionId? }`。worker 直接返回普通 assistant 文本；传输层不解析、不拟合大小，也不验证结果格式。MCP content 末尾附加短的 `Session: <id>` 行，主代理需要继续追问时可使用该 id。输出风格只由 worker 的 system prompt 提示。
+公开 MCP 请求只有 `{ question, hints? }`。worker 直接返回普通 assistant 文本；传输层不解析、不拟合大小，也不验证结果格式。MCP content 末尾附加短的 `Session: <id>` 行，用于传输和 benchmark 关联；如需带入上一轮信息，主代理应直接放入新的 question 或 hints。输出风格只由 worker 的 system prompt 提示。
 
 ### 架构
 

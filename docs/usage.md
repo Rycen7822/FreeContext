@@ -13,16 +13,9 @@ The public request is intentionally small:
 }
 ```
 
-`hints` is optional. A continuation adds `sessionId` from the prior MCP result and sends a new question:
+`hints` is optional. If earlier FreeContext findings matter, put them directly into a new question or hints value.
 
-```json
-{
-  "sessionId": "<prior session id>",
-  "question": "Which caller handles the provider error?"
-}
-```
-
-The worker returns ordinary assistant text directly in the MCP content. Formatting guidance is a prompt hint, not a response schema. The response ends with a visible `Session: <id>` line and may repeat that id in MCP metadata; use either value for continuation. The private session file stores the context needed to inherit the prior answer.
+The worker returns ordinary assistant text directly in the MCP content. Formatting guidance is a prompt hint, not a response schema. The response ends with a visible `Session: <id>` line and may repeat that id in MCP metadata for transport and benchmark association. The private session file stores the invocation record and diagnostic capture.
 
 ## Routing
 

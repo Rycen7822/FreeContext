@@ -9,7 +9,6 @@ import { createDeadlineClock, createTerminalStore, SINGLE_CALL_DEADLINE_MS } fro
 import type { DeadlineClock, TerminalStore } from "./lifecycle.js";
 import { executeSingleCall } from "./single-call.js";
 import type { SingleCallDependencies } from "./single-call.js";
-import { restoreCommittedContinuation } from "./session.js";
 
 export interface SingleFlightExecutor {
   run<T>(task: () => Promise<T>): Promise<T>;
@@ -103,21 +102,7 @@ export function createGatherContextHandler(
     } catch (error) {
       return callResult(failedResult({ code: "INVALID_REQUEST", reason: safeRequestSchemaReason(error), sessionId: callContext.invocationId, sessionFile: null }));
     }
-    let request: Readonly<FreeContextCallerRequest>;
-    if (callerRequest.sessionId) {
-      const resolution = await restoreCommittedContinuation({
-        sessionId: callerRequest.sessionId,
-        question: callerRequest.question,
-        ...(callerRequest.hints ? { hints: callerRequest.hints } : {}),
-        workspaceRoot: callContext.workspaceRoot,
-        ...(dependencies.sessionDirectory ? { sessionDirectory: dependencies.sessionDirectory } : {}),
-      });
-      if (!resolution.accepted) return callResult(failedResult({ code: "INVALID_REQUEST", reason: resolution.reason, sessionId: callContext.invocationId, sessionFile: null }));
-      request = resolution.request;
-    } else {
-      request = Object.freeze(callerRequest);
-    }
-    const completed = await executeSingleCall(request, callContext, externalSignal, {
+    const completed = await executeSingleCall(callerRequest, callContext, externalSignal, {
       ...dependencies,
       terminalStore,
       deadlineClock,

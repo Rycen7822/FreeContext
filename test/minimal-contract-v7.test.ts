@@ -5,7 +5,6 @@ import test from "node:test";
 import type { FreeContextResult } from "../src/mcp/contracts.js";
 import { FreeContextCallerRequestSchema } from "../src/mcp/contracts.js";
 import { createTerminalStore, type DeadlineClock } from "../src/mcp/lifecycle.js";
-import { commitMcpSession, restoreCommittedContinuation, reserveMcpSession } from "../src/mcp/session.js";
 import { executeSingleCall } from "../src/mcp/single-call.js";
 import { createGatherContextHandler } from "../src/mcp/tool.js";
 import { compileFreeContextResult } from "../src/output/text-result.js";
@@ -25,17 +24,18 @@ const invocation = {
   sessionFile: "/sessions/session-v7.json",
 } as const;
 
-test("the public request is only a question with optional hints and continuation id", () => {
-  const parsed = FreeContextCallerRequestSchema.parse({ question: "Trace this behavior", hints: "src/index.ts", sessionId: "s1" });
-  assert.deepEqual(Object.keys(parsed).sort(), ["hints", "question", "sessionId"]);
+test("the public request is only a question with optional hints", () => {
+  const parsed = FreeContextCallerRequestSchema.parse({ question: "Trace this behavior", hints: "src/index.ts" });
+  assert.deepEqual(Object.keys(parsed).sort(), ["hints", "question"]);
+  assert.throws(() => FreeContextCallerRequestSchema.parse({ question: "Trace this behavior", sessionId: "s1" }));
   assert.throws(() => FreeContextCallerRequestSchema.parse({ question: "" }));
 });
 
-test("the tracked skill routes the minimal continuation contract", async () => {
+test("the tracked skill routes the minimal direct request contract", async () => {
   const skill = await readFile(new URL("../skills/freecontext/SKILL.md", import.meta.url), "utf8");
   const metadata = await readFile(new URL("../skills/freecontext/agents/openai.yaml", import.meta.url), "utf8");
   assert.match(skill, /gather_context/);
-  assert.match(skill, /sessionId/);
+  assert.doesNotMatch(skill, /sessionId|continuation/iu);
   assert.match(skill, /ordinary assistant text/iu);
   assert.match(metadata, /FreeContext/iu);
 });
@@ -93,59 +93,6 @@ test("the session id is visible in the ordinary MCP text content", async () => {
     const invalidContent = invalid.content[0];
     assert.equal(invalidContent?.type, "text");
     if (invalidContent?.type === "text") assert.doesNotMatch(invalidContent.text, /Session:/u);
-  } finally {
-    await rm(testRoot, { recursive: true, force: true });
-  }
-});
-
-test("continuation inherits the prior answer while taking a new question", async () => {
-  const testRoot = await mkdtemp(path.join(process.cwd(), ".work", "fc-v7-test-"));
-  const workspaceRoot = path.join(testRoot, "workspace");
-  const sessionDirectory = path.join(testRoot, "sessions");
-  await mkdir(workspaceRoot);
-  try {
-    const request = FreeContextCallerRequestSchema.parse({ question: "Initial question" });
-    const reservation = await reserveMcpSession({
-      request,
-      invocationId: "invocation-v7",
-      callId: "call-v7",
-      workspaceRoot,
-      workspaceRevision: "revision-v7",
-      sessionDirectory,
-    });
-    const terminalStore = createTerminalStore();
-    const decision = terminalStore.tryClaim({
-      invocationId: reservation.invocation.invocationId,
-      winner: "worker",
-      decidedAt: new Date(0).toISOString(),
-      lateDiagnosticFile: null,
-    });
-    assert.ok(decision);
-    await commitMcpSession({
-      reservation,
-      capture: null,
-      runtimeEvents: [],
-      result: {
-        status: "complete",
-        text: "Prior answer with src/owner.ts:10 — owner — fact.",
-        errorCode: null,
-        sessionId: reservation.invocation.sessionId,
-        sessionFile: reservation.invocation.sessionFile,
-      },
-      terminalDecision: decision,
-      terminalError: null,
-    });
-    const restored = await restoreCommittedContinuation({
-      sessionId: reservation.invocation.sessionId,
-      question: "Follow-up question",
-      workspaceRoot,
-      sessionDirectory,
-    });
-    assert.equal(restored.accepted, true);
-    if (restored.accepted) {
-      assert.equal(restored.request.question, "Follow-up question");
-      assert.match(restored.request.hints ?? "", /Prior FreeContext answer/);
-    }
   } finally {
     await rm(testRoot, { recursive: true, force: true });
   }

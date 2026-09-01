@@ -183,3 +183,10 @@ Do not copy early task or Slice execution logs into this file. Keep only reusabl
 - 规模结果：The tracked diff deletes roughly 16.9k lines and 34 retired paths while adding roughly 0.7k lines, including five focused replacement tests. Runtime capture no longer stores the same event stream twice and dead policy/overflow metrics were removed.
 - 结论/下一步：Candidate v7 is locally qualified as a much smaller, deliberately breaking contract. It has no new provider, Pi, benchmark, correctness, token, or wall-time evidence. Any later live comparison must use a fresh direct authorization and treat prior v1-v6 sessions as historical artifacts rather than current continuation inputs.
 - 已知边界：Prompt-only formatting is intentionally best-effort; precise wording or section shape is not a validity gate. Internal host envelopes still carry status, text, error code, session id, and optional session file for transport and debugging, but model text remains opaque. No merge, release, or publication is authorized by this entry.
+
+### 2026-09-02 — Remove unused Candidate v7 answer inheritance
+
+- 日期：2026-09-02
+- 目标/问题：真实 Candidate v7 记录为 15/15 initial、0 continuation；上一轮 session answer inheritance 没有被使用，因此移除这条未使用的调用路径。
+- 通用改动：公开 caller/MCP 请求收敛为必填 `question` 与可选 `hints`，严格拒绝 `sessionId`；删除 continuation 恢复函数、分支及其 session 扫描读取逻辑。内部 session 记录、结果身份字段和 benchmark 关联保持不变；需要上一轮信息时由主 Agent 直接放入新的 question/hints。
+- 验证与边界：这是本地合同简化，没有新的 live benchmark 数据，不能据此声称性能收益。

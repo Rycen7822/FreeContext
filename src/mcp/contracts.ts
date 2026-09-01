@@ -1,10 +1,9 @@
 import { z } from "zod";
 
-/** Public request: one question, optional hint, and an optional prior session. */
+/** Public request: one question and optional hints. */
 export const FreeContextCallerRequestSchema = z.object({
   question: z.string().trim().min(1).max(16_000),
   hints: z.string().trim().max(4_000).optional(),
-  sessionId: z.string().trim().min(1).max(256).optional(),
 }).strict();
 
 export const FreeContextRequestSchema = FreeContextCallerRequestSchema;
@@ -57,14 +56,15 @@ export const FreeContextResultSchema = z.object({
 export type FreeContextResult = z.infer<typeof FreeContextResultSchema>;
 
 export const TOOL_DESCRIPTION = [
-  "Read-only repository investigator. Send {question, hints?, sessionId?}.",
+  "Read-only repository investigator. Send {question, hints?}.",
   "Use for one concrete question crossing multiple non-adjacent owners or relationships.",
+  "Put any needed prior findings directly into the new question or hints.",
   "The worker returns its ordinary assistant answer directly; response wording is not schema-validated.",
   "Use native tools for exact paths, symbols, local failures, edits, tests, and one or two bounded reads.",
 ].join(" ");
 
 export const SERVER_INSTRUCTIONS = [
-  "FreeContext accepts one question, optional hints, and optional sessionId for continuation.",
+  "FreeContext accepts one question and optional hints. Put any needed prior findings directly into them.",
   "It is read-only. The worker's assistant text is returned directly.",
   "The answer may include precise path:line locations and a short Unknown section when needed.",
 ].join(" ");

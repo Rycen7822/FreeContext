@@ -25,7 +25,7 @@ The adapter copies only the extracted key to a task-owned mode-`0600` secret; it
 
 ## Preserved artifacts
 
-Each MCP result is one ordinary text content item. The worker may include concise `path:line` facts; the host appends `Session: <id>` as the final line. The main agent awaits the one `gather_context` call and may pass that id in a later `{sessionId, question, hints?}` continuation.
+Each MCP result is one ordinary text content item. The worker may include concise `path:line` facts; the host appends `Session: <id>` as the final line for transport and benchmark association. The main agent awaits the one `gather_context` call; any needed prior findings must be placed directly into a later `question` or `hints` value.
 
 After Codex exits, the adapter preserves these artifacts under Pier's task `agent/` directory:
 
