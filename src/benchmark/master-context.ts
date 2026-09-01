@@ -1,4 +1,5 @@
 import { readdir, readFile, realpath, writeFile } from "node:fs/promises";
+import { isDeepStrictEqual } from "node:util";
 import path from "node:path";
 import {
   FreeContextInvocationContextSchema,
@@ -52,6 +53,10 @@ interface RecordValue {
 interface RawCall {
   readonly callId: string | null;
   readonly request: RecordValue;
+  readonly currentCallEnd: boolean;
+  readonly deliveredSessionId: string | null;
+  readonly hasDeliveredSessionId: boolean;
+  readonly outputText: string | null;
 }
 
 function isRecord(value: unknown): value is RecordValue {
@@ -64,7 +69,13 @@ function stringValue(value: unknown): string | null {
 
 function callId(value: RecordValue): string | null {
   const candidate = value.call_id ?? value.callId ?? value.id;
-  return typeof candidate === "string" || typeof candidate === "number" ? String(candidate) : null;
+  if (typeof candidate === "string") return candidate.trim() ? candidate : null;
+  return typeof candidate === "number" ? String(candidate) : null;
+}
+
+function canonicalRequest(value: unknown): RecordValue | null {
+  const parsed = FreeContextRequestSchema.safeParse(value);
+  return parsed.success ? parsed.data : null;
 }
 
 function parseArguments(value: unknown): RecordValue | null {
@@ -99,9 +110,52 @@ function walk(value: unknown, visitor: (record: RecordValue) => void, depth = 0)
   for (const child of [value.payload, value.event, value.item]) walk(child, visitor, depth + 1);
 }
 
+function sameRecordOutput(record: RecordValue): string | null {
+  for (const candidate of [record.result, record.output, record.content]) {
+    const text = textBlocks(candidate);
+    if (text.length > 0) return text.join("\n");
+  }
+  return null;
+}
+
+function structuredDeliveredSession(record: RecordValue): {
+  readonly sessionId: string | null;
+  readonly present: boolean;
+} {
+  const values: unknown[] = [];
+  const inspect = (value: unknown, depth = 0): void => {
+    if (depth > 6 || value === null || value === undefined || !isRecord(value)) return;
+    const meta = value._meta;
+    if (isRecord(meta) && isRecord(meta.freecontext) && Object.hasOwn(meta.freecontext, "sessionId")) {
+      values.push(meta.freecontext.sessionId);
+    }
+    for (const child of Object.values(value)) inspect(child, depth + 1);
+  };
+  inspect(record.result);
+  if (values.length === 0) return { sessionId: null, present: false };
+  if (values.some((value) => typeof value !== "string" || value.trim().length === 0)) {
+    throw new Error("Invalid structured FreeContext delivered session ID in raw call-end result.");
+  }
+  const uniqueValues = new Set(values as string[]);
+  if (uniqueValues.size > 1) {
+    throw new Error("Conflicting structured FreeContext delivered session IDs in raw call-end result.");
+  }
+  return { sessionId: values[0] as string, present: true };
+}
+
+function endsWithSessionMarker(text: string, sessionId: string): boolean {
+  const marker = `Session: ${sessionId}`;
+  const withoutFinalNewline = text.endsWith("\r\n")
+    ? text.slice(0, -2)
+    : text.endsWith("\n") || text.endsWith("\r")
+      ? text.slice(0, -1)
+      : text;
+  return withoutFinalNewline === marker || withoutFinalNewline.endsWith(`\n${marker}`) || withoutFinalNewline.endsWith(`\r${marker}`);
+}
+
 function collectRawCalls(rawJsonl: string): readonly RawCall[] {
   const calls: RawCall[] = [];
-  const seen = new Set<string>();
+  const callsById = new Map<string, RawCall>();
   for (const line of rawJsonl.split(/\r?\n/u)) {
     if (!line.trim()) continue;
     let parsed: unknown;
@@ -110,15 +164,42 @@ function collectRawCalls(rawJsonl: string): readonly RawCall[] {
       const invocation = isRecord(record.invocation) ? record.invocation : null;
       const name = record.name ?? record.tool ?? invocation?.tool;
       const server = record.server ?? invocation?.server;
-      if (server !== undefined && server !== "freecontext") return;
+      const currentCallEnd = record.type === "mcp_tool_call_end";
+      if (typeof record.type === "string" && record.type.startsWith("mcp_tool_call_") && !currentCallEnd) return;
+      if (currentCallEnd && server !== "freecontext") return;
+      if (!currentCallEnd && server !== undefined && server !== "freecontext") return;
       if (name !== "gather_context") return;
       const request = parseArguments(record.arguments ?? record.input ?? record.params ?? invocation?.arguments);
-      if (!request) return;
+      const canonical = canonicalRequest(request);
+      if (!canonical) return;
       const id = callId(record);
-      const key = `${id ?? "anonymous"}:${JSON.stringify(request)}`;
-      if (seen.has(key)) return;
-      seen.add(key);
-      calls.push({ callId: id, request });
+      const delivered = currentCallEnd ? structuredDeliveredSession(record) : { sessionId: null, present: false };
+      const candidate: RawCall = {
+        callId: id,
+        request: canonical,
+        currentCallEnd,
+        deliveredSessionId: delivered.sessionId,
+        hasDeliveredSessionId: delivered.present,
+        outputText: currentCallEnd ? sameRecordOutput(record) : null,
+      };
+      if (id === null) {
+        calls.push(candidate);
+        return;
+      }
+      const previous = callsById.get(id);
+      if (previous) {
+        const sameSemantics = previous.currentCallEnd === candidate.currentCallEnd &&
+          isDeepStrictEqual(previous.request, candidate.request) &&
+          previous.deliveredSessionId === candidate.deliveredSessionId &&
+          previous.hasDeliveredSessionId === candidate.hasDeliveredSessionId &&
+          previous.outputText === candidate.outputText;
+        if (!sameSemantics) {
+          throw new Error(`Conflicting raw FreeContext call records share call ID ${id}.`);
+        }
+        return;
+      }
+      callsById.set(id, candidate);
+      calls.push(candidate);
     });
   }
   return calls;
@@ -199,15 +280,35 @@ export async function exportMasterAgentContext({
     let session: McpSessionDocument | null = null;
     try { session = parseSession(JSON.parse(await readFile(filePath, "utf8"))); } catch { continue; }
     if (!session) continue;
-    const matchingCall = rawCalls.find((call) => call.callId === session?.invocation.callId);
+    const request = canonicalRequest(session.request);
+    const currentMatches = request
+      ? rawCalls.filter((call) => call.currentCallEnd &&
+          call.callId !== null &&
+          isDeepStrictEqual(call.request, request) &&
+          call.deliveredSessionId === session?.invocation.sessionId &&
+          call.outputText !== null &&
+          endsWithSessionMarker(call.outputText, session.invocation.sessionId))
+      : [];
+    if (currentMatches.length > 1) {
+      throw new Error(`Ambiguous current FreeContext gather_context call-end records for session ${session.invocation.sessionId}: ${filePath}`);
+    }
+    const legacyMatches = rawCalls.filter((call) => !call.currentCallEnd &&
+      !call.hasDeliveredSessionId &&
+      call.callId === session?.invocation.callId &&
+      request !== null &&
+      isDeepStrictEqual(call.request, request));
+    if (currentMatches.length === 0 && legacyMatches.length > 1) {
+      throw new Error(`Ambiguous legacy FreeContext gather_context records for session ${session.invocation.sessionId}: ${filePath}`);
+    }
+    const matchingCall = currentMatches[0] ?? legacyMatches[0];
     if (!matchingCall && !allowUnreferencedSessions) {
       throw new Error(`Committed FreeContext session is not referenced by a master-agent gather_context call: ${filePath}`);
     }
     const timing = sessionTiming(session);
-    const output = outputForSession(rawJsonl, session.invocation.sessionId);
+    const output = matchingCall?.outputText ?? outputForSession(rawJsonl, session.invocation.sessionId);
     const sessionPath = relative(root, filePath);
     freeContextCalls.push(Object.freeze({
-      callId: session.invocation.callId || matchingCall?.callId || null,
+      callId: matchingCall?.callId ?? null,
       promptToFreeContext: JSON.stringify(session.request),
       outputToMasterAgent: output,
       fullSessionFile: sessionPath,
@@ -219,7 +320,7 @@ export async function exportMasterAgentContext({
     }));
     freeContextTransport.push(Object.freeze({
       schemaVersion: "freecontext-transport-observation-v1",
-      callId: session.invocation.callId || matchingCall?.callId || null,
+      callId: matchingCall?.callId ?? null,
       sessionId: session.invocation.sessionId,
       reminderCount: 0,
       sameCellWaitCount: 0,

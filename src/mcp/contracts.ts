@@ -57,14 +57,18 @@ export type FreeContextResult = z.infer<typeof FreeContextResultSchema>;
 
 export const TOOL_DESCRIPTION = [
   "Read-only repository investigator. Send {question, hints?}.",
-  "Use for one concrete question crossing multiple non-adjacent owners or relationships.",
-  "Put any needed prior findings directly into the new question or hints.",
-  "The worker returns its ordinary assistant answer directly; response wording is not schema-validated.",
-  "Use native tools for exact paths, symbols, local failures, edits, tests, and one or two bounded reads.",
+  "At any phase, use it before expanding reading when the whole source-understanding question crosses multiple non-adjacent owners or relationships.",
+  "One or two known or changed files and exact compiler/test failures stay native; known paths do not make a multi-file consistency audit local.",
+  "Only facts that hints clearly describe as previously checked are settled; paths and symbols are leads that may be checked as needed.",
+  "Treat returned facts as already-read navigation context, not automatically correct; open only locations to edit, verify decisive or change-critical claims as needed, or resolve uncertainty, without broadly replaying exploration.",
+  "Use a differential audit only when hints describe prior reads or edits; with no prior findings, answer the question normally. Do not repeat the same question; each later call must target a genuinely new gap.",
+  "The worker returns ordinary assistant text directly; wording is not schema-validated or quota-fitted.",
+  "Call it alone; begin the first gather code-mode cell with `// @exec: {\"yield_time_ms\": 300000, \"max_output_tokens\": 12000}`. If it returns a cell, call the outer wait tool with its cell_id, yield_time_ms 300000, and max_tokens 12000; on failure continue natively.",
 ].join(" ");
 
 export const SERVER_INSTRUCTIONS = [
-  "FreeContext accepts one question and optional hints. Put any needed prior findings directly into them.",
+  "FreeContext accepts one question and optional hints; use it at any phase before expanding a genuinely cross-module source-understanding question.",
   "It is read-only. The worker's assistant text is returned directly.",
-  "The answer may include precise path:line locations and a short Unknown section when needed.",
+  "Only facts clearly described in hints as previously checked are settled; returned facts are navigation context, not automatically correct. On failure continue natively and do not repeat the same question.",
+  "Use a differential audit only when hints describe prior reads or edits; with no prior findings, answer normally.",
 ].join(" ");

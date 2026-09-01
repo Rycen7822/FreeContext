@@ -3,11 +3,12 @@ import { mkdir, mkdtemp, readFile, readdir, rm } from "node:fs/promises";
 import path from "node:path";
 import test from "node:test";
 import type { FreeContextResult } from "../src/mcp/contracts.js";
-import { FreeContextCallerRequestSchema } from "../src/mcp/contracts.js";
+import { FreeContextCallerRequestSchema, SERVER_INSTRUCTIONS, TOOL_DESCRIPTION } from "../src/mcp/contracts.js";
 import { createTerminalStore, type DeadlineClock } from "../src/mcp/lifecycle.js";
 import { executeSingleCall } from "../src/mcp/single-call.js";
 import { createGatherContextHandler } from "../src/mcp/tool.js";
 import { compileFreeContextResult } from "../src/output/text-result.js";
+import { buildUserPrompt } from "../src/prompt.js";
 import { FINALIZATION_SYSTEM_PROMPT } from "../src/runtime/finalization.js";
 import { runPiSession } from "../src/runtime/pi-session.js";
 import { createModel, createRequestOptions } from "../src/runtime/model.js";
@@ -31,12 +32,15 @@ test("the public request is only a question with optional hints", () => {
   assert.throws(() => FreeContextCallerRequestSchema.parse({ question: "" }));
 });
 
-test("the tracked skill routes the minimal direct request contract", async () => {
+test("the tracked skill and tool keep the phase-aware minimal request contract", async () => {
   const skill = await readFile(new URL("../skills/freecontext/SKILL.md", import.meta.url), "utf8");
   const metadata = await readFile(new URL("../skills/freecontext/agents/openai.yaml", import.meta.url), "utf8");
   assert.match(skill, /gather_context/);
   assert.doesNotMatch(skill, /sessionId|continuation/iu);
   assert.match(skill, /ordinary assistant text/iu);
+  assert.match(`${skill}\n${TOOL_DESCRIPTION}\n${SERVER_INSTRUCTIONS}`, /any phase/iu);
+  assert.match(TOOL_DESCRIPTION, /whole source-understanding question/iu);
+  assert.doesNotMatch(`${TOOL_DESCRIPTION}\n${SERVER_INSTRUCTIONS}`, /sessionId|continuation|typed reentry/iu);
   assert.match(metadata, /FreeContext/iu);
 });
 
@@ -120,6 +124,48 @@ test("the router and explorer run one ordinary-text success path", async () => {
     });
     assert.equal(result.status, "complete");
     assert.equal(result.text, "router answer");
+  } finally {
+    await rm(testRoot, { recursive: true, force: true });
+  }
+});
+
+test("hints and previously checked findings reach the worker without relabeling leads", async () => {
+  const testRoot = await mkdtemp(path.join(process.cwd(), ".work", "fc-v8-hints-"));
+  const workspace = await createWorkspace(testRoot);
+  const request = FreeContextCallerRequestSchema.parse({
+    question: "Find untouched consumers and alternate paths after the changed parser seam.",
+    hints: "Previously checked fact: parser behavior was read; lead path: src/parser.ts; changed path to check: src/lexer.ts.",
+  });
+  let receivedPrompt = "";
+  let receivedSystemPrompt = "";
+  try {
+    const answer = assistantText("differential audit answer");
+    const result = await runExplorer({
+      request,
+      invocation: { ...invocation, workspaceRoot: workspace.root },
+      dependencies: {
+        routeConfig: baseRouteConfig([baseConfig({ contextCompactionEnabled: false })]),
+        workspace,
+        bindings: fakeBindings(async (prompts, context, _loopConfig, emit) => {
+          const firstPrompt = prompts[0];
+          receivedPrompt = firstPrompt?.role === "user" && typeof firstPrompt.content === "string"
+            ? firstPrompt.content
+            : "";
+          receivedSystemPrompt = context.systemPrompt;
+          await emit({ type: "turn_end", message: answer, toolResults: [] });
+          return [...prompts, answer];
+        }),
+        repositoryTools: { tools: [], names: [], executables: { rg: null, jq: null, bat: null } },
+        tokenCounter: { countBatch: async (texts) => texts.map((text) => text.length) },
+      },
+    });
+    assert.equal(result.status, "complete");
+    assert.equal(receivedPrompt, buildUserPrompt(request));
+    assert.match(receivedPrompt, /Hints: Previously checked fact: parser behavior was read/iu);
+    assert.doesNotMatch(receivedPrompt, /already-known findings|\bconfirmed:\b|\bverified:\b/iu);
+    assert.match(receivedPrompt, /src\/parser\.ts.*src\/lexer\.ts/iu);
+    assert.match(receivedSystemPrompt, /differential audit/iu);
+    assert.match(receivedSystemPrompt, /untouched consumers/iu);
   } finally {
     await rm(testRoot, { recursive: true, force: true });
   }

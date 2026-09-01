@@ -1,6 +1,6 @@
 interface:
   display_name: "FreeContext"
-  short_description: "Route cross-module repository questions to a concise read-only worker"
+  short_description: "Route phase-aware cross-module repository questions to a concise read-only worker"
 policy:
   allow_implicit_invocation: true
 dependencies:

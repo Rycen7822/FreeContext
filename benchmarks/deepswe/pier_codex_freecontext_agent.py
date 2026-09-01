@@ -48,17 +48,17 @@ COMMON_TASK_EFFECT_POLICY = (
 )
 COMMON_DIAGNOSTIC_CHECKPOINT = (
     "[Benchmark common FreeContext routing reference]\n"
-    "When available, the tracked FreeContext skill and enabled gather_context tool description are the sole detailed routing authority. Arm assignment does not require a FreeContext call."
+    "When available, the tracked FreeContext skill and enabled gather_context description are the detailed phase-aware routing authority. Arm assignment does not require a FreeContext call."
 )
 TREATMENT_DIAGNOSTIC_ROUTE = (
-    "FreeContext is available in this treatment; arm assignment does not require a call."
+    "FreeContext is available in this treatment; follow the tracked phase-aware routing guidance, and arm assignment does not require a call."
 )
 CONTROL_DIAGNOSTIC_ROUTE = (
     "FreeContext is unavailable in this control arm; use native repository tools."
 )
 CONDITIONAL_FC_TREATMENT_POLICY = (
     "[Benchmark arm policy: conditional_fc_treatment]\n"
-    "FreeContext is available in this treatment. When the tracked skill and gather_context description select it, call gather_context as the only tool in that assistant batch/code cell with {question, hints?}. Never parallelize or do other work during dispatch. Await the single terminal result. The worker returns ordinary assistant text directly. Put any needed prior findings directly into the new question or hints."
+    "FreeContext is available in this treatment. When the tracked skill and gather_context description select it, call gather_context alone with {question, hints?}; begin the first gather code-mode cell with `// @exec: {\"yield_time_ms\": 300000, \"max_output_tokens\": 12000}`. Await the terminal result; if it still returns a cell, call the outer wait tool with its returned cell_id, yield_time_ms 300000, and max_tokens 12000, with no native work during the wait. Continue natively on failure and do not repeat the same question."
     "\n"
     + TREATMENT_DIAGNOSTIC_ROUTE
 )

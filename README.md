@@ -8,7 +8,7 @@ FreeContext is a read-only repository-exploration subagent for Codex. It offload
 
 The project uses a **skill + headless CLI** design:
 
-- The Codex skill decides when to delegate broad or cold-start repository exploration.
+- The Codex skill decides when to delegate a broad source-understanding question, including when a later phase is about to expand repository reading.
 - The `freecontext` CLI drives a streamlined Pi agent loop through a model API.
 - The subagent exposes only structured `read`, `rg`, and `glob` tools, plus `jq` and `bat` when those local commands are detected.
 - It has no TUI, interactive session tree, editor, arbitrary shell, file-writing, Git, web-browsing, extension-loading, or package-management tools.
