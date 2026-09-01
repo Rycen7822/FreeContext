@@ -169,6 +169,45 @@ test("compiler cannot mark a required multi-span question ready after one narrow
   assert.deepEqual(complete.gaps, []);
 }));
 
+test("compiler gates each required question independently", async () => withWorkspace(async (root) => {
+  const implementation: ExplorerEvidenceCandidate = {
+    role: "implementation",
+    questionId: "implementation",
+    path: "src/router.ts",
+    startLine: 1,
+    endLine: 20,
+    focusLine: 10,
+    why: "Defines the implementation.",
+  };
+  const tests: ExplorerEvidenceCandidate = {
+    role: "test",
+    questionId: "tests",
+    path: "test/router.test.ts",
+    startLine: 1,
+    endLine: 1,
+    focusLine: 1,
+    why: "Verifies routing.",
+  };
+  const partial = await compileFreeContextResult(
+    request(),
+    invocation(root),
+    candidate("The test area is still missing.", [implementation]),
+    { errorCode: null },
+    [observed("src/router.ts", 1, 20)],
+  );
+  assert.equal(partial.status, "partial");
+  assert.equal(partial.gaps.some((gap) => gap.questionId === "tests"), true);
+
+  const ready = await compileFreeContextResult(
+    request(),
+    invocation(root),
+    candidate("Both required areas are covered.", [implementation, tests]),
+    { errorCode: null },
+    [observed("src/router.ts", 1, 20), observed("test/router.test.ts", 1, 1)],
+  );
+  assert.equal(ready.status, "ready");
+}));
+
 test("compiler marks exhaustive coverage ready only with members and an observed boundary basis", async () => withWorkspace(async (root) => {
   const exhaustiveRequest: FreeContextRequest = {
     ...request(),

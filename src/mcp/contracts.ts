@@ -12,37 +12,39 @@ export interface FreeContextEligibilityGate {
 }
 
 export const FREECONTEXT_ELIGIBILITY_POLICY = Object.freeze({
-  id: "freecontext-eligibility-v6",
+  id: "freecontext-eligibility-v7",
   toolName: "gather_context",
   gates: Object.freeze([
     Object.freeze({
       order: 1,
       id: "bounded_direct_action",
       outcome: "direct_read",
-      instruction: "Use native repository reading for a precise path, symbol, failure location, one bounded read, Git diff or status, edit, test, or direct check when it is enough to close the current evidence need.",
+      instruction: "Use native repository tools when the entire next source-understanding need closes with one or two small bounded reads, or for an exact path, symbol, precise failure location, diff or status, edit, test, or direct check.",
     }),
     Object.freeze({
       order: 2,
       id: "concrete_exploration_gap",
       outcome: "call",
-      instruction: "Call only when the main Agent can state a specific next multi-file or multi-relation repository exploration gap that native bounded reads cannot close.",
+      instruction: "Call before search or reading when one concrete next source-understanding question is expected to cross multiple non-adjacent owners or relationships; give each required area its own role-plus-question item.",
     }),
     Object.freeze({
       order: 3,
       id: "exact_candidate_probe",
       outcome: "exact_probe",
-      instruction: "Use native exact path, symbol, or failure probes when the next evidence need is not a concrete multi-file exploration gap; do not call merely because work starts, a phase changes, the task is complex, or a probability threshold is reached.",
+      instruction: "Use native exact path, symbol, or failure probes when the whole next question is local; do not call merely because work starts, a phase changes, the task is complex, or a probability threshold is reached.",
     }),
   ] satisfies readonly FreeContextEligibilityGate[]),
   invariants: Object.freeze([
-    "Call only for a specific next multi-file or multi-relation repository exploration gap that native bounded reads cannot close; do not call because work starts, a phase changes, the task looks complex, or a probability threshold is reached.",
-    "Known references are priority starting hints, not a precondition. Exact paths, symbols, failure locations, one bounded read, diff or status, edits, tests, and direct checks stay native.",
-    "After an edit or check, re-evaluate only when it exposes a new cross-file evidence question. Evidence-origin reentry is only for an independent child exposed by Evidence and needed before acting; do not broaden the same topic.",
+    "Judge the whole next source-understanding phase, not each command: a concrete question expected to cross multiple non-adjacent owners or relationships calls FreeContext before exploration; one or two small reads stay native.",
+    "Known references are priority starting hints, not a precondition. Exact paths, symbols, failure locations, one or two bounded reads, diff or status, edits, tests, and direct checks stay native.",
+    "After an edit or check, a planned cross-module consistency audit may use typed reentry even before a failure; exact local failures stay native, and no second call is forced. Evidence-origin reentry is only for an independent child needed before acting.",
     "FreeContext is read-only: no edits, tests, Git, packages, web, or credentials.",
     "Read the selected skill before constructing a call; later eligible episodes call gather_context directly without catalog discovery.",
     "Question role is an evidence category, not an agent persona: use only implementation, caller, test, or contract.",
-    "Each request names one stable outer edit, check, answer, or decision work unit and binds every question to one structured path, symbol, or topic fact target; target IDs are stable handles, not semantic proof.",
+    "Each request names one stable outer edit, check, answer, or decision work unit. The initial invocation remains one call; send one evidenceQuestions item per required source area, each with only role and question, up to six, and let the server derive IDs, fact kind, required default, and coverage mode.",
+    "Caller role defaults to relationship plus exhaustive coverage; implementation, test, and contract roles keep their role-appropriate fact kind and single coverage default. Do not expose a caller single override.",
     "An invocation is not a repository map: normally ask for the one atomic source-bound fact that directly unblocks the current work unit. For requested new behavior, ask for the nearest existing extension seam and confirmed presence or absence rather than presupposing a new symbol exists.",
+    "Every required question is independently satisfied by role-matched evidence or its explicit gap; missing any required question remains partial. Exhaustive coverage needs every discovered member, an observed enumeration boundary, and gaps for anything unresolved.",
     "Use supported partial Evidence immediately. Execute the handoff; only a new typed child evidence question exposed while consuming Evidence or by edit/check may start another invocation.",
     "A continuation sends only priorSessionId, one new child question, and a typed edit, check, or evidence origin; optional knownRefs and parentGapId are allowed only when needed. The server restores the committed handoff, work unit, and request context, treating an omitted parentGapId as a handoff child and a supplied one as gap concretization.",
     "Continuation origin is structured as evidence with evidenceIds, edit with changedPaths, or check with check and optional failureLocation; do not guess hidden fields.",
@@ -61,14 +63,19 @@ export const FREECONTEXT_HOST_ROUTE_METADATA = Object.freeze({
 });
 
 function renderEligibilityPolicy(): string {
-  const gates = FREECONTEXT_ELIGIBILITY_POLICY.gates
-    .map((gate) => `Gate ${gate.order}: ${gate.instruction}`)
-    .join(" ");
-  return `Use FreeContext only for a specific next multi-file or multi-relation repository exploration gap that native bounded reads cannot close. A rejected request affects only that request; later eligibility is judged from the new evidence need. ${gates} ${FREECONTEXT_ELIGIBILITY_POLICY.invariants.join(" ")}`;
+  return [
+    `FreeContext eligibility policy ${FREECONTEXT_ELIGIBILITY_POLICY.id}.`,
+    "Judge the whole next source-understanding question or phase, not each command.",
+    "Gate 1: Use native tools when one or two small bounded reads close the whole question, or for an exact path, symbol, local failure, diff/status, edit, test, or direct check.",
+    "Gate 2: Call before search or reading when one concrete question crosses multiple non-adjacent owners or relationships; send one role+question item per required area, up to six.",
+    "Gate 3: Keep a local whole-question probe native; task start, phase change, apparent complexity, or probability is not a trigger.",
+    "Caller is relationship+exhaustive; other roles use their role-appropriate fact kind and single coverage. After edit/check, a planned cross-module consistency audit may use typed reentry even without failure; reentry is optional.",
+    "The call is atomic and read-only; consume partial Evidence and nextAction. Known references are optional hints. Never send credentials or source dumps.",
+  ].join(" ");
 }
 
 export const TOOL_DESCRIPTION = renderEligibilityPolicy();
-export const SERVER_INSTRUCTIONS = `FreeContext exposes one read-only ${FREECONTEXT_ELIGIBILITY_POLICY.toolName} tool governed by ${FREECONTEXT_ELIGIBILITY_POLICY.id}. Each invocation binds to the public MCP request id and either an operator-configured absolute workspace root or one public MCP file root; an initial caller sends one stable outer work unit and one structured fact target per evidence question. Caller target ids, fact kinds, required flags, and single coverage default internally. Call only for a specific next multi-file or multi-relation repository exploration gap that native bounded reads cannot close; known references are priority hints, not a gate, and exact paths, symbols, failure locations, bounded reads, diff/status, edits, tests, and direct checks stay native. After an edit or check, re-evaluate only for a new cross-file evidence question; Evidence-origin reentry is only an independent child exposed by Evidence and needed before acting. A continuation caller sends only reentry.priorSessionId, one new reentry.question, one typed reentry.origin (evidence, edit, or check), and optional knownRefs or parentGapId; the server restores the committed task, work unit, handoff, and prior result. Before provider execution it rejects identical replay, stale or foreign sessions, non-latest or reused parents, invalid origins, and incorrect parent gaps. After not_found, the caller sends only recovery.priorSessionId and a workspace-relative recovery.probePath; the server restores the committed prior request facts and rejects caller overrides. The invocation is atomic, awaits one terminal outer result, and never replays a pending or terminal request. Follow the returned nextAction; use supported partial Evidence immediately and execute the handoff. Ready is invocation-scoped. Never send credentials or source dumps.`;
+export const SERVER_INSTRUCTIONS = `FreeContext exposes one read-only ${FREECONTEXT_ELIGIBILITY_POLICY.toolName} tool governed by ${FREECONTEXT_ELIGIBILITY_POLICY.id}. It binds each call to the public request and operator workspace. Initial callers send one work unit and one role-plus-question item per required area; the server derives the remaining fields and coverage defaults. Continuations send only priorSessionId, one child question, one typed origin, and optional knownRefs or parentGapId; the server restores and validates the committed context. Recovery sends only priorSessionId and one workspace-relative probePath. The invocation is atomic with one terminal result. Follow nextAction and consume partial Evidence. Ready is invocation-scoped. Never send credentials or source dumps.`;
 
 export const MODEL_RESULT_MAX_BYTES = 8_192;
 export const RESULT_LIMITS = Object.freeze({
@@ -174,11 +181,8 @@ export const CoverageTargetSchema = z.object({
 }).strict();
 
 export const FreeContextCallerCoverageTargetSchema = z.object({
-  id: identifier.optional(),
   subject: EvidenceTargetSubjectSchema,
-  factKind: CoverageTargetSchema.shape.factKind.optional(),
-  coverageMode: CoverageTargetSchema.shape.coverageMode.default("single"),
-}).strict().describe("Name the subject; id, role-appropriate factKind, and single coverage default internally.");
+}).strict().describe("Optional precise subject override only; the server derives the target ID and role-based factKind and coverageMode (caller is relationship plus exhaustive, other roles are single).");
 
 export const KnownReferenceSchema = z.discriminatedUnion("kind", [
   z.object({ kind: z.literal("path"), path: relativePath }).strict(),
@@ -294,7 +298,7 @@ export const HistoricalFreeContextRequestSchema = z.object({
 export const FreeContextCallerEvidenceQuestionSchema = z.object({
   role: EvidenceRoleSchema,
   question: z.string().trim().min(1).refine((value) => codePointLength(value) <= 2_000, "question is too long")
-    .describe("Name one existing-code owner or decision. For new behavior, ask for its nearest extension seam or confirmed absence instead of presupposing the requested symbol exists."),
+    .describe("Name one existing-code owner or decision. Use one item per required source area rather than combining areas. For new behavior, ask for its nearest extension seam or confirmed absence instead of presupposing the requested symbol exists."),
   required: z.boolean().default(true),
   target: FreeContextCallerCoverageTargetSchema.optional()
     .describe("Optional precise subject override; otherwise the question becomes a normalized topic target."),
@@ -319,21 +323,7 @@ export const FreeContextCallerFullRequestSchema = z.object({
   workUnit: WorkUnitSchema,
   knownRefs: z.array(KnownReferenceSchema).max(12).default([]),
   evidenceQuestions: z.array(FreeContextCallerEvidenceQuestionSchema).min(1).max(RESULT_LIMITS.evidence),
-}).strict().superRefine((request, context) => {
-  const { evidenceQuestions } = request;
-  const targetIds = new Set<string>();
-  for (const [questionIndex, question] of evidenceQuestions.entries()) {
-    const targetId = question.target?.id;
-    if (targetId !== undefined && targetIds.has(targetId)) {
-      context.addIssue({
-        code: "custom",
-        path: ["evidenceQuestions", questionIndex, "target", "id"],
-        message: "target id must be unique within the request",
-      });
-    }
-    if (targetId !== undefined) targetIds.add(targetId);
-  }
-});
+}).strict();
 
 export const FreeContextCallerRecoveryRequestSchema = z.object({
   recovery: FreeContextRecoveryRequestSchema,
@@ -369,7 +359,7 @@ export const FreeContextCallerRequestSchema = z.object({
       context.addIssue({ code: "custom", path: issue.path, message: issue.message });
     }
   }
-}).describe("One full initial request, one compact continuation, or one recovery-only request with no caller-supplied prior facts.");
+}).describe("One full initial request with one role-plus-question item per required source area, one compact continuation, or one recovery-only request with no caller-supplied prior facts.");
 
 export const FreeContextInvocationContextSchema = z.object({
   invocationId: identifier,
@@ -663,24 +653,25 @@ function normalizedCallerQuestion(
   const defaultTopic = [...question.question.replace(/\s+/gu, " ").trim()]
     .slice(0, RESULT_LIMITS.detailCodePoints)
     .join("");
-  const target = question.target ?? { subject: { kind: "topic" as const, topic: defaultTopic }, coverageMode: "single" as const };
+  const target = question.target ?? { subject: { kind: "topic" as const, topic: defaultTopic } };
   const inferredFactKind = question.role === "test"
-    ? "verification"
+    ? "verification" as const
     : question.role === "contract"
-      ? "contract"
+      ? "contract" as const
       : question.role === "caller"
-        ? "relationship"
-        : "behavior";
+        ? "relationship" as const
+        : "behavior" as const;
+  const coverageMode = question.role === "caller" ? "exhaustive" as const : "single" as const;
   return Object.freeze({
     id: questionId,
     role: question.role,
     question: question.question,
     required: question.required,
     coverageTargets: [{
-      id: target.id ?? `target:${questionId}`,
+      id: `target:${questionId}`,
       subject: target.subject,
-      factKind: target.factKind ?? inferredFactKind,
-      coverageMode: target.coverageMode,
+      factKind: inferredFactKind,
+      coverageMode,
     }],
   });
 }

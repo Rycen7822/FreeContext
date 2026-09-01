@@ -1,6 +1,6 @@
 interface:
   display_name: "FreeContext"
-  short_description: "Concrete-gap routing for multi-file evidence searches"
+  short_description: "Whole-phase concrete-gap routing for multi-owner evidence"
 policy:
   allow_implicit_invocation: true
 dependencies:

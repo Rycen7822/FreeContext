@@ -73,10 +73,10 @@ function canonicalCliRequest(taskText: string): Readonly<FreeContextCallerReques
     workUnit: { outcome: "answer", goal: "Identify the decisive implementation, consumer, verification, and public contract evidence." },
     knownRefs: [],
     evidenceQuestions: [
-      { role: "implementation", question: "Where is the primary implementation owner?", required: true, target: { id: "implementation-owner", subject: { kind: "topic", topic: "primary implementation owner" }, factKind: "location", coverageMode: "single" } },
-      { role: "caller", question: "Where is the relevant caller or consumer seam?", required: false, target: { id: "caller-seam", subject: { kind: "topic", topic: "relevant caller or consumer seam" }, factKind: "location", coverageMode: "single" } },
-      { role: "test", question: "Where is the relevant verification seam?", required: false, target: { id: "verification-seam", subject: { kind: "topic", topic: "relevant verification seam" }, factKind: "verification", coverageMode: "single" } },
-      { role: "contract", question: "Where is the relevant public contract owner?", required: false, target: { id: "contract-owner", subject: { kind: "topic", topic: "relevant public contract owner" }, factKind: "contract", coverageMode: "single" } },
+      { role: "implementation", question: "Where is the primary implementation owner?", required: true, target: { subject: { kind: "topic", topic: "primary implementation owner" } } },
+      { role: "caller", question: "Where is the relevant caller or consumer seam?", required: false, target: { subject: { kind: "topic", topic: "relevant caller or consumer seam" } } },
+      { role: "test", question: "Where is the relevant verification seam?", required: false, target: { subject: { kind: "topic", topic: "relevant verification seam" } } },
+      { role: "contract", question: "Where is the relevant public contract owner?", required: false, target: { subject: { kind: "topic", topic: "relevant public contract owner" } } },
     ],
   });
 }

@@ -4,7 +4,7 @@ import { runInNewContext } from "node:vm";
 import test from "node:test";
 import { FREECONTEXT_ELIGIBILITY_POLICY, FreeContextCallerFullRequestSchema, FreeContextCallerRequestSchema } from "../src/mcp/contracts.js";
 
-test("skill routes only concrete exploration gaps and preserves the atomic caller contract", async () => {
+test("skill routes whole phases and preserves the atomic caller contract", async () => {
   const [skill, metadata] = await Promise.all([
     readFile(new URL("../skills/freecontext/SKILL.md", import.meta.url), "utf8"),
     readFile(new URL("../skills/freecontext/agents/openai.yaml", import.meta.url), "utf8"),
@@ -14,14 +14,19 @@ test("skill routes only concrete exploration gaps and preserves the atomic calle
   assert.ok(Buffer.byteLength(skill, "utf8") <= 5_400);
   assert.ok([...description].length <= 560);
   for (const gate of FREECONTEXT_ELIGIBILITY_POLICY.gates) assert.equal(skill.includes(gate.instruction), false);
-  assert.match(description, /concrete next multi-file or multi-relation evidence gap/iu);
-  assert.match(description, /Exact paths.*symbols.*failures.*one bounded read.*diff or status.*edits.*tests.*direct checks stay native/iu);
+  assert.match(description, /whole next source-understanding phase.*multiple non-adjacent owners/iu);
+  assert.match(description, /one or two small reads.*exact paths.*symbols.*failures.*diff or status.*edits.*tests.*direct checks stay native/iu);
+  assert.match(skill, /one `evidenceQuestions` item per required source area/iu);
+  assert.match(skill, /caller means relationship plus `exhaustive`/iu);
+  assert.match(skill, /planned cross-module consistency audit.*even without a failure/iu);
   assert.match(skill, /Do not call because a task starts, a phase changes, the task looks complex, or a probability threshold/iu);
   assert.match(skill, /Known references are optional priority hints, never a gate/iu);
-  assert.match(skill, /reconsider only if it exposes a new cross-file evidence question/iu);
+  assert.match(skill, /fewest items needed to cover the required areas/iu);
+  assert.match(skill, /planned cross-module consistency audit.*even without a failure/iu);
   assert.match(skill, /Evidence-origin reentry is only for an independent child/iu);
   assert.match(skill, /```js\n\/\/ @exec: \{"yield_time_ms": 300000, "max_output_tokens": 10000\}/u);
-  assert.match(skill, /gather_context` alone/u);
+  assert.match(skill, /exact method name `tools\.mcp__freecontext__gather_context` directly/iu);
+  assert.match(skill, /do not do a tool-directory or catalog lookup first/iu);
   assert.match(skill, /Never parallelize it or do other work during dispatch/u);
   assert.match(skill, /functions\.wait/gu);
   assert.doesNotMatch(skill, /whole-phase|roughly 30%|next step may|second non-adjacent|knownRef-first/iu);
@@ -35,16 +40,18 @@ test("skill routes only concrete exploration gaps and preserves the atomic calle
   FreeContextCallerRequestSchema.parse(templateArgs);
   const parsedTemplate = FreeContextCallerFullRequestSchema.parse(templateArgs);
   assert.equal(parsedTemplate.workUnit.outcome, "edit");
-  assert.equal(parsedTemplate.evidenceQuestions.length, 1);
+  assert.equal(parsedTemplate.evidenceQuestions.length, 2);
   assert.equal(parsedTemplate.evidenceQuestions[0]?.role, "implementation");
   assert.equal(parsedTemplate.evidenceQuestions[0]?.target, undefined);
+  assert.equal(parsedTemplate.evidenceQuestions[1]?.role, "caller");
+  assert.equal(parsedTemplate.evidenceQuestions[1]?.target, undefined);
 
   assert.match(metadata, /^  allow_implicit_invocation: true$/mu);
   const shortDescription = metadata.match(/^  short_description: "([^"]+)"$/mu)?.[1];
   assert.ok(shortDescription);
   assert.ok([...shortDescription].length >= 25 && [...shortDescription].length <= 64);
   assert.match(shortDescription, /concrete|multi-file|evidence/iu);
-  assert.doesNotMatch(`${skill}\n${metadata}`, /https?:\/\/|base_url|API_KEY|bearer|DeepSWE|whole-phase|knownRef-first/iu);
+  assert.doesNotMatch(`${skill}\n${metadata}`, /https?:\/\/|base_url|API_KEY|bearer|DeepSWE|knownRef-first/iu);
 });
 
 test("caller template emits only one canonical terminal text", async () => {

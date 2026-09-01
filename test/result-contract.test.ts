@@ -79,9 +79,20 @@ test("request normalization deduplicates refs and keeps the documented priority"
     required: true,
     coverageTargets: [{ id: "target:q2", subject: { kind: "symbol", symbol: "route" }, factKind: "verification", coverageMode: "single" }],
   });
+  const callerDefaults = normalizeFreeContextRequest({
+    taskText: "Trace callers.",
+    workUnit: { outcome: "answer", goal: "Trace all callers." },
+    evidenceQuestions: [{ role: "caller", question: "Which callers use routing?" }],
+  });
+  assert.deepEqual(callerDefaults.evidenceQuestions[0]?.coverageTargets[0], {
+    id: "target:q1",
+    subject: { kind: "topic", topic: "Which callers use routing?" },
+    factKind: "relationship",
+    coverageMode: "exhaustive",
+  });
   assert.throws(() => normalizeFreeContextRequest({
     taskText: "Missing work unit.",
-    evidenceQuestions: [{ role: "implementation", question: "Where is routing implemented?", required: true, target: { id: "routing", subject: { kind: "topic", topic: "routing" }, factKind: "location", coverageMode: "single" } }],
+    evidenceQuestions: [{ role: "implementation", question: "Where is routing implemented?", required: true, target: { subject: { kind: "topic", topic: "routing" } } }],
   }), /workUnit/iu);
   assert.throws(() => normalizeFreeContextRequest({
     taskText: "Old string-target shape.",
@@ -89,13 +100,10 @@ test("request normalization deduplicates refs and keeps the documented priority"
     evidenceQuestions: [{ role: "implementation", question: "Where is routing implemented?", required: true, targets: ["routing"] }],
   }), /target/iu);
   assert.throws(() => normalizeFreeContextRequest({
-    taskText: "Duplicate target IDs.",
+    taskText: "Caller target must not override role coverage.",
     workUnit: { outcome: "answer", goal: "Locate routing." },
-    evidenceQuestions: [
-      { role: "implementation", question: "Where is routing implemented?", required: true, target: { id: "routing", subject: { kind: "topic", topic: "routing implementation" }, factKind: "location", coverageMode: "single" } },
-      { role: "test", question: "Where is routing tested?", required: false, target: { id: "routing", subject: { kind: "topic", topic: "routing tests" }, factKind: "verification", coverageMode: "single" } },
-    ],
-  }), /target id must be unique/iu);
+    evidenceQuestions: [{ role: "caller", question: "Which callers exist?", required: true, target: { subject: { kind: "topic", topic: "callers" }, coverageMode: "single" } }],
+  }), /coverageMode|unrecognized key/iu);
 });
 
 test("caller recovery is a strict recovery-only relative-path payload", () => {

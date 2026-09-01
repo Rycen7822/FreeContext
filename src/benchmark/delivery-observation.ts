@@ -149,9 +149,9 @@ function compactContinuationMatchesCanonical(
         : "behavior";
   const compactTarget = compact.question.target;
   if (compactTarget) {
-    if (compactTarget.id !== undefined && compactTarget.id !== target.id) return false;
     if (!isDeepStrictEqual(compactTarget.subject, target.subject)) return false;
-    if ((compactTarget.factKind ?? inferredFactKind) !== target.factKind || compactTarget.coverageMode !== target.coverageMode) return false;
+    const inferredCoverageMode = compact.question.role === "caller" ? "exhaustive" : "single";
+    if (inferredFactKind !== target.factKind || inferredCoverageMode !== target.coverageMode) return false;
   }
   if (compact.knownRefs !== undefined && !isDeepStrictEqual(normalizeKnownReferences(compact.knownRefs), request.knownRefs)) return false;
   const expectedOrigin = reentry.blockingGap.origin;

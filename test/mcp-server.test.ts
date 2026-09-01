@@ -33,8 +33,8 @@ function request(taskText: string): FreeContextCallerRequest {
     workUnit: { outcome: "answer", goal: "Locate the fixture implementation and verification evidence." },
     knownRefs: [],
     evidenceQuestions: [
-      { role: "implementation", question: "Where is it implemented?", required: true, target: { id: "implementation-owner", subject: { kind: "topic", topic: "implementation owner" }, factKind: "location", coverageMode: "single" } },
-      { role: "test", question: "How is it tested?", required: false, target: { id: "test-seam", subject: { kind: "topic", topic: "test seam" }, factKind: "verification", coverageMode: "single" } },
+      { role: "implementation", question: "Where is it implemented?", required: true, target: { subject: { kind: "topic", topic: "implementation owner" } } },
+      { role: "test", question: "How is it tested?", required: false, target: { subject: { kind: "topic", topic: "test seam" } } },
     ],
   };
 }
@@ -127,14 +127,13 @@ test("no-network MCP loopback awaits one terminal Promise and never emits an int
     assert.equal(tool?.title, "Gather context with FreeContext");
     assert.equal(tool?.description, TOOL_DESCRIPTION);
     assert.ok(tool?.description?.startsWith(
-      "Use FreeContext only for a specific next multi-file or multi-relation repository exploration gap that native bounded reads cannot close. A rejected request affects only that request; later eligibility is judged from the new evidence need. ",
+      "FreeContext eligibility policy freecontext-eligibility-v7. Judge the whole next source-understanding question or phase, not each command. ",
     ));
-    let previousGateIndex = -1;
-    for (const gate of FREECONTEXT_ELIGIBILITY_POLICY.gates) {
-      const gateIndex: number = tool?.description?.indexOf(`Gate ${gate.order}: ${gate.instruction}`) ?? -1;
-      assert.ok(gateIndex > previousGateIndex);
-      previousGateIndex = gateIndex;
-    }
+    assert.ok([...(tool?.description ?? "")].length <= 1_200);
+    assert.match(tool?.description ?? "", /Gate 1:.*one or two small bounded reads/iu);
+    assert.match(tool?.description ?? "", /Gate 2:.*multiple non-adjacent owners or relationships/iu);
+    assert.match(tool?.description ?? "", /Gate 3:.*local whole-question probe/iu);
+    assert.match(tool?.description ?? "", /Caller is relationship\+exhaustive/iu);
     assert.deepEqual(tool?.annotations, {
       readOnlyHint: true,
       destructiveHint: false,
@@ -152,6 +151,10 @@ test("no-network MCP loopback awaits one terminal Promise and never emits an int
     assert.match(questionItem?.properties?.role?.description ?? "", /evidence category, not an agent persona/iu);
     assert.equal(questionItem?.properties?.target?.type, "object");
     assert.equal(questionItem?.properties?.id, undefined);
+    const targetProperties = (questionItem?.properties?.target as { readonly properties?: Record<string, unknown> } | undefined)?.properties;
+    assert.deepEqual(Object.keys(targetProperties ?? {}).sort(), ["subject"]);
+    assert.equal(targetProperties?.factKind, undefined);
+    assert.equal(targetProperties?.coverageMode, undefined);
     assert.equal(questionItem?.properties?.minimumSpans, undefined);
     assert.deepEqual(questionItem?.required, ["role", "question"]);
     assert.ok(tool?.outputSchema?.properties?.status);

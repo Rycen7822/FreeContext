@@ -20,19 +20,18 @@ function facts(overrides: Partial<FreeContextEligibilityFacts> = {}): FreeContex
 }
 
 test("one immutable policy owns gate order, tool text, and host route metadata", () => {
-  assert.equal(FREECONTEXT_ELIGIBILITY_POLICY.id, "freecontext-eligibility-v6");
+  assert.equal(FREECONTEXT_ELIGIBILITY_POLICY.id, "freecontext-eligibility-v7");
   assert.deepEqual(FREECONTEXT_ELIGIBILITY_POLICY.gates.map(({ order }) => order), [1, 2, 3]);
   assert.equal(FREECONTEXT_HOST_ROUTE_METADATA.gates, FREECONTEXT_ELIGIBILITY_POLICY.gates);
   assert.equal(FREECONTEXT_HOST_ROUTE_METADATA.invariants, FREECONTEXT_ELIGIBILITY_POLICY.invariants);
-  for (const gate of FREECONTEXT_ELIGIBILITY_POLICY.gates) {
-    assert.ok(TOOL_DESCRIPTION.includes(gate.instruction));
-  }
-  assert.match(TOOL_DESCRIPTION, /specific next multi-file or multi-relation repository exploration gap/iu);
-  assert.match(TOOL_DESCRIPTION, /known references are priority starting hints, not a precondition/iu);
-  assert.match(TOOL_DESCRIPTION, /exact paths.*symbols.*failure locations.*one bounded read.*diff or status.*edits.*tests.*direct checks stay native/iu);
-  assert.match(TOOL_DESCRIPTION, /do not call because work starts.*phase changes.*task looks complex.*probability threshold/iu);
-  assert.match(TOOL_DESCRIPTION, /rejected request affects only that request/iu);
-  assert.match(TOOL_DESCRIPTION, /Evidence-origin reentry is only for an independent child/iu);
+  assert.ok([...TOOL_DESCRIPTION].length <= 1_200);
+  assert.match(TOOL_DESCRIPTION, /whole next source-understanding question or phase/iu);
+  assert.match(TOOL_DESCRIPTION, /Gate 1:.*one or two small bounded reads.*exact path.*symbol.*local failure.*diff\/status.*edit.*test.*direct check/iu);
+  assert.match(TOOL_DESCRIPTION, /Gate 2:.*before search or reading.*multiple non-adjacent owners or relationships.*one role\+question item per required area/iu);
+  assert.match(TOOL_DESCRIPTION, /Gate 3:.*local whole-question probe.*task start.*phase change.*complexity.*probability/iu);
+  assert.match(TOOL_DESCRIPTION, /Caller is relationship\+exhaustive.*single coverage/iu);
+  assert.match(TOOL_DESCRIPTION, /planned cross-module consistency audit.*even without failure.*reentry is optional/iu);
+  assert.match(TOOL_DESCRIPTION, /atomic and read-only.*partial Evidence/iu);
 });
 
 test("only a concrete multi-file exploration gap calls FreeContext", () => {

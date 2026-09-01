@@ -496,7 +496,7 @@ test("persisted nested MCP completion is an authoritative FreeContext delivery",
         role,
         question,
         required,
-        target: coverageTargets[0]!,
+        target: { subject: coverageTargets[0]!.subject },
       })),
     };
     const request = normalizeFreeContextRequest(callerRequest);
@@ -900,7 +900,7 @@ test("delivery matches a compact continuation caller payload and rejects a chang
   const compact = {
     reentry: {
       priorSessionId: base.invocation.sessionId,
-      question: { role: "implementation" as const, question, target },
+      question: { role: "implementation" as const, question, target: { subject: target.subject } },
       origin: { kind: "edit" as const, changedPaths: ["src/changed.ts"] },
     },
   };

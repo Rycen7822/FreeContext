@@ -406,7 +406,7 @@ test("isolated packet marks exploration complete and omits repository tool origi
     ],
     question_id: "exact questions[].id; the harness derives the single canonical target and role",
     citation: "integer observation_id matching repositoryObservations[].id; integer 1 <= start_line <= end_line <= 10000000, with the range inside that observed span",
-    coverage: "Treat requiredAllocation as reserved quotas: fill every remainingSlots quota with distinct role-matched observed spans before any surplus. A slot is covered only by self-contained observed evidence that answers the full declared question or target, not a declaration or keyword match. Count evidence and gaps before the call; evidence.length must be at most maxItems.evidence, and when requiredAllocation fills the six evidence slots there is no surplus slot. Cite relevant partial observations instead of replacing their quota with surplus; if a quota still cannot be met, include that exact question ID in gaps. Test role requires an actual test/spec file or inline test block, never a production helper whose name contains test. Never substitute another role or claim a present role-matched observation is absent.",
+    coverage: "Treat each required question as an independent reserved quota: fill every remainingSlots quota with distinct role-matched observed spans before any surplus. A slot is covered only by self-contained observed evidence that answers the full declared question or target, not a declaration or keyword match. Caller-role exhaustive coverage must list all discovered members and cite an observed enumeration boundary; any unresolved member or scope belongs in gaps and keeps the result partial. Count evidence and gaps before the call; evidence.length must be at most maxItems.evidence, and when requiredAllocation fills the six evidence slots there is no surplus slot. Cite relevant partial observations instead of replacing their quota with surplus; if a quota still cannot be met, include that exact question ID in gaps. Test role requires an actual test/spec file or inline test block, never a production helper whose name contains test. Never substitute another role or claim a present role-matched observation is absent.",
   });
   const { tool: _tool, ...modelObservation } = observedRead;
   assert.equal(_tool, "read");
@@ -422,7 +422,7 @@ test("isolated packet marks exploration complete and omits repository tool origi
   assert.equal(FINALIZATION_SYSTEM_PROMPT.includes("smallest self-contained observed evidence"), true);
   assert.equal(FINALIZATION_SYSTEM_PROMPT.includes("declaration or keyword line alone is insufficient"), true);
   assert.equal(FINALIZATION_SYSTEM_PROMPT.includes("complete negative answer"), true);
-  assert.equal(FINALIZATION_SYSTEM_PROMPT.includes("never claim a present role-matched repository observation is absent"), true);
+  assert.equal(FINALIZATION_SYSTEM_PROMPT.includes("Caller-role relationships are exhaustive"), true);
 
   const quotaRequest = {
     ...baseRequest(),

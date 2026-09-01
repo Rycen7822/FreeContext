@@ -13,7 +13,7 @@ function request(targetId: string, reentry?: FreeContextRequest["reentry"]): Fre
       role: "implementation",
       question: reentry?.blockingGap.requiredFact ?? `Locate ${targetId}.`,
       required: true,
-      target: { id: targetId, subject: { kind: "symbol", symbol: targetId }, factKind: "location", coverageMode: "single" },
+      target: { subject: { kind: "symbol", symbol: targetId } },
     }],
     knownRefs: [],
     ...(reentry ? { reentry } : {}),
@@ -39,6 +39,12 @@ function result(requestValue: FreeContextRequest, status: FreeContextResult["sta
     }],
     blockingGaps: gap ? [{ id: "gap:owner", targetId: target.id, kind: "source_unknown" as const, scope: target.subject, requiredFact: "Find the owner." }] : [],
   } : null;
+  const subjectKey = target.subject.kind === "symbol"
+    ? target.subject.symbol
+    : target.subject.kind === "topic"
+      ? target.subject.topic
+      : target.subject.path;
+  const sessionId = `session-${target.subject.kind}-${subjectKey}-${status}`;
   return {
     status,
     summary: "Trace result.",
@@ -47,9 +53,9 @@ function result(requestValue: FreeContextRequest, status: FreeContextResult["sta
     ...(handoff ? { handoff } : { handoff: null }),
     nextAction: evidence.length > 0
       ? { kind: "consume_evidence" as const, reason: "Consume the evidence." }
-      : { kind: "exact_probe" as const, reason: "Probe exactly.", ...(status === "not_found" ? { recovery: { priorSessionId: `session-${target.id}-${status}` } } : {}) },
+      : { kind: "exact_probe" as const, reason: "Probe exactly.", ...(status === "not_found" ? { recovery: { priorSessionId: sessionId } } : {}) },
     errorCode: status === "failed" ? "INVALID_REQUEST" as const : null,
-    sessionId: `session-${target.id}-${status}`,
+    sessionId,
     sessionFile: `/logs/agent/freecontext-sessions/${target.id}.json`,
   };
 }
@@ -64,7 +70,7 @@ function caller(requestValue: FreeContextRequest): unknown {
       role: question.role,
       question: question.question,
       required: question.required,
-      target: question.coverageTargets[0],
+      target: { subject: question.coverageTargets[0]!.subject },
     })),
     ...(requestValue.reentry ? { reentry: requestValue.reentry } : {}),
   };
@@ -94,7 +100,7 @@ test("raw invocation provenance keeps rejected attempts and accepted descendants
   const reentryRequest = request("owner", {
     priorHandoff: partial.handoff!,
     blockingGap: {
-      id: "gap:owner-child", targetId: "owner", kind: "verification_unknown",
+      id: "gap:owner-child", targetId: "target:q1", kind: "verification_unknown",
       questionId: "q1",
       scope: { kind: "symbol", symbol: "owner" }, requiredFact: "Find the caller exposed by the focused edit.",
       derivation: { kind: "gap_concretization", parentGapId: "gap:owner" },
@@ -105,7 +111,7 @@ test("raw invocation provenance keeps rejected attempts and accepted descendants
   const secondReentryRequest = request("final", {
     priorHandoff: ready.handoff!,
     blockingGap: {
-      id: "gap:final", targetId: "final", kind: "verification_unknown",
+      id: "gap:final", targetId: "target:q1", kind: "verification_unknown",
       questionId: "q1",
       scope: { kind: "symbol", symbol: "final" }, requiredFact: "Find the final owner.",
       derivation: { kind: "handoff_child", parentHandoffId: ready.handoff!.id },
@@ -116,7 +122,7 @@ test("raw invocation provenance keeps rejected attempts and accepted descendants
   const duplicateGapRequest = request("duplicate", {
     priorHandoff: partial.handoff!,
     blockingGap: {
-      id: "gap:owner", targetId: "owner", kind: "verification_unknown",
+      id: "gap:owner", targetId: "target:q1", kind: "verification_unknown",
       questionId: "q1",
       scope: { kind: "symbol", symbol: "owner" }, requiredFact: "Repeat the old gap.",
       derivation: { kind: "gap_concretization", parentGapId: "gap:owner" },
@@ -124,7 +130,7 @@ test("raw invocation provenance keeps rejected attempts and accepted descendants
     },
   });
   const invalidInitial = caller(initial) as Record<string, unknown>;
-  invalidInitial.evidenceQuestions = [{ role: "implementation", question: "Locate owner.", required: true, target: { id: "owner", subject: { kind: "symbol", symbol: "owner" }, factKind: "convention", coverageMode: "single" } }];
+  invalidInitial.evidenceQuestions = [{ role: "implementation", question: "Locate owner.", required: true, target: { subject: { kind: "symbol", symbol: "owner" }, coverageMode: "single" } }];
   const calls: ObservedMcpCall[] = [
     call("call-1", invalidInitial, null),
     call("call-2", caller(initial), notFound),
@@ -183,7 +189,7 @@ test("fresh invocation gate accepts a clean initial and typed reentry chain", ()
   const reentryRequest = request("next", {
     priorHandoff: partial.handoff!,
     blockingGap: {
-      id: "gap:next", targetId: "next", kind: "verification_unknown",
+      id: "gap:next", targetId: "target:q1", kind: "verification_unknown",
       questionId: "q1",
       scope: { kind: "symbol", symbol: "next" }, requiredFact: "Find the next owner.",
       derivation: { kind: "gap_concretization", parentGapId: "gap:owner" },
@@ -212,12 +218,7 @@ test("provenance accepts an initial call followed by a compact continuation", ()
       question: {
         role: "implementation" as const,
         question: "Find the next owner.",
-        target: {
-          id: "next",
-          subject: { kind: "symbol" as const, symbol: "next" },
-          factKind: "behavior" as const,
-          coverageMode: "single" as const,
-        },
+        target: { subject: { kind: "symbol" as const, symbol: "next" } },
       },
       origin: { kind: "edit" as const, changedPaths: ["src/owner.ts"] },
     },

@@ -27,38 +27,18 @@ test("external prompt template receives workspace, tools, and overview", async (
 
 test("default explorer follows adaptive canonical feedback", async () => {
   const prompt = await readFile(new URL("../prompts/explorer.md", import.meta.url), "utf8");
-  assert.match(prompt, /Treat each question's one structured target as one subject, one requested fact kind, and its declared coverage mode/u);
-  assert.match(prompt, /Choose the smallest search or read that can close the current coverage deficit/u);
-  assert.match(prompt, /Use `glob` for path discovery, `rg` for symbols/u);
-  assert.match(prompt, /Test-role evidence is an actual test\/spec file or inline test block/iu);
-  assert.match(prompt, /never a production helper whose name contains test/iu);
-  assert.match(prompt, /existing owner or extension seam that proves the behavior is absent is a complete negative answer/iu);
-  assert.match(prompt, /gap means the target fact could not be determined/iu);
-  assert.match(prompt, /When Known references are present, start from those exact paths or symbols/iu);
-  assert.match(prompt, /Once every required target has its role-matched coverage or an explicit target gap, make `submit_evidence` the next/iu);
-  assert.match(prompt, /`evidenceQuestions` and their required coverage slots are the only stopping target/iu);
-  assert.match(prompt, /make `submit_evidence` the next and only tool call/iu);
-  assert.match(prompt, /Do not issue duplicate successful tool calls or overlapping reads/iu);
-  assert.match(prompt, /At the end of every repository-tool batch, check each declared slot/iu);
-  assert.match(prompt, /Do not start another search or read merely to broaden a supported slot/iu);
-  assert.match(prompt, /Stop naturally when the canonical evaluator reports `ready` or a typed terminal outcome/u);
-  assert.match(prompt, /returned canonical feedback as part of this same exploration session/u);
-  assert.match(prompt, /resolve the listed gaps and submit an updated candidate/u);
-  assert.match(prompt, /Configured turn and tool-call budgets are soft liveness checkpoints/u);
-  assert.match(prompt, /search output alone does not extend it/u);
-  assert.match(prompt, /checkpoint during exploration/u);
-  assert.match(prompt, /every citation must stay within one repository-tool observation/iu);
-  assert.match(prompt, /max\(minimumSpans, declared target count\)/iu);
-  assert.match(prompt, /later required item does not fit, leave an explicit gap for a later typed invocation/iu);
-  assert.match(prompt, /For each exhaustive target, submit all discovered members, explicit gaps/iu);
-  assert.match(prompt, /never silently shorten that list/iu);
-  assert.match(prompt, /If a required target is only partly supported, submit its evidence and a target-scoped gap/iu);
-  assert.match(prompt, /brief but self-contained/iu);
-  assert.match(prompt, /brief but self-contained: usually 8–24 lines/iu);
-  assert.match(prompt, /Do not rely on a post-hoc compiler or fitter/iu);
-  assert.match(prompt, /declaration line alone is insufficient/iu);
+  assert.match(prompt, /Each required question is an independent acceptance slot/iu);
+  assert.match(prompt, /Caller-role relationships are exhaustive by contract/iu);
+  assert.match(prompt, /unclosed caller enumeration must remain a gap and produce `partial`/iu);
+  assert.match(prompt, /Make the smallest bounded read or search that closes the current target/iu);
+  assert.match(prompt, /path discovery, `rg` for symbols/u);
+  assert.match(prompt, /existing owner or extension seam proving absence is complete negative evidence/iu);
+  assert.match(prompt, /When required allocation is covered.*call `submit_evidence` next and alone/iu);
+  assert.match(prompt, /call `submit_evidence` next and alone/iu);
+  assert.match(prompt, /An `exhaustive` target needs every discovered member.*explicit gaps/iu);
+  assert.match(prompt, /Do not send `target_id`/iu);
+  assert.match(prompt, /never submit a seventh evidence item/iu);
   assert.doesNotMatch(prompt, /Turn [1-9]/u);
-  assert.doesNotMatch(prompt, /no repair turn|late search cannot be cited/u);
 });
 
 test("user prompt preserves the exact task and renders typed evidence inputs", () => {
@@ -82,7 +62,7 @@ test("user prompt preserves the exact task and renders typed evidence inputs", (
   assert.match(prompt, /\[implementation\]\[impl\]\[required\]\[minimum-spans=2\] \[target=x-implementation:topic:x implementation:location:single\] Where is x implemented\?/u);
   assert.match(prompt, /\[test\]\[tests\]\[optional\] \[target=x-tests:topic:x tests:verification:single\] How is x tested\?/u);
   assert.match(prompt, /brief and self-contained, normally 8–24 lines/iu);
-  assert.match(prompt, /Required slots use max\(minimumSpans, declared target count\).*later typed invocation/iu);
+  assert.match(prompt, /Required slots use max\(minimumSpans, declared target count\).*missing any required question keeps the result partial/iu);
   assert.match(prompt, /do not rely on post-hoc fitter trimming/iu);
   assert.doesNotMatch(prompt, /previous_output|repair/iu);
 });

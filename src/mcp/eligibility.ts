@@ -15,6 +15,7 @@ import type {
 export type ForbiddenFreeContextAction = "edit" | "test" | "git" | "package_manager" | "web" | "credentials";
 
 export interface FreeContextEligibilityFacts {
+  /** Whether the whole next source-understanding phase is expected to cross owners or relationships. */
   readonly concreteExplorationGap: boolean;
   readonly boundedReadSufficient: boolean;
   readonly forbiddenActions: readonly ForbiddenFreeContextAction[];

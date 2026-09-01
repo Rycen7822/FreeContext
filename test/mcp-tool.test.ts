@@ -34,8 +34,8 @@ const request: FreeContextCallerRequest = {
   workUnit: { outcome: "answer", goal: "Collect fixture evidence." },
   knownRefs: [{ kind: "path", path: "document.md" }],
   evidenceQuestions: [
-    { role: "implementation", question: "Where is it implemented?", required: true, target: { id: "implementation-owner", subject: { kind: "topic", topic: "implementation owner" }, factKind: "location", coverageMode: "single" } },
-    { role: "test", question: "How is it tested?", required: false, target: { id: "test-seam", subject: { kind: "topic", topic: "test seam" }, factKind: "verification", coverageMode: "single" } },
+    { role: "implementation", question: "Where is it implemented?", required: true, target: { subject: { kind: "topic", topic: "implementation owner" } } },
+    { role: "test", question: "How is it tested?", required: false, target: { subject: { kind: "topic", topic: "test seam" } } },
   ],
 };
 
@@ -120,12 +120,7 @@ function compactReentry(
       question: {
         role: "implementation",
         question,
-        target: {
-          id: "continuation-target",
-          subject: { kind: "symbol", symbol: "ContinuationSeam" },
-          factKind: "behavior",
-          coverageMode: "single",
-        },
+        target: { subject: { kind: "symbol", symbol: "ContinuationSeam" } },
       },
       origin,
       ...(parentGapId ? { parentGapId } : {}),
@@ -151,19 +146,21 @@ test("gather_context describes broad read delegation without claiming parent act
   assert.equal(SINGLE_CALL_DEADLINE_MS, 285_000);
   assert.equal(FREECONTEXT_HOST_ROUTE_METADATA.policyId, FREECONTEXT_ELIGIBILITY_POLICY.id);
   assert.equal(FREECONTEXT_HOST_ROUTE_METADATA.gates, FREECONTEXT_ELIGIBILITY_POLICY.gates);
-  for (const gate of FREECONTEXT_ELIGIBILITY_POLICY.gates) {
-    assert.match(TOOL_DESCRIPTION, new RegExp(`Gate ${gate.order}:`, "u"));
-    assert.ok(TOOL_DESCRIPTION.includes(gate.instruction));
-  }
-  for (const invariant of FREECONTEXT_ELIGIBILITY_POLICY.invariants) {
-    assert.ok(TOOL_DESCRIPTION.includes(invariant));
-  }
+  assert.ok([...TOOL_DESCRIPTION].length <= 1_200);
+  assert.match(TOOL_DESCRIPTION, /whole next source-understanding question or phase/iu);
+  assert.match(TOOL_DESCRIPTION, /Gate 1:.*one or two small bounded reads/iu);
+  assert.match(TOOL_DESCRIPTION, /Gate 2:.*multiple non-adjacent owners or relationships/iu);
+  assert.match(TOOL_DESCRIPTION, /Gate 3:.*local whole-question probe/iu);
+  assert.match(TOOL_DESCRIPTION, /one role\+question item per required area/iu);
+  assert.match(TOOL_DESCRIPTION, /Caller is relationship\+exhaustive/iu);
+  assert.match(TOOL_DESCRIPTION, /planned cross-module consistency audit.*reentry is optional/iu);
+  assert.match(TOOL_DESCRIPTION, /atomic and read-only.*partial Evidence/iu);
   assert.match(
     SERVER_INSTRUCTIONS,
-    /public MCP request id and either an operator-configured absolute workspace root or one public MCP file root/u,
+    /public request and operator workspace/u,
   );
-  assert.match(SERVER_INSTRUCTIONS, /The invocation is atomic, awaits one terminal outer result/u);
-  assert.match(SERVER_INSTRUCTIONS, /Follow the returned nextAction; use supported partial Evidence immediately/u);
+  assert.match(SERVER_INSTRUCTIONS, /invocation is atomic with one terminal result/u);
+  assert.match(SERVER_INSTRUCTIONS, /Follow nextAction and consume partial Evidence/u);
   assert.match(SERVER_INSTRUCTIONS, /Ready is invocation-scoped/u);
   assert.doesNotMatch(SERVER_INSTRUCTIONS, /never make a third call/u);
   assert.doesNotMatch(`${SERVER_INSTRUCTIONS}\n${TOOL_DESCRIPTION}`, /\b(?:commit|push|edit files)\b/u);
@@ -397,7 +394,7 @@ test("legacy copied continuation state is rejected at the public caller boundary
       outcome: { kind: request.workUnit.outcome, instruction: "Use the prior Evidence." },
       addressedFacts: [{
         questionId: "q1",
-        targetId: "implementation-owner",
+        targetId: "target:q1",
         scope: { kind: "topic" as const, topic: "implementation owner" },
         requiredFact: "Where is it implemented?",
       }],
@@ -411,7 +408,7 @@ test("legacy copied continuation state is rejected at the public caller boundary
         blockingGap: {
           id: "gap:new-contract",
           questionId: "q1",
-          targetId: "implementation-owner",
+          targetId: "target:q1",
           kind: "contract_unknown" as const,
           scope: { kind: "topic" as const, topic: "implementation owner" },
           requiredFact: "Where is it implemented?",
