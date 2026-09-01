@@ -35,16 +35,12 @@
   ],
   "scripts": {
     "typecheck": "tsc -p tsconfig.json",
-    "build": "tsc -p tsconfig.build.json",
+    "build": "node scripts/clean-build.mjs && tsc -p tsconfig.build.json",
     "test": "node --import tsx --test test/*.test.ts",
     "test:core": "node --import tsx --test test/*.test.ts",
     "check": "node --import tsx scripts/static-check.ts",
-    "smoke:mock": "node --import tsx scripts/mock-smoke.ts",
     "smoke:mcp": "node --import tsx scripts/mcp-smoke.ts",
     "smoke:live": "node --import tsx scripts/live-smoke.ts",
-    "bench:mock": "node --import tsx scripts/benchmark-mock.ts --scenario baseline",
-    "bench:context": "node --import tsx scripts/benchmark-mock.ts --scenario context",
-    "bench:mcp": "node --import tsx scripts/benchmark-mock.ts --scenario mcp",
     "prepare": "npm run build",
     "prepack": "npm run build"
   },

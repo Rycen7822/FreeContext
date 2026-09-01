@@ -20,7 +20,7 @@ export function createReadTool({ Type, workspace, semaphore, config }: ToolConte
     name: "read",
     label: "Read file range",
     description:
-      "Read a bounded line range from one text file inside the repository. Returns exact line numbers for evidence citations. Read-only.",
+      "Read a bounded line range from one text file inside the repository. Returns exact line numbers. Read-only.",
     parameters,
     executionMode: "parallel",
     execute: async (_toolCallId: string, params: Static<typeof parameters>, signal?: AbortSignal) =>

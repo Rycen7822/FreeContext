@@ -2,22 +2,14 @@ import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
 import {
   FreeContextCallContextSchema,
   FreeContextCallerRequestSchema,
-  normalizeFreeContextRecoveryRequest,
-  normalizeFreeContextRequest,
-  serializeForModel,
 } from "./contracts.js";
-import type { FreeContextCallContext, FreeContextCallerRequest, FreeContextResult } from "./contracts.js";
-import { validateFreeContextRecovery, validateFreeContextReentry } from "./eligibility.js";
+import type { FreeContextCallContext, FreeContextCallerRequest } from "./contracts.js";
 import { errorReason, failedResult } from "./failure.js";
-import {
-  createDeadlineClock,
-  createTerminalStore,
-  SINGLE_CALL_DEADLINE_MS,
-} from "./lifecycle.js";
+import { createDeadlineClock, createTerminalStore, SINGLE_CALL_DEADLINE_MS } from "./lifecycle.js";
 import type { DeadlineClock, TerminalStore } from "./lifecycle.js";
 import { executeSingleCall } from "./single-call.js";
 import type { SingleCallDependencies } from "./single-call.js";
-import { restoreCommittedContinuation, restoreCommittedRecovery } from "./session.js";
+import { restoreCommittedContinuation } from "./session.js";
 
 export interface SingleFlightExecutor {
   run<T>(task: () => Promise<T>): Promise<T>;
@@ -42,10 +34,7 @@ export class InvocationContextError extends Error {
   }
 }
 
-export interface GatherContextHandlerDependencies extends Omit<
-  SingleCallDependencies,
-  "deadlineClock" | "deadlineMs" | "terminalStore"
-> {
+export interface GatherContextHandlerDependencies extends Omit<SingleCallDependencies, "deadlineClock" | "deadlineMs" | "terminalStore"> {
   readonly executor?: SingleFlightExecutor;
   readonly invocationContextProvider?: (
     metadata: unknown,
@@ -61,33 +50,29 @@ export type GatherContextHandler = (
   signal?: AbortSignal,
 ) => Promise<CallToolResult>;
 
-const directExecutor: SingleFlightExecutor = Object.freeze({
-  run: <T>(task: () => Promise<T>) => task(),
-});
+const directExecutor: SingleFlightExecutor = Object.freeze({ run: <T>(task: () => Promise<T>) => task() });
 
 function safeRequestSchemaReason(error: unknown): string {
-  if (!error || typeof error !== "object" || !Array.isArray((error as { issues?: unknown }).issues)) {
-    return errorReason("INVALID_REQUEST");
-  }
+  if (!error || typeof error !== "object" || !Array.isArray((error as { issues?: unknown }).issues)) return "Invalid FreeContext request.";
   const issue = (error as { issues: unknown[] }).issues[0];
-  if (!issue || typeof issue !== "object") return errorReason("INVALID_REQUEST");
+  if (!issue || typeof issue !== "object") return "Invalid FreeContext request.";
   const path = Array.isArray((issue as { path?: unknown }).path)
     ? (issue as { path: unknown[] }).path.map((part) => typeof part === "number" ? `[${part}]` : String(part)).join(".")
     : "request";
-  const code = typeof (issue as { code?: unknown }).code === "string" ? (issue as { code: string }).code : "invalid";
-  return `Request schema rejected at ${path || "request"} (${code}).`;
+  return `Invalid FreeContext request at ${path || "request"}.`;
+}
+
+function appendVisibleSessionId(text: string, sessionId: string): string {
+  return `${text}${text ? "\n\n" : ""}Session: ${sessionId}`;
 }
 
 function callResult(
-  result: Readonly<FreeContextResult>,
-  serializedText = serializeForModel(result),
-  meta: Readonly<Record<string, unknown>> = {},
+  result: Readonly<{ status: "complete" | "partial" | "failed"; text: string; sessionId: string; sessionFile: string | null }>,
 ): CallToolResult {
   return {
-    structuredContent: result,
-    content: [{ type: "text", text: serializedText }],
+    content: [{ type: "text", text: result.sessionFile ? appendVisibleSessionId(result.text, result.sessionId) : result.text }],
     ...(result.status === "failed" ? { isError: true } : {}),
-    _meta: { freecontext: meta },
+    ...(result.sessionFile ? { _meta: { freecontext: { sessionId: result.sessionId } } } : {}),
   };
 }
 
@@ -108,106 +93,29 @@ export function createGatherContextHandler(
     } catch (error) {
       const contextFailure = error instanceof InvocationContextError
         ? error
-        : new InvocationContextError(
-          "invalid_call_context",
-          "The MCP host did not supply a valid FreeContext call context.",
-        );
-      return callResult(failedResult({
-        code: "INVALID_REQUEST",
-        reason: contextFailure.message,
-        sessionId: "unbound-invocation",
-        sessionFile: null,
-      }), undefined, {
-        callContextBound: false,
-        contextFailure: contextFailure.category,
-      });
+        : new InvocationContextError("invalid_call_context", "The MCP host did not supply a valid FreeContext call context.");
+      return callResult(failedResult({ code: "INVALID_REQUEST", reason: contextFailure.message, sessionId: "unbound-invocation", sessionFile: null }));
     }
 
     let callerRequest: Readonly<FreeContextCallerRequest>;
     try {
-      callerRequest = FreeContextCallerRequestSchema.parse(rawInput) as Readonly<FreeContextCallerRequest>;
+      callerRequest = FreeContextCallerRequestSchema.parse(rawInput);
     } catch (error) {
-      return callResult(failedResult({
-        code: "INVALID_REQUEST",
-        reason: safeRequestSchemaReason(error),
-        sessionId: callContext.invocationId,
-        sessionFile: null,
-      }));
+      return callResult(failedResult({ code: "INVALID_REQUEST", reason: safeRequestSchemaReason(error), sessionId: callContext.invocationId, sessionFile: null }));
     }
-    let request;
-    if ("recovery" in callerRequest) {
-      let recovery;
-      try {
-        recovery = normalizeFreeContextRecoveryRequest(callerRequest.recovery);
-      } catch (error) {
-        return callResult(failedResult({
-          code: "INVALID_REQUEST",
-          reason: safeRequestSchemaReason(error),
-          sessionId: callContext.invocationId,
-          sessionFile: null,
-        }));
-      }
-      const resolution = await restoreCommittedRecovery({
-        recovery,
-        workspaceRoot: callContext.workspaceRoot,
-        ...(dependencies.sessionDirectory ? { sessionDirectory: dependencies.sessionDirectory } : {}),
-      });
-      if (!resolution.accepted) {
-        return callResult(failedResult({
-          code: "INVALID_REQUEST",
-          reason: resolution.reason,
-          sessionId: callContext.invocationId,
-          sessionFile: null,
-        }));
-      }
-      request = resolution.request;
-    } else if ("reentry" in callerRequest) {
+    let request: Readonly<FreeContextCallerRequest>;
+    if (callerRequest.sessionId) {
       const resolution = await restoreCommittedContinuation({
-        reentry: callerRequest.reentry,
+        sessionId: callerRequest.sessionId,
+        question: callerRequest.question,
+        ...(callerRequest.hints ? { hints: callerRequest.hints } : {}),
         workspaceRoot: callContext.workspaceRoot,
         ...(dependencies.sessionDirectory ? { sessionDirectory: dependencies.sessionDirectory } : {}),
       });
-      if (!resolution.accepted) {
-        return callResult(failedResult({
-          code: "INVALID_REQUEST",
-          reason: resolution.reason,
-          sessionId: callContext.invocationId,
-          sessionFile: null,
-        }));
-      }
+      if (!resolution.accepted) return callResult(failedResult({ code: "INVALID_REQUEST", reason: resolution.reason, sessionId: callContext.invocationId, sessionFile: null }));
       request = resolution.request;
     } else {
-      try {
-        request = normalizeFreeContextRequest(callerRequest);
-      } catch (error) {
-        return callResult(failedResult({
-          code: "INVALID_REQUEST",
-          reason: safeRequestSchemaReason(error),
-          sessionId: callContext.invocationId,
-          sessionFile: null,
-        }));
-      }
-    }
-    const reentryDecision = validateFreeContextReentry(request);
-    if (!reentryDecision.accepted) {
-      return callResult(failedResult({
-        code: "INVALID_REQUEST",
-        reason: reentryDecision.reason,
-        sessionId: callContext.invocationId,
-        sessionFile: null,
-        request,
-      }));
-    }
-
-    const recoveryDecision = validateFreeContextRecovery(request);
-    if (!recoveryDecision.accepted) {
-      return callResult(failedResult({
-        code: "INVALID_REQUEST",
-        reason: recoveryDecision.reason,
-        sessionId: callContext.invocationId,
-        sessionFile: null,
-        request,
-      }));
+      request = Object.freeze(callerRequest);
     }
     const completed = await executeSingleCall(request, callContext, externalSignal, {
       ...dependencies,
@@ -215,6 +123,6 @@ export function createGatherContextHandler(
       deadlineClock,
       deadlineMs,
     });
-    return callResult(completed.result, completed.serializedText, completed.meta);
+    return callResult(completed.result);
   });
 }

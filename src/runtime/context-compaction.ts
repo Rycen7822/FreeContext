@@ -18,10 +18,10 @@ const SUMMARY_SYSTEM_PROMPT = [
 ].join(" ");
 
 const SUMMARY_INSTRUCTIONS = [
-  "Produce a compact evidence-focused continuation summary.",
+  "Produce a compact continuation summary.",
   "Preserve the original repository request and every user constraint.",
-  "Preserve exact repository-relative paths and observed line ranges, confirmed findings, rejected hypotheses, unresolved evidence targets, and remaining turn/tool/context budgets.",
-  "Clearly distinguish verified evidence from open questions.",
+  "Preserve exact repository-relative paths and observed line ranges, confirmed findings, rejected hypotheses, open questions, and remaining turn/tool/context budgets.",
+  "Clearly distinguish confirmed findings from open questions.",
   "Return only the summary text.",
 ].join(" ");
 

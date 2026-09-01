@@ -58,7 +58,7 @@ CONTROL_DIAGNOSTIC_ROUTE = (
 )
 CONDITIONAL_FC_TREATMENT_POLICY = (
     "[Benchmark arm policy: conditional_fc_treatment]\n"
-    "FreeContext is available in this treatment. When the tracked skill and gather_context description select it, gather_context is the only tool in that assistant batch/code cell: never parallelize or do other work during dispatch. If a cell ID returns, exclusively call functions.wait with yield_time_ms=300000 until terminal. Ready or partial returned Evidence is already read context: consume it without a full remap, verify at most one or two necessary exact positions or adjacent contexts, then edit/check. A failed result goes directly to normal native exploration; do not force an exact probe or recovery."
+    "FreeContext is available in this treatment. When the tracked skill and gather_context description select it, call gather_context as the only tool in that assistant batch/code cell with {question, hints?, sessionId?}. Never parallelize or do other work during dispatch. Await the single terminal result. The worker returns ordinary assistant text directly; if it ends with Session: <id>, use that id only for an explicitly useful follow-up."
     "\n"
     + TREATMENT_DIAGNOSTIC_ROUTE
 )

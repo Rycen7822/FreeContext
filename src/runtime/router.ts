@@ -1,7 +1,6 @@
 import type { CliConfigOverrides, FreeContextConfig, ResolvedRouteConfig } from "../config.js";
 import { resolveConfig } from "../config.js";
 import { ProviderError } from "../errors.js";
-import type { FreeContextRequest } from "../mcp/contracts.js";
 import { loadSystemPrompt } from "../prompt.js";
 import type { RepositoryToolSet, ToolExecutables, Workspace } from "../tools/contracts.js";
 import { createRepositoryTools } from "../tools/index.js";
@@ -11,7 +10,6 @@ import type { ContextTokenCounter } from "./context-budget.js";
 import type { PiBindings } from "./pi-bindings.js";
 import { loadPiBindings } from "./pi-bindings.js";
 import type {
-  CanonicalCandidateEvaluator,
   PiSessionEventHandler,
   PiSessionResult,
 } from "./pi-session.js";
@@ -26,7 +24,6 @@ export interface RouterDependencies {
   readonly clock?: () => number;
   readonly timestamp?: () => number;
   readonly tokenCounter?: ContextTokenCounter;
-  readonly candidateEvaluator?: CanonicalCandidateEvaluator;
 }
 
 export interface PrimaryRouteResult {
@@ -58,7 +55,6 @@ export async function runPrimaryRoute({
   cli,
   workspace,
   promptText,
-  finalizationRequest,
   signal,
   onEvent,
   startedAt,
@@ -67,7 +63,6 @@ export async function runPrimaryRoute({
   cli: CliConfigOverrides;
   workspace: Workspace;
   promptText: string;
-  finalizationRequest: Readonly<FreeContextRequest>;
   signal?: AbortSignal;
   onEvent?: PiSessionEventHandler;
   startedAt: number;
@@ -108,14 +103,12 @@ export async function runPrimaryRoute({
         config,
         systemPrompt: cachedSystemPrompt,
         promptText,
-        finalizationRequest,
         tools: repositoryTools.tools,
         ...(signal ? { signal } : {}),
         ...(onEvent ? { onEvent } : {}),
         clock,
         ...(dependencies.tokenCounter ? { tokenCounter: dependencies.tokenCounter } : {}),
         ...(dependencies.timestamp ? { timestamp: dependencies.timestamp } : {}),
-        ...(dependencies.candidateEvaluator ? { candidateEvaluator: dependencies.candidateEvaluator } : {}),
       });
       primarySessionMs += Math.max(0, clock() - primaryStartedAt);
       return Object.freeze({

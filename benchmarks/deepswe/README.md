@@ -15,7 +15,7 @@ Put the directory containing `pier_codex_noemaloom_agent.py` on `PYTHONPATH` tog
 Set `FREECONTEXT_RUNTIME_ARCHIVE` to a task-owned archive containing the built `dist/`, `bin/`, `prompts/`, `skills/freecontext/SKILL.md`, `skills/freecontext/agents/openai.yaml`, this directory's `freecontext.toml`, production dependencies, and runtime binaries. The treatment registers:
 
 - startup timeout `30` seconds;
-- tool timeout `105` seconds, leaving a fixed 15-second transport-finalization margin beyond FreeContext's 90-second internal deadline;
+- tool timeout `300` seconds, with FreeContext's single-call hard deadline at `285` seconds and soft finalization at `180` seconds;
 - enabled tool `gather_context` only;
 - explicit approval for that read-only annotated tool.
 
@@ -25,31 +25,15 @@ The adapter copies only the extracted key to a task-owned mode-`0600` secret; it
 
 ## Preserved artifacts
 
-Each MCP result includes its separate in-container session path in compact text and structured output:
-
-```text
-Status: ready
-Summary: Routing evidence is verified.
-Evidence:
-1. [implementation][impl] src/router.ts:10-24 (focus 17) — Defines routing.
-Excerpt (observed):
-export function route() { return provider; }
-Gaps:
--
-Next: read src/router.ts:10-24 — Read the decisive implementation span.
-Error: -
-Session: /logs/agent/freecontext-sessions/<call>.json
-```
+Each MCP result is one ordinary text content item. The worker may include concise `path:line` facts; the host appends `Session: <id>` as the final line. The main agent awaits the one `gather_context` call and may pass that id in a later `{sessionId, question, hints?}` continuation.
 
 After Codex exits, the adapter preserves these artifacts under Pier's task `agent/` directory:
 
-- `master-agent-context.json`: the complete raw Codex session JSONL plus an ordered FreeContext index containing request, nullable actual parent observation, delivery hashes/status, separate session paths, optional consumption audit, and duplicate-task observations. Atomic MCP export fails if a v2 session path or actual call observation is missing or mismatched.
-- `delivery-observations.jsonl`: append-only actual MCP delivery matches indexed by invocation/session identity and, when available, host call identity, including typed missing-return causal evidence. A persisted terminal result with no provider cause is `harness`; provider exhaustion/fatal evidence plus a missing host completion is `mixed`. Private session content never substitutes for a missing parent observation.
-- `consumption-observations.jsonl`: append-only targeted-first, evidence-range hit, broad-search, partial-gap-search, and duplicate-task observations. Explicit `freecontext-parent-action-v1` records remain authoritative; otherwise the exporter may conservatively derive actions from completed Codex host tool-call records after the matching FreeContext return. Actions from one completed outer exec cell share a batch identity; a concurrent first batch passes only when every provable repository action hits returned evidence, and same-batch searches are not ordered after a peer evidence read. Unsupported literals, failed cells, and incomplete calls remain unobserved rather than inferring parent intent or claiming a hard guard.
-- `freecontext-sessions/*.json`: separate original MCP v2 session documents containing invocation identity, exact request, raw Pi capture, effective post-compaction context, typed provider attempt/schedule events with usage and base/actual delay, canonical compiler result, terminal decision, and exact model-visible text hash. Provider credentials and request headers are never serialized.
+- `master-agent-context.json`: the complete raw Codex session JSONL plus a small index of calls matched to committed FreeContext v4 private sessions. Each entry exposes ordinary output text when observed, the session path, status, and basic start/end/latency fields.
+- `freecontext-sessions/*.json`: private v4 session documents containing invocation identity, the exact minimal request, runtime capture, ordinary result text, and terminal decision. Provider credentials and request headers are never serialized.
 - `sessions/**/*.jsonl`: Pier's unchanged raw Codex session source.
 
-The exporter continues to read legacy MCP v1 and benchmark-session v1 files during shadow adoption, but new treatment calls use MCP v2 only. Legacy observations are retained only when their exact output appears in the raw master JSONL. For a direct MCP observation, V2 export requires matching started/completed call identity, request, model-visible text hash, and structured result; the code-await fallback instead requires an observed terminal output whose session reference and text match the preserved session, while unavailable call-id/request/structured fields remain explicitly missing or null. A private session result alone is retained only as `recoverableResult` and never counted as delivered. The exporter never inserts a missing response into the raw master context or embeds raw session JSON in the call index. These artifacts may contain retained source text and are not deleted automatically.
+These artifacts may contain retained source text and are not deleted automatically.
 
 ## Cost report
 

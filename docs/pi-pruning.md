@@ -13,7 +13,6 @@ FreeContext is a headless extraction from Pi coding-agent's runtime stack. It co
 - Provider error-as-message semantics.
 - Model/tool token usage fields.
 - Proactive in-memory compaction through public context-estimation, serialization, and compaction-summary primitives.
-- One recognized-overflow recovery through the public loop-continuation and overflow-detection primitives.
 
 ## Removed
 

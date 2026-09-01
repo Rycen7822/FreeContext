@@ -5,7 +5,7 @@ import path from "node:path";
 import { parseArgs, HELP_TEXT } from "./cli/args.js";
 import { runDoctor } from "./cli/doctor.js";
 import type { DoctorReport } from "./cli/doctor.js";
-import { FreeContextCallerFullRequestSchema, FreeContextResultSchema, serializeForModel } from "./mcp/contracts.js";
+import { FreeContextCallerRequestSchema } from "./mcp/contracts.js";
 import type { FreeContextCallerRequest } from "./mcp/contracts.js";
 import { createGatherContextHandler } from "./mcp/tool.js";
 import { GigatokenCounter } from "./runtime/gigatoken-counter.js";
@@ -57,8 +57,6 @@ function createEventReporter(stderr: CliIo["stderr"]): PiSessionEventHandler {
       stderr.write(`[freecontext] compaction ${event.reason} start (${event.tokensBefore} estimated tokens)\n`);
     } else if (event.type === "compaction_end") {
       stderr.write(`[freecontext] compaction ${event.reason} done (${event.estimatedTokensAfter} estimated tokens)\n`);
-    } else if (event.type === "overflow_retry") {
-      stderr.write("[freecontext] context overflow retry 1\n");
     } else if (event.type === "provider_retry_scheduled") {
       stderr.write(`[freecontext] provider ${event.category} retry ${event.attempt}/${event.maxRetries} in ${event.delayMs} ms (base ${event.baseDelayMs} ms)\n`);
     } else if (event.type === "provider_retry_start") {
@@ -67,18 +65,8 @@ function createEventReporter(stderr: CliIo["stderr"]): PiSessionEventHandler {
   };
 }
 
-function canonicalCliRequest(taskText: string): Readonly<FreeContextCallerRequest> {
-  return FreeContextCallerFullRequestSchema.parse({
-    taskText,
-    workUnit: { outcome: "answer", goal: "Identify the decisive implementation, consumer, verification, and public contract evidence." },
-    knownRefs: [],
-    evidenceQuestions: [
-      { role: "implementation", question: "Where is the primary implementation owner?", required: true, target: { subject: { kind: "topic", topic: "primary implementation owner" } } },
-      { role: "caller", question: "Where is the relevant caller or consumer seam?", required: false, target: { subject: { kind: "topic", topic: "relevant caller or consumer seam" } } },
-      { role: "test", question: "Where is the relevant verification seam?", required: false, target: { subject: { kind: "topic", topic: "relevant verification seam" } } },
-      { role: "contract", question: "Where is the relevant public contract owner?", required: false, target: { subject: { kind: "topic", topic: "relevant public contract owner" } } },
-    ],
-  });
+function canonicalCliRequest(questionText: string): Readonly<FreeContextCallerRequest> {
+  return FreeContextCallerRequestSchema.parse({ question: questionText });
 }
 
 function renderDoctor(report: DoctorReport): string {
@@ -107,8 +95,8 @@ export async function main(
     return report.ok ? 0 : 1;
   }
 
-  const taskText = cli.query || (await readStdin(io.stdin));
-  if (!taskText) {
+  const questionText = cli.query || (await readStdin(io.stdin));
+  if (!questionText) {
     io.stderr.write("freecontext: CONFIGURATION_ERROR: an exploration query is required\n");
     return 2;
   }
@@ -140,7 +128,7 @@ export async function main(
       }),
     });
     const call = await handler(
-      canonicalCliRequest(taskText),
+      canonicalCliRequest(questionText),
       {
         invocationId: `manual-invocation-${randomUUID()}`,
         callId: `manual-call-${randomUUID()}`,
@@ -149,11 +137,14 @@ export async function main(
       },
       controller.signal,
     );
-    const result = FreeContextResultSchema.parse(call.structuredContent);
+    const text = call.content
+      .filter((item): item is { type: "text"; text: string } => item.type === "text")
+      .map((item) => item.text)
+      .join("\n");
     io.stdout.write(cli.format === "json"
-      ? `${JSON.stringify(result, null, 2)}\n`
-      : `${serializeForModel(result)}\n`);
-    return result.status === "failed" ? 1 : 0;
+      ? `${JSON.stringify({ text }, null, 2)}\n`
+      : `${text}\n`);
+    return call.isError ? 1 : 0;
   } finally {
     await tokenCounter.close();
     process.removeListener("SIGINT", abort);

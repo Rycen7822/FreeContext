@@ -1,10 +1,10 @@
 interface:
   display_name: "FreeContext"
-  short_description: "Whole-phase concrete-gap routing for multi-owner evidence"
+  short_description: "Route cross-module repository questions to a concise read-only worker"
 policy:
   allow_implicit_invocation: true
 dependencies:
   tools:
     - type: "mcp"
       value: "freecontext"
-      description: "Read-only gather_context tool for multi-file and multi-document evidence"
+      description: "Read-only gather_context tool returning ordinary assistant text"

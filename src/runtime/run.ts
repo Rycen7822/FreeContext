@@ -1,23 +1,21 @@
 import type { CliConfigOverrides } from "../config.js";
 import { redactUrl } from "../config.js";
-import {
-  FreeContextInvocationContextSchema,
-} from "../mcp/contracts.js";
+import { FreeContextInvocationContextSchema } from "../mcp/contracts.js";
 import type {
   FreeContextInvocationContext,
   FreeContextRequest,
   FreeContextResult,
 } from "../mcp/contracts.js";
-import { compileFreeContextResult } from "../output/evidence.js";
+import { compileFreeContextResult } from "../output/text-result.js";
 import { buildUserPrompt } from "../prompt.js";
 import type { Workspace } from "../tools/contracts.js";
 import { createWorkspace } from "../tools/workspace.js";
 import type { ContextTokenCounter } from "./context-budget.js";
 import { GigatokenCounter } from "./gigatoken-counter.js";
-import type { CanonicalCandidateEvaluator, PiSessionEventHandler } from "./pi-session.js";
+import type { PiSessionEventHandler } from "./pi-session.js";
 import type { RouterDependencies } from "./router.js";
 import { runPrimaryRoute } from "./router.js";
-import { captureCompiler, capturePiSession } from "./session-capture.js";
+import { capturePiSession } from "./session-capture.js";
 import type {
   ExplorerRuntime,
   ExplorerSessionCaptureHandler,
@@ -64,17 +62,14 @@ async function runExplorerWithCounter(
     throw new Error("Invocation workspaceRoot must be the resolved workspace root.");
   }
   const primaryPrompt = buildUserPrompt(request);
-  const candidateEvaluator: CanonicalCandidateEvaluator = (candidate, observedReads) =>
-    compileFreeContextResult(request, invocation, candidate, { errorCode: null }, observedReads);
   const routed = await runPrimaryRoute({
     cli,
     workspace,
     promptText: primaryPrompt,
-    finalizationRequest: request,
     ...(signal ? { signal } : {}),
     ...(onEvent ? { onEvent } : {}),
     startedAt,
-    dependencies: { ...dependencies, tokenCounter, candidateEvaluator },
+    dependencies: { ...dependencies, tokenCounter },
   });
   const runtime: Readonly<ExplorerRuntime> = Object.freeze({
     route: routed.route,
@@ -89,27 +84,15 @@ async function runExplorerWithCounter(
     tools: Object.freeze([...routed.repositoryTools.names]),
   });
 
-  const terminal = routed.primary.terminalFailure
-    ? { errorCode: "INTERNAL_ERROR" as const, reason: `Terminal protocol failure: ${routed.primary.terminalFailure}` }
-    : { errorCode: null };
-  let compilerMs = 0;
-  let result: Readonly<FreeContextResult>;
-  if (routed.primary.canonicalResult && routed.primary.terminalFailure === null) {
-    result = routed.primary.canonicalResult;
-  } else {
-    const compilerStartedAt = clock();
-    result = await compileFreeContextResult(
-      request,
-      invocation,
-      routed.primary.candidate,
-      terminal,
-      routed.primary.observedReads,
-    );
-    compilerMs = Math.max(0, clock() - compilerStartedAt);
-  }
+  const terminal = routed.primary.terminalFailure === "aborted"
+    ? { errorCode: "DEADLINE_EXCEEDED" as const, reason: "FreeContext worker ended after the deadline." }
+    : routed.primary.terminalFailure === "provider"
+      ? { errorCode: "PROVIDER_RETRY_EXHAUSTED" as const, reason: "The provider remained unavailable after the configured retries." }
+      : { errorCode: null };
+  const result = await compileFreeContextResult(request, invocation, routed.primary.text, terminal);
   if (onSessionCapture) {
     await onSessionCapture(Object.freeze({
-      schemaVersion: "freecontext-explorer-capture-v3",
+      schemaVersion: "freecontext-explorer-capture-v4",
       request,
       invocation,
       runtime,
@@ -118,13 +101,11 @@ async function runExplorerWithCounter(
         routed.systemPrompt,
         primaryPrompt,
       ),
-      compiler: captureCompiler(routed.primary.candidate, routed.primary.terminalFailure),
       metrics: Object.freeze({
         routeAttempts: routed.routeAttempts,
         fallbacks: routed.fallbacks,
         setupMs: routed.setupMs,
         primarySessionMs: routed.primarySessionMs,
-        compilerMs,
         totalMs: Math.max(0, clock() - startedAt),
       }),
     }));

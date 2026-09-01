@@ -12,7 +12,6 @@ import { defaultSessionDirectory } from "../session/store.js";
 import { createWorkspace } from "../tools/workspace.js";
 import {
   FreeContextCallerRequestSchema,
-  FreeContextResultSchema,
   SERVER_INSTRUCTIONS,
   TOOL_DESCRIPTION,
 } from "./contracts.js";
@@ -185,7 +184,6 @@ export function createFreeContextMcpServer(
       title: "Gather context with FreeContext",
       description: TOOL_DESCRIPTION,
       inputSchema: FreeContextCallerRequestSchema,
-      outputSchema: FreeContextResultSchema,
       annotations: {
         readOnlyHint: true,
         destructiveHint: false,

@@ -29,9 +29,9 @@ const forbidden: readonly (readonly [RegExp, string])[] = [
 
 const failures: string[] = [];
 const hostPersistenceModules = new Set([
+  path.join("src", "session", "store.ts"),
   path.join("src", "benchmark", "cost-cli.ts"),
   path.join("src", "benchmark", "master-context.ts"),
-  path.join("src", "session", "store.ts"),
 ]);
 for (const file of files) {
   const source = await readFile(file, "utf8");
@@ -96,7 +96,6 @@ for (const required of [
   "destructiveHint: false",
   "openWorldHint: true",
   "inputSchema: FreeContextCallerRequestSchema",
-  "outputSchema: FreeContextResultSchema",
 ]) {
   if (!mcpServer.includes(required)) failures.push(`src/mcp/server.ts: missing ${required}`);
 }
@@ -131,9 +130,9 @@ if (mcpEntries.some(({ file, source }) => (
 }
 
 const mcpSession = await readFile(path.join(root, "src", "mcp", "session.ts"), "utf8");
-if (!mcpSession.includes('schemaVersion: "freecontext-mcp-session-v3"') ||
-    mcpSession.includes('schemaVersion: "freecontext-mcp-session-v2"')) {
-  failures.push("src/mcp/session.ts: production must write only freecontext-mcp-session-v3");
+if (!mcpSession.includes('schemaVersion: "freecontext-mcp-session-v4"') ||
+    mcpSession.includes('schemaVersion: "freecontext-mcp-session-v3"')) {
+  failures.push("src/mcp/session.ts: production must write only freecontext-mcp-session-v4");
 }
 const lifecycle = await readFile(path.join(root, "src", "mcp", "lifecycle.ts"), "utf8");
 if (!lifecycle.includes('schemaVersion: "freecontext-late-result-v2"') ||

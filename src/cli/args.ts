@@ -131,7 +131,7 @@ Core options:
       --request-timeout-ms N    Provider request timeout in milliseconds
       --provider-retry-delays-ms LIST
                                 Comma-separated retry waits; empty disables retries
-      --no-context-compaction   Disable proactive compaction and overflow recovery
+      --no-context-compaction   Disable proactive compaction
       --benchmark-session-file PATH
                                 Save the full benchmark-only session outside the explored workspace
       --verbose                 Emit lifecycle diagnostics to stderr

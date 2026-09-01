@@ -45,15 +45,15 @@ Direct `read`, `jq`, and `bat` access is capped at 32 MiB per file. The native r
 
 Repository content is untrusted input. The system prompt instructs the child to treat source text as data. More importantly, repository instructions cannot grant additional tools or weaken path/process enforcement.
 
-### Output integrity
+### Output boundary
 
-Evidence citations are validated against the local filesystem. A model cannot fabricate a non-existent path or out-of-range line interval and still produce a successful CLI result.
+The worker's answer is ordinary assistant text and is not parsed as a citation structure. Path and line guidance in the system prompt improves navigation but does not replace the parent's normal verification before edits or claims.
 
 ### Benchmark capture boundary
 
-`--benchmark-session-file` is an explicit host-side audit feature, not a model tool. Its destination parent must already exist, is resolved through `realpath`, and must remain outside the explored workspace. The writer uses a private `0600` file and refuses to overwrite an existing path. Provider credentials, configured secret values, and request headers are not part of the capture schema.
+`--benchmark-session-file` is an explicit host-side audit feature, not a model tool. Its destination parent must exist, is resolved through `realpath`, and must remain outside the explored workspace. The writer uses a private `0600` file and refuses to overwrite an existing path. Provider credentials, configured secret values, and request headers are not part of the capture.
 
-The file intentionally preserves prompts, final model messages, ordered stream deltas, repository tool calls/results, safe tool schemas, effective compacted contexts, and validation outcomes. Repeated growing partial-message snapshots are omitted from each delta because the complete final messages are already retained. A failed serialization or commit removes the incomplete private file instead of leaving a false session artifact. Benchmark operators must therefore protect and retain successful artifacts according to the repository's source-data policy.
+The file preserves the original system prompt and user prompt, one full model-message sequence, one safe repository-tool schema list, the ordinary output, aggregate metrics, and terminal outcomes. If normal capture is unavailable, runtime events retain the stream and tool diagnostics instead; normal sessions do not duplicate that event trace. A failed serialization or commit removes the incomplete private file instead of leaving a false session artifact.
 
 ## Residual risks
 
@@ -61,7 +61,7 @@ The file intentionally preserves prompts, final model messages, ordered stream d
 - Sensitive values embedded in ordinary source files under non-blocked names can be read.
 - Local executables found on PATH are trusted; a malicious replacement `rg`, `jq`, or `bat` could violate assumptions.
 - The process runs with the invoking user's OS permissions. The tool-level read-only design is not an operating-system sandbox.
-- A model may return an incomplete evidence set; local validation establishes citation integrity, not semantic completeness.
+- A model may return an incomplete or imprecise answer; prompt guidance does not establish semantic completeness, so the parent should verify decisive locations.
 - Opt-in benchmark session files may contain substantial repository source and task context even though they exclude provider credentials and request headers.
 
 For stronger isolation, execute FreeContext in a read-only container or mount namespace with a controlled PATH and egress policy.

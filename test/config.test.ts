@@ -117,6 +117,7 @@ test("tracked TOML examples remain loadable without embedded credentials", async
   assert.deepEqual(benchmark.targets.map((target) => target.target), ["primary"]);
   assert.equal(benchmark.targets[0]?.model, "glm-5.3-flash");
   assert.equal(benchmark.targets[0]?.openAICompat.useStreaming, false);
+
 });
 
 test("target and route overrides are deterministic", async () => {
