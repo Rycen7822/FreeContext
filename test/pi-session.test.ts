@@ -16,7 +16,7 @@ import { createModel, createRequestOptions } from "../src/runtime/model.js";
 import type { PiBindings } from "../src/runtime/pi-bindings.js";
 import type { FreeContextRuntimeEvent, PiSessionOptions } from "../src/runtime/pi-session.js";
 import type { ExplorerCandidate } from "../src/output/candidate.js";
-import { runIsolatedFinalizer, runPiSession as runPiSessionBase } from "../src/runtime/pi-session.js";
+import { PI_SOFT_FINALIZATION_MS, runIsolatedFinalizer, runPiSession as runPiSessionBase } from "../src/runtime/pi-session.js";
 import { assistantText, baseConfig, baseRequest, fakeBindings } from "./helpers.js";
 
 function bindingsWith(handler: PiBindings["runAgentLoop"]): PiBindings {
@@ -176,6 +176,224 @@ test("runPiSession wires the low-level Pi loop in parallel mode", async () => {
   assert.equal(result.metrics.turns, 1);
   assert.equal(result.metrics.usage.totalTokens, 15);
   assert.equal(result.metrics.compactions, 0);
+});
+
+test("soft wall-clock deadline finalizes after the current batch without aborting it", async () => {
+  const config = baseConfig();
+  const exploratory = assistantText("still exploring");
+  const final = submissionMessage();
+  const contexts: AgentContext[] = [];
+  const phases: string[] = [];
+  let continuationCalls = 0;
+  const bindings = fakeBindings(
+    async (prompts, context, loopConfig, emit) => {
+      contexts.push(context);
+      phases.push("initial-start");
+      await emit({ type: "agent_start" });
+      await emit({ type: "turn_start" });
+      await emit({ type: "tool_execution_end", toolCallId: "read-1", toolName: "read", result: observedReadResult, isError: false });
+      await new Promise((resolve) => setTimeout(resolve, 10));
+      phases.push("batch-still-running");
+      await emit({ type: "turn_end", message: exploratory, toolResults: [] });
+      phases.push("batch-ended");
+      const completed = { ...context, messages: [...prompts, exploratory] };
+      const update = await loopConfig.prepareNextTurn?.({
+        message: exploratory,
+        context: completed,
+        newMessages: [exploratory],
+        toolResults: [],
+      });
+      const finalizerContext = update?.context;
+      assert.ok(finalizerContext);
+      contexts.push(finalizerContext);
+      phases.push("finalizer-prepared");
+      assert.deepEqual(finalizerContext.tools?.map((tool) => tool.name), ["submit_evidence"]);
+      return [...prompts, exploratory];
+    },
+    {
+      runAgentLoopContinue: async (context, loopConfig, emit) => {
+        continuationCalls += 1;
+        phases.push("finalizer-request");
+        assert.deepEqual(context.tools?.map((tool) => tool.name), ["submit_evidence"]);
+        const submit = context.tools?.[0];
+        const call = final.content[0];
+        assert.ok(submit && call?.type === "toolCall");
+        await emit({ type: "turn_start" });
+        const submitted = await submit.execute(call.id, call.arguments);
+        await emit({ type: "tool_execution_end", toolCallId: call.id, toolName: call.name, result: submitted, isError: false });
+        await emit({ type: "turn_end", message: final, toolResults: [] });
+        const stop = await loopConfig.shouldStopAfterTurn?.({
+          message: final,
+          toolResults: [],
+          context: { ...context, messages: [...context.messages, final] },
+          newMessages: [final],
+        });
+        assert.equal(stop, true);
+        return [final];
+      },
+    },
+  );
+  const result = await runPiSession({
+    bindings,
+    model: createModel(config),
+    requestOptions: createRequestOptions(config),
+    config,
+    systemPrompt: "system",
+    promptText: "prompt",
+    tools: [readTool],
+    softFinalizationMs: 1,
+  });
+
+  assert.equal(PI_SOFT_FINALIZATION_MS, 180_000);
+  assert.equal(continuationCalls, 1);
+  assert.deepEqual(phases, ["initial-start", "batch-still-running", "batch-ended", "finalizer-prepared", "finalizer-request"]);
+  assert.deepEqual(contexts[0]?.tools?.map((tool) => tool.name), ["read", "submit_evidence"]);
+  assert.deepEqual(contexts[1]?.tools?.map((tool) => tool.name), ["submit_evidence"]);
+  assert.equal(result.metrics.finalizationInjected, true);
+  assert.equal(result.metrics.finalizationReason, "soft_deadline");
+  assert.equal(result.metrics.softFinalizationTriggered, true);
+  assert.equal(result.candidate?.summary, "Implementation found.");
+});
+
+test("soft deadline pending after prepare is consumed before the real loop's steering boundary", async () => {
+  const config = baseConfig({ contextCompactionEnabled: false });
+  const exploratory = assistantText("", {
+    stopReason: "toolUse",
+    content: [{ type: "toolCall" as const, id: "read-1", name: "read", arguments: {} }],
+  });
+  const responses = [exploratory, submissionMessage()];
+  const toolSnapshots: string[][] = [];
+  let responseIndex = 0;
+  let delayedPrepare = false;
+  const observedReadTool: AgentTool = {
+    ...readTool,
+    execute: async () => observedReadResult,
+  };
+  const streamBindings = fakeBindings(
+    async (prompts, context, loopConfig, emit, signal, streamFn) => {
+      const wrappedConfig = {
+        ...loopConfig,
+        prepareNextTurn: async (turn: Parameters<NonNullable<typeof loopConfig.prepareNextTurn>>[0]) => {
+          const update = await loopConfig.prepareNextTurn?.(turn);
+          if (!delayedPrepare) {
+            delayedPrepare = true;
+            await new Promise((resolve) => setTimeout(resolve, 15));
+          }
+          return update;
+        },
+      };
+      return runAgentLoop(prompts, context, wrappedConfig, emit, signal, streamFn);
+    },
+    {
+      streamSimple: (_model, context) => {
+        toolSnapshots.push((context.tools ?? []).map((tool) => tool.name));
+        const stream = createAssistantMessageEventStream();
+        stream.end(responses[responseIndex++] ?? assistantText("unexpected response"));
+        return stream;
+      },
+    },
+  );
+  const result = await runPiSession({
+    bindings: streamBindings,
+    model: createModel(config),
+    requestOptions: createRequestOptions(config),
+    config,
+    systemPrompt: "system",
+    promptText: "prompt",
+    tools: [observedReadTool],
+    softFinalizationMs: 5,
+  });
+
+  assert.equal(responseIndex, 2);
+  assert.deepEqual(toolSnapshots, [["read", "submit_evidence"], ["submit_evidence"]]);
+  assert.equal(result.metrics.finalizationReason, "soft_deadline");
+  assert.equal(result.metrics.softFinalizationTriggered, true);
+  assert.equal(result.candidate?.summary, "Implementation found.");
+});
+
+test("soft pending with observed reads survives a provider context overflow into finalization", async () => {
+  const config = baseConfig({ contextCompactionEnabled: false });
+  const overflow = assistantText("", { stopReason: "error", errorMessage: "overflow" });
+  const bindings = fakeBindings(async (prompts, _context, _loopConfig, emit) => {
+    await emit({ type: "agent_start" });
+    await emit({ type: "turn_start" });
+    await emit({ type: "tool_execution_end", toolCallId: "read-1", toolName: "read", result: observedReadResult, isError: false });
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    return [...prompts, overflow];
+  }, {
+    isContextOverflow: (message) => message.errorMessage === "overflow",
+    streamSimple: () => {
+      const stream = createAssistantMessageEventStream();
+      stream.end(submissionMessage());
+      return stream;
+    },
+  });
+  const result = await runPiSession({
+    bindings,
+    model: createModel(config),
+    requestOptions: createRequestOptions(config),
+    config,
+    systemPrompt: "system",
+    promptText: "prompt",
+    tools: [readTool],
+    softFinalizationMs: 1,
+  });
+
+  assert.equal(result.metrics.finalizationReason, "soft_deadline");
+  assert.equal(result.metrics.softFinalizationTriggered, true);
+  assert.equal(result.candidate?.summary, "Implementation found.");
+});
+
+test("soft pending nonretryable assistant error enters finalization without provider retry", async () => {
+  const config = baseConfig({ contextCompactionEnabled: false, providerRetryDelaysMs: [] });
+  const failure = assistantText("", { stopReason: "error", errorMessage: "authentication failed" });
+  const events: FreeContextRuntimeEvent[] = [];
+  let continuationCalls = 0;
+  const bindings = fakeBindings(async (prompts, _context, _loopConfig, emit) => {
+    await emit({ type: "turn_start" });
+    await emit({ type: "tool_execution_end", toolCallId: "read-1", toolName: "read", result: observedReadResult, isError: false });
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    await emit({ type: "turn_end", message: failure, toolResults: [] });
+    return [...prompts, failure];
+  }, {
+    runAgentLoopContinue: async (context, loopConfig, emit) => {
+      continuationCalls += 1;
+      assert.deepEqual(context.tools?.map((tool) => tool.name), ["submit_evidence"]);
+      const final = submissionMessage();
+      const call = final.content[0];
+      assert.ok(call?.type === "toolCall");
+      await emit({ type: "turn_start" });
+      const submit = context.tools?.[0];
+      assert.ok(submit);
+      const submitted = await submit.execute(call.id, call.arguments);
+      await emit({ type: "tool_execution_end", toolCallId: call.id, toolName: call.name, result: submitted, isError: false });
+      await emit({ type: "turn_end", message: final, toolResults: [] });
+      await loopConfig.shouldStopAfterTurn?.({
+        message: final,
+        toolResults: [],
+        context: { ...context, messages: [...context.messages, final] },
+        newMessages: [final],
+      });
+      return [final];
+    },
+  });
+  const result = await runPiSession({
+    bindings,
+    model: createModel(config),
+    requestOptions: createRequestOptions(config),
+    config,
+    systemPrompt: "system",
+    promptText: "prompt",
+    tools: [readTool],
+    softFinalizationMs: 1,
+    onEvent: (event) => { events.push(event); },
+  });
+
+  assert.equal(continuationCalls, 1);
+  assert.equal(result.metrics.providerRetries, 0);
+  assert.equal(events.some((event) => event.type === "provider_attempt_failed"), false);
+  assert.equal(result.metrics.finalizationReason, "soft_deadline");
+  assert.equal(result.candidate?.summary, "Implementation found.");
 });
 
 test("tool timing aggregates overlapping executions under an injected clock", async () => {
@@ -365,11 +583,13 @@ test("a sole valid typed submission ends exploration before the turn limit", asy
     systemPrompt: "system",
     promptText: "prompt",
     tools: [readTool],
+    softFinalizationMs: 1,
   });
 
   assert.equal(shouldStop, true);
   assert.equal(result.metrics.turns, 1);
   assert.equal(result.metrics.finalizationReason, "coverage");
+  assert.equal(result.metrics.softFinalizationTriggered, false);
   assert.deepEqual(result.metrics.terminalFailureDetails, []);
   assert.equal(result.terminalFailure, null);
   assert.equal(result.candidate?.summary, "Implementation found.");
@@ -853,6 +1073,7 @@ test("a text-only turn receives continuation feedback before repeated stagnation
   let finalContext: AgentContext | undefined;
   let firstContinuationContext: AgentContext | undefined;
   let firstFeedback: AgentMessage | undefined;
+  let finalizationSteer: AgentMessage | undefined;
   const bindings = bindingsWith(async (prompts, context, loopConfig, emit) => {
     let activeContext: AgentContext = { ...context, messages: [...prompts] };
     for (let turn = 1; turn <= 2; turn += 1) {
@@ -870,6 +1091,8 @@ test("a text-only turn receives continuation feedback before repeated stagnation
         const followUp = await loopConfig.getFollowUpMessages?.() ?? [];
         firstFeedback = followUp[0];
         activeContext = { ...activeContext, messages: [...activeContext.messages, ...followUp] };
+      } else {
+        finalizationSteer = (await loopConfig.getSteeringMessages?.() ?? [])[0];
       }
     }
     finalContext = activeContext;
@@ -888,6 +1111,11 @@ test("a text-only turn receives continuation feedback before repeated stagnation
   assert.deepEqual(firstContinuationContext?.tools?.map((tool) => tool.name), ["read", "submit_evidence"]);
   assert.equal(firstFeedback?.role, "user");
   assert.match(typeof firstFeedback?.content === "string" ? firstFeedback.content : "", /no repository tool call or evidence submission/iu);
+  const finalizationSteerText = finalizationSteer?.role === "user" && typeof finalizationSteer.content === "string"
+    ? finalizationSteer.content
+    : "";
+  assert.match(finalizationSteerText, /Finalization phase/iu);
+  assert.doesNotMatch(finalizationSteerText, /Soft deadline/iu);
   assert.deepEqual(finalContext?.tools?.map((tool) => tool.name), ["submit_evidence"]);
   assert.equal(result.metrics.finalizationInjected, true);
   assert.equal(result.metrics.finalizationReason, "stagnation");

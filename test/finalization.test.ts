@@ -181,6 +181,13 @@ test("submit_evidence exposes only portable shape constraints to the provider", 
   }
 });
 
+test("finalizer prompt submits concise partial evidence without extending exploration", () => {
+  assert.match(FINALIZATION_SYSTEM_PROMPT, /stop expanding.*immediately submit a concise, useful result/iu);
+  assert.match(FINALIZATION_SYSTEM_PROMPT, /incomplete.*partial result.*explicit gaps/iu);
+  assert.match(FINALIZATION_SYSTEM_PROMPT, /strongest concise.*self-contained verified observations/iu);
+  assert.doesNotMatch(FINALIZATION_SYSTEM_PROMPT, /mechanically trim|compress|rewrite evidence/iu);
+});
+
 test("local submission validation records exact limits removed from the provider schema", async () => {
   const invalidCases = [
     [{ ...validArguments, evidence: Array.from({ length: 7 }, () => validArguments.evidence[0]) }, ["too_many_evidence"]],
@@ -413,7 +420,7 @@ test("isolated packet marks exploration complete and omits repository tool origi
   assert.deepEqual(parsed.repositoryObservations, [{ id: 1, ...modelObservation, content: "4 export const value = 1;" }]);
   assert.equal(packet.includes("raw history must not return"), false);
   assert.equal(packet.includes("[read src/index.ts:4-8]"), false);
-  assert.equal(FINALIZATION_SYSTEM_PROMPT.includes("completed repository exploration"), true);
+  assert.equal(FINALIZATION_SYSTEM_PROMPT.includes("exploration window ended"), true);
   assert.equal(FINALIZATION_SYSTEM_PROMPT.includes("Repository tools are unavailable"), true);
   assert.equal(FINALIZATION_SYSTEM_PROMPT.includes("never submit a seventh evidence item"), true);
   assert.equal(FINALIZATION_SYSTEM_PROMPT.includes("submissionRules.requiredAllocation"), true);

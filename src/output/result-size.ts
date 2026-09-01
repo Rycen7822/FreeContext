@@ -28,10 +28,13 @@ function compactNextActionReason(result: Readonly<FreeContextResult>): string {
       ? "Make one exact probe, then send only recovery.priorSessionId and the workspace-relative probePath."
       : "Make one exact probe; call FreeContext before broader discovery.";
   }
-  if ((result.handoff?.blockingGaps.length ?? 0) > 0) {
-    return "Consume inline Evidence; execute the handoff; reenter only if it exposes a new typed blocking gap.";
+  if (result.nextAction.kind === "native_exploration") {
+    return "Continue normal native repository exploration after this terminal failure; do not force an exact probe or recovery.";
   }
-  return "Consume inline Evidence, then execute the handoff edit/check.";
+  if ((result.handoff?.blockingGaps.length ?? 0) > 0) {
+    return "Consume Evidence as read context; no remap; verify 1-2 exact/adjacent contexts, then edit/check; typed gap reentry only.";
+  }
+  return "Consume Evidence as read context; no remap; verify 1-2 exact/adjacent contexts, then edit/check.";
 }
 
 function linkCoverageGaps(
@@ -90,7 +93,7 @@ function oversizeFailure(
       questionId: question.id,
       reason: "The compiled result exceeded the model-visible byte limit.",
     })),
-    nextAction: { kind: "exact_probe", reason: "The compiled result exceeded the model-visible byte limit." },
+    nextAction: { kind: "native_exploration", reason: "The compiled result exceeded the model-visible byte limit; continue normal native repository exploration." },
     errorCode: "RESULT_TOO_LARGE",
     sessionId: invocation.sessionId,
     sessionFile: null,

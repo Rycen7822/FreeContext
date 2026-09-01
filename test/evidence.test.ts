@@ -5,7 +5,7 @@ import path from "node:path";
 import test from "node:test";
 import type { FreeContextInvocationContext, FreeContextRequest } from "../src/mcp/contracts.js";
 import { serializeForModel } from "../src/mcp/contracts.js";
-import { compileFreeContextResult } from "../src/output/evidence.js";
+import { compileFreeContextResult, serializeExplorerFeedback } from "../src/output/evidence.js";
 import type { ExplorerCandidate, ExplorerCoverageCandidate, ExplorerEvidenceCandidate, ExplorerGapCandidate } from "../src/output/evidence.js";
 import type { ObservedRead } from "../src/runtime/finalization.js";
 import { topicTarget } from "./helpers.js";
@@ -483,6 +483,11 @@ test("normal empty evidence is not_found while malformed output is failed", asyn
   assert.match(serializeForModel(notFound), /one exact non-broad path or symbol probe and read at most one candidate path/iu);
   assert.match(serializeForModel(notFound), /Recovery contract: after the exact probe, call gather_context with only/iu);
   assert.match(serializeForModel(notFound), /workspace-relative probed path/iu);
+  const internalNotFoundFeedback = serializeExplorerFeedback(notFound);
+  assert.match(internalNotFoundFeedback, /same Pi exploration session/u);
+  assert.match(internalNotFoundFeedback, /repository tools only/u);
+  assert.match(internalNotFoundFeedback, /Do not call gather_context/u);
+  assert.doesNotMatch(internalNotFoundFeedback, /exact_probe|Recovery contract|probePath|call FreeContext/iu);
 
   const failed = await compileFreeContextResult(
     request(),
@@ -493,6 +498,7 @@ test("normal empty evidence is not_found while malformed output is failed", asyn
   assert.equal(failed.status, "failed");
   assert.equal(failed.errorCode, "INTERNAL_ERROR");
   assert.equal(failed.evidence.length, 0);
+  assert.match(serializeExplorerFeedback(failed), /result is terminal/u);
 }));
 
 test("compiler keeps the canonical text within 8 KiB", async () => withWorkspace(async (root) => {
@@ -558,7 +564,7 @@ test("compiler preserves post-link reentry action when exhaustive basis evidence
       coverageTargets: [topicTarget("members-target", "registered members", "presence", "exhaustive")],
     }],
   };
-  const members = Array.from({ length: 64 }, (_, index) => `member-${index.toString().padStart(2, "0")}-${"x".repeat(80)}`);
+  const members = Array.from({ length: 64 }, (_, index) => `member-${index.toString().padStart(2, "0")}-${"x".repeat(79)}`);
   const result = await compileFreeContextResult(
     exhaustiveRequest,
     invocation(root),
@@ -592,7 +598,7 @@ test("compiler preserves post-link reentry action when exhaustive basis evidence
   assert.match(result.coverage?.[0]?.gaps[0] ?? "", /Enumeration-boundary Evidence was omitted/u);
   assert.ok(result.gaps.some((gap) => gap.targetId === "members-target"));
   assert.ok(result.handoff?.blockingGaps.some((gap) => gap.targetId === "members-target"));
-  assert.equal(result.nextAction.reason, "Consume inline Evidence; execute the handoff; reenter only if it exposes a new typed blocking gap.");
+  assert.equal(result.nextAction.reason, "Consume Evidence as read context; no remap; verify 1-2 exact/adjacent contexts, then edit/check; typed gap reentry only.");
   assert.equal(result.handoff?.workUnit.outcome, exhaustiveRequest.workUnit.outcome);
   assert.equal(result.handoff?.workUnit.goal, exhaustiveRequest.workUnit.goal);
   assert.ok(Buffer.byteLength(serializeForModel(result), "utf8") <= 8_192);

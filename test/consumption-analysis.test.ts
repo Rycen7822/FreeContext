@@ -23,16 +23,16 @@ function result(status: FreeContextResult["status"] = "ready"): FreeContextResul
       why: "Defines routing.",
     }],
     gaps: status === "partial" ? [{ questionId: "tests", reason: "Tests remain unresolved." }] : [],
-    nextAction: status === "not_found" || status === "failed"
+    nextAction: status === "not_found"
       ? {
           kind: "exact_probe",
           reason: "Search directly.",
-          ...(status === "not_found" ? {
-            recovery: {
-              priorSessionId: "session-1",
-            },
-          } : {}),
+          recovery: {
+            priorSessionId: "session-1",
+          },
         }
+      : status === "failed"
+        ? { kind: "native_exploration", reason: "Continue native exploration." }
       : { kind: "consume_evidence", reason: "Use the evidence." },
     errorCode: status === "failed" ? "INTERNAL_ERROR" : null,
     sessionId: "session-1",
@@ -134,6 +134,28 @@ test("v7 audit rejects pre-edit search beyond a consume_evidence nextAction", ()
   assert.deepEqual(audit.failureReasons, ["pre_edit_handoff_scope_exceeded"]);
 });
 
+test("consume_evidence allows two precise context reads while failed native fallback stays unrestricted", () => {
+  const twoPreciseReads = analyzeFreeContextConsumption(result(), [
+    action(1),
+    action(2, { startLine: 21, endLine: 30 }),
+  ], context());
+  assert.deepEqual(twoPreciseReads.failureReasons, []);
+
+  const threePreciseReads = analyzeFreeContextConsumption(result(), [
+    action(1),
+    action(2, { startLine: 21, endLine: 30 }),
+    action(3, { startLine: 31, endLine: 40 }),
+  ], context());
+  assert.deepEqual(threePreciseReads.failureReasons, ["pre_edit_handoff_scope_exceeded"]);
+
+  const failedNative = analyzeFreeContextConsumption(result("failed"), [
+    action(1, { kind: "search", path: null, startLine: null, endLine: null, broad: true }),
+    action(2, { kind: "search", path: null, startLine: null, endLine: null }),
+    action(3, { path: "src/other.ts", startLine: 1, endLine: 5 }),
+  ], context());
+  assert.deepEqual(failedNative.failureReasons, []);
+});
+
 test("v7 audit applies pre-edit handoff and post-edit diagnostic boundaries", () => {
   const adjacent = analyzeFreeContextConsumption(result(), [
     action(1, { startLine: 21, endLine: 30 }),
@@ -156,7 +178,7 @@ test("v7 audit applies pre-edit handoff and post-edit diagnostic boundaries", ()
     action(1, { startLine: 21, endLine: 30 }),
     action(2, { startLine: 31, endLine: 40 }),
   ], context());
-  assert.deepEqual(repeatedAdjacent.failureReasons, ["pre_edit_handoff_scope_exceeded"]);
+  assert.deepEqual(repeatedAdjacent.failureReasons, []);
 
   const postEditExactDiagnostic = analyzeFreeContextConsumption(result(), [
     action(1),

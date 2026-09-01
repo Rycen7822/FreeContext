@@ -24,6 +24,8 @@ test("skill routes whole phases and preserves the atomic caller contract", async
   assert.match(skill, /fewest items needed to cover the required areas/iu);
   assert.match(skill, /planned cross-module consistency audit.*even without a failure/iu);
   assert.match(skill, /Evidence-origin reentry is only for an independent child/iu);
+  assert.match(skill, /Ready or partial Evidence is already read context.*without a full remap.*one or two.*exact positions or adjacent contexts.*then edit\/check/iu);
+  assert.match(skill, /status is `failed`.*normal native exploration directly.*exact probe.*recovery/iu);
   assert.match(skill, /```js\n\/\/ @exec: \{"yield_time_ms": 300000, "max_output_tokens": 10000\}/u);
   assert.match(skill, /exact method name `tools\.mcp__freecontext__gather_context` directly/iu);
   assert.match(skill, /do not do a tool-directory or catalog lookup first/iu);

@@ -180,7 +180,7 @@ test("serializeForModel is text-first and contains every canonical evidence fiel
     "-",
     "Handoff:",
     "- prior_handoff={\"id\":\"handoff:session-1\",\"workUnit\":{\"outcome\":\"answer\",\"goal\":\"Use the verified routing evidence.\"},\"evidenceIds\":[\"e1\"],\"outcome\":{\"kind\":\"answer\",\"instruction\":\"Answer from the verified routing evidence.\"},\"blockingGaps\":[]}",
-    "Follow nextAction: consume inline Evidence and proceed to edit/check. If change-critical context is omitted, one necessary adjacent read on an Evidence path is allowed. A listed gap is not replay authorization; for a new gather-level child, send compact reentry with priorSessionId, one question, and a typed evidence/edit/check origin, plus parentGapId only for gap concretization. Same-fact replay remains invalid. Read the decisive implementation span.",
+    "Follow nextAction: consume inline Evidence already read by the main Agent; do not remap the repository. Verify at most one or two necessary exact or adjacent contexts, then edit/check. A listed gap is not replay authorization; for a new gather-level child, send compact reentry with priorSessionId, one question, and a typed evidence/edit/check origin, plus parentGapId only for gap concretization. Same-fact replay remains invalid. Read the decisive implementation span.",
     "Gaps:",
     "-",
     "Summary: The implementation and test locations are verified.",
@@ -236,6 +236,37 @@ test("canonical result schema enforces terminal state and span invariants", () =
     status: "failed",
     errorCode: "INTERNAL_ERROR",
   }), /failed cannot contain evidence/u);
+  assert.throws(() => FreeContextResultSchema.parse({
+    ...readyResult(),
+    status: "failed",
+    evidence: [],
+    handoff: null,
+    nextAction: { kind: "exact_probe", reason: "Do not use exact probe after failure." },
+    errorCode: "INTERNAL_ERROR",
+  }), /failed requires native_exploration/u);
+  const legacyFailed = {
+    ...readyResult(),
+    status: "failed",
+    evidence: [],
+    gaps: [],
+    handoff: null,
+    nextAction: { kind: "exact_probe", reason: "Historical failure fallback." },
+    errorCode: "INTERNAL_ERROR",
+    sessionFile: null,
+  };
+  assert.equal(LegacyFreeContextResultSchema.parse(legacyFailed).nextAction.kind, "exact_probe");
+  assert.throws(() => FreeContextResultSchema.parse(legacyFailed), /failed requires native_exploration/u);
+  const failed = FreeContextResultSchema.parse({
+    ...readyResult(),
+    status: "failed",
+    evidence: [],
+    gaps: [{ questionId: "implementation", reason: "Provider failed." }],
+    handoff: null,
+    nextAction: { kind: "native_exploration", reason: "Continue native exploration after failure." },
+    errorCode: "INTERNAL_ERROR",
+    sessionFile: null,
+  });
+  assert.match(serializeForModel(failed), /continue normal native repository exploration.*Do not force an exact probe, recovery, or another FreeContext call/iu);
   assert.throws(() => FreeContextResultSchema.parse({
     ...readyResult(),
     evidence: [{ ...readyResult().evidence[0], focusLine: 30 }],

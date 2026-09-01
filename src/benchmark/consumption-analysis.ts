@@ -256,12 +256,15 @@ export function analyzeFreeContextConsumption(
       ? [normalizePath(action.path)]
       : [])).size;
   const preDiscoveredReadPaths = new Set<string>();
-  let preAdjacentEvidenceReadCount = 0;
+  let preEvidenceReadCount = 0;
   for (const { action } of preEditActions) {
-    if (action.kind !== "read" || action.path === null || hitsAnyEvidence(action, result)) continue;
+    if (action.kind !== "read" || action.path === null) continue;
     const normalized = normalizePath(action.path);
-    if (isEvidencePath(action, result)) preAdjacentEvidenceReadCount += 1;
-    else preDiscoveredReadPaths.add(normalized);
+    if (isEvidencePath(action, result)) {
+      preEvidenceReadCount += 1;
+      continue;
+    }
+    preDiscoveredReadPaths.add(normalized);
   }
   const failures = [...(context.windowFailureReasons ?? [])];
   const addReason = (reason: string): void => {
@@ -301,9 +304,10 @@ export function analyzeFreeContextConsumption(
     ? preSearches.length > 0
     : preSearches.length > 1;
   const preReadExceeded = result.nextAction.kind === "consume_evidence"
-    ? preAdjacentEvidenceReadCount > 1 || preDiscoveredReadPaths.size > 0
+    ? preEvidenceReadCount > 2 || preDiscoveredReadPaths.size > 0
     : preDiscoveredReadPaths.size > 1;
-  if (!followedByRecovery && (preBroadSearchCount > 0 || preSearchExceeded || preReadExceeded)) {
+  const enforceHandoffScope = result.nextAction.kind !== "native_exploration";
+  if (!followedByRecovery && enforceHandoffScope && (preBroadSearchCount > 0 || preSearchExceeded || preReadExceeded)) {
     addReason("pre_edit_handoff_scope_exceeded");
   }
   const postSearches = postEditActions.filter(({ action }) => action.kind === "search");
@@ -311,7 +315,7 @@ export function analyzeFreeContextConsumption(
     action.kind === "read" && action.path !== null && !hitsAnyEvidence(action, result)
       && !editedPaths.has(normalizePath(action.path)) ? [normalizePath(action.path)] : []));
   const postSearchBatches = new Set(postSearches.map(batchKey)).size;
-  if (postSearches.some(({ action }) => action.broad) || postSearchBatches > 1 || postDiagnosticPaths.size > 1) {
+  if (enforceHandoffScope && (postSearches.some(({ action }) => action.broad) || postSearchBatches > 1 || postDiagnosticPaths.size > 1)) {
     addReason("post_edit_cross_file_exploration_without_fc");
   }
   const phaseSummary = (

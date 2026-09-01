@@ -53,7 +53,9 @@ function result(requestValue: FreeContextRequest, status: FreeContextResult["sta
     ...(handoff ? { handoff } : { handoff: null }),
     nextAction: evidence.length > 0
       ? { kind: "consume_evidence" as const, reason: "Consume the evidence." }
-      : { kind: "exact_probe" as const, reason: "Probe exactly.", ...(status === "not_found" ? { recovery: { priorSessionId: sessionId } } : {}) },
+      : status === "not_found"
+        ? { kind: "exact_probe" as const, reason: "Probe exactly.", recovery: { priorSessionId: sessionId } }
+        : { kind: "native_exploration" as const, reason: "Continue native exploration." },
     errorCode: status === "failed" ? "INVALID_REQUEST" as const : null,
     sessionId,
     sessionFile: `/logs/agent/freecontext-sessions/${target.id}.json`,
@@ -135,7 +137,7 @@ test("raw invocation provenance keeps rejected attempts and accepted descendants
     call("call-1", invalidInitial, null),
     call("call-2", caller(initial), notFound),
     call("call-3", caller(initial), partial),
-    call("call-4", caller(duplicateGapRequest), { status: "failed", summary: "invalid", evidence: [], gaps: [], nextAction: { kind: "exact_probe", reason: "invalid" }, errorCode: "INVALID_REQUEST", sessionId: "call-4", sessionFile: null }),
+    call("call-4", caller(duplicateGapRequest), { status: "failed", summary: "invalid", evidence: [], gaps: [], nextAction: { kind: "native_exploration", reason: "invalid" }, errorCode: "INVALID_REQUEST", sessionId: "call-4", sessionFile: null }),
     call("call-5", caller(reentryRequest), ready),
     call("call-6", caller(secondReentryRequest), finalResult),
   ];

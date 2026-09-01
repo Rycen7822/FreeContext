@@ -285,9 +285,11 @@ export async function compileFreeContextResult(
             : "Use Evidence; gaps do not allow replay. Reenter only for a parented child exposed by Evidence/edit/check.", RESULT_LIMITS.detailCodePoints),
         }
       : {
-          kind: "exact_probe",
+          kind: effectiveError ? "native_exploration" : "exact_probe",
           reason: clipSingleLine(
-            terminal.reason ?? "No validated evidence was found; make one exact non-broad probe and read at most one candidate, or call FreeContext before broader discovery.",
+            terminal.reason ?? (effectiveError
+              ? "FreeContext failed; continue normal native repository exploration without a forced probe or recovery."
+              : "No validated evidence was found; make one exact non-broad probe and read at most one candidate, or call FreeContext before broader discovery."),
             RESULT_LIMITS.detailCodePoints,
           ),
           ...(effectiveError === null ? {
@@ -314,12 +316,11 @@ export function serializeExplorerFeedback(rawResult: Readonly<FreeContextResult>
   lines.push("Unresolved questions:");
   if (result.gaps.length === 0) lines.push("-");
   for (const gap of result.gaps) lines.push(`- [${gap.questionId}]${gap.targetId ? `[target:${gap.targetId}]` : ""} ${gap.reason}`);
-  lines.push(`Next action: ${result.nextAction.kind} — ${result.nextAction.reason}`);
-  if (result.nextAction.recovery) {
-    lines.push(`Recovery contract: after the exact probe, call gather_context with only {"recovery":{"priorSessionId":${JSON.stringify(result.nextAction.recovery.priorSessionId)},"probePath":"<workspace-relative probed path>"}}.`);
-  }
-  lines.push(result.status === "ready"
-    ? "This candidate is terminal for these questions only. Do not continue native exploration; call gather_context first if task work exposes any new path, symbol, or missing context."
-    : "This is non-terminal feedback. Continue this same Pi exploration session, resolve only the listed gaps with repository tools, and submit an updated candidate. Do not call gather_context or start another session.");
+  lines.push(result.status === "ready" || result.status === "failed"
+    ? "Next action: terminal; return control to the main Agent."
+    : "Next action: continue this Pi session to resolve the listed gaps and resubmit.");
+  lines.push(result.status === "ready" || result.status === "failed"
+    ? "This result is terminal for this FreeContext exploration. Do not call gather_context; return control to the main Agent."
+    : "This is non-terminal feedback for this same Pi exploration session. Use repository tools only to resolve the listed gaps, then submit an updated candidate. Do not call gather_context or start another session.");
   return lines.join("\n");
 }

@@ -173,7 +173,7 @@ test("runExplorer converts malformed model output into a canonical failure witho
     });
     assert.equal(result.status, "failed");
     assert.equal(result.errorCode, "INTERNAL_ERROR");
-    assert.equal(result.nextAction.kind, "exact_probe");
+    assert.equal(result.nextAction.kind, "native_exploration");
   } finally {
     await rm(root, { recursive: true, force: true });
   }

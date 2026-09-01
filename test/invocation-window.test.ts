@@ -78,7 +78,9 @@ function result(
     } : null,
     nextAction: evidence[0]
       ? { kind: "consume_evidence", reason: "Use it." }
-      : { kind: "exact_probe", reason: "Probe directly." },
+      : status === "not_found"
+        ? { kind: "exact_probe", reason: "Probe directly." }
+        : { kind: "native_exploration", reason: "Continue native exploration." },
     errorCode: status === "failed" ? "INTERNAL_ERROR" : null,
     sessionId: `session-${firstQuestion.id}`,
     sessionFile: `/logs/agent/freecontext-sessions/${firstQuestion.id}.json`,

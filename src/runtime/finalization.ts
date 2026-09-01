@@ -67,8 +67,10 @@ export interface SubmitEvidenceDetails {
 }
 
 export const FINALIZATION_SYSTEM_PROMPT = [
-  "You are in the final evidence-submission phase of a completed repository exploration.",
+  "You are in the final evidence-submission phase after the repository exploration window ended.",
   "Repository tools are unavailable in this phase; do not attempt any further exploration.",
+  "Stop expanding the search and immediately submit a concise, useful result from the verified observations already available; if coverage is incomplete, be honest and return a partial result with explicit gaps.",
+  "Prefer the strongest concise, self-contained verified observations; if a required fact is missing, state the gap explicitly.",
   "Use only the task, questions, working summary, and verified repository observations in the user packet.",
   "Follow the submissionRules in the user packet exactly.",
   "The evidence array must contain no more than submissionRules.maxItems.evidence items; count the entries before calling and never submit a seventh evidence item.",

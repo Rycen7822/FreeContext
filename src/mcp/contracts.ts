@@ -49,7 +49,7 @@ export const FREECONTEXT_ELIGIBILITY_POLICY = Object.freeze({
     "A continuation sends only priorSessionId, one new child question, and a typed edit, check, or evidence origin; optional knownRefs and parentGapId are allowed only when needed. The server restores the committed handoff, work unit, and request context, treating an omitted parentGapId as a handoff child and a supplied one as gap concretization.",
     "Continuation origin is structured as evidence with evidenceIds, edit with changedPaths, or check with check and optional failureLocation; do not guess hidden fields.",
     "Each gather_context invocation is atomic and non-replayable; a later invocation addresses a newly exposed evidence need without a fixed call-count rule.",
-    "Inline Evidence excerpts are verified successful repository reads and may be used directly; one exact cited or adjacent read is allowed only when an excerpt omits change-critical context.",
+    "Ready or partial inline Evidence is already read context for the main Agent and should be consumed directly; do not remap the repository. Verify at most one or two truly necessary exact positions or adjacent contexts, then edit or check.",
     "After not_found, make the one exact probe and send only recovery with the returned priorSessionId and a workspace-relative probePath; committed prior request facts are restored by the server and cannot be overridden by the caller.",
     "Required coverage-slot total is at most six per payload envelope, not a semantic exploration limit.",
   ]),
@@ -70,12 +70,12 @@ function renderEligibilityPolicy(): string {
     "Gate 2: Call before search or reading when one concrete question crosses multiple non-adjacent owners or relationships; send one role+question item per required area, up to six.",
     "Gate 3: Keep a local whole-question probe native; task start, phase change, apparent complexity, or probability is not a trigger.",
     "Caller is relationship+exhaustive; other roles use their role-appropriate fact kind and single coverage. After edit/check, a planned cross-module consistency audit may use typed reentry even without failure; reentry is optional.",
-    "The call is atomic and read-only; consume partial Evidence and nextAction. Known references are optional hints. Never send credentials or source dumps.",
+    "The call is atomic and read-only; consume partial Evidence and nextAction. Ready or partial Evidence is already read context: do not remap the repository, and verify at most one or two necessary exact positions or adjacent contexts before edit/check. Known references are optional hints. Never send credentials or source dumps.",
   ].join(" ");
 }
 
 export const TOOL_DESCRIPTION = renderEligibilityPolicy();
-export const SERVER_INSTRUCTIONS = `FreeContext exposes one read-only ${FREECONTEXT_ELIGIBILITY_POLICY.toolName} tool governed by ${FREECONTEXT_ELIGIBILITY_POLICY.id}. It binds each call to the public request and operator workspace. Initial callers send one work unit and one role-plus-question item per required area; the server derives the remaining fields and coverage defaults. Continuations send only priorSessionId, one child question, one typed origin, and optional knownRefs or parentGapId; the server restores and validates the committed context. Recovery sends only priorSessionId and one workspace-relative probePath. The invocation is atomic with one terminal result. Follow nextAction and consume partial Evidence. Ready is invocation-scoped. Never send credentials or source dumps.`;
+export const SERVER_INSTRUCTIONS = `FreeContext exposes one read-only ${FREECONTEXT_ELIGIBILITY_POLICY.toolName} tool governed by ${FREECONTEXT_ELIGIBILITY_POLICY.id}. It binds each call to the public request and operator workspace. Initial callers send one work unit and one role-plus-question item per required area; the server derives the remaining fields and coverage defaults. Continuations send only priorSessionId, one child question, one typed origin, and optional knownRefs or parentGapId; the server restores and validates the committed context. Recovery sends only priorSessionId and one workspace-relative probePath. The invocation is atomic with one terminal result. Follow nextAction and consume partial Evidence. Ready or partial Evidence is already read context: do not remap the repository, and verify at most one or two necessary exact positions or adjacent contexts before edit/check. A failed result goes directly to normal native exploration; do not force an exact probe or recovery. Ready is invocation-scoped. Never send credentials or source dumps.`;
 
 export const MODEL_RESULT_MAX_BYTES = 8_192;
 export const RESULT_LIMITS = Object.freeze({
@@ -410,12 +410,12 @@ export const FreeContextCoverageSchema = z.object({
 }).strict();
 
 export const FreeContextNextActionSchema = z.object({
-  kind: z.enum(["consume_evidence", "exact_probe"]),
+  kind: z.enum(["consume_evidence", "exact_probe", "native_exploration"]),
   reason: singleLine(RESULT_LIMITS.detailCodePoints),
   recovery: z.object({
     priorSessionId: identifier,
   }).strict().optional().describe("Present only for not_found: copy priorSessionId and add probePath after one exact probe."),
-}).strict().describe("consume_evidence means consume the returned Evidence and execute the handoff; exact_probe means one bounded probe before broader discovery.");
+}).strict().describe("consume_evidence means consume the returned Evidence and execute the handoff; exact_probe means one bounded probe before broader discovery after not_found; native_exploration means continue normal native repository exploration after a terminal failure.");
 
 export const FreeContextHandoffGapSchema = PriorHandoffSchema.shape.blockingGaps.element;
 
@@ -448,6 +448,7 @@ function validateFreeContextResult(
   result: z.infer<typeof FreeContextResultBaseSchema>,
   context: z.core.$RefinementCtx,
   requireRecovery: boolean,
+  allowLegacyFailedExactProbe = false,
 ): void {
   const hasEvidence = result.evidence.length > 0;
   const totalLines = result.evidence.reduce((sum, item) => sum + item.endLine - item.startLine + 1, 0);
@@ -463,7 +464,14 @@ function validateFreeContextResult(
     if (!result.handoff) context.addIssue({ code: "custom", path: ["handoff"], message: `${result.status} requires a cohesive handoff` });
   } else {
     if (hasEvidence) context.addIssue({ code: "custom", path: ["evidence"], message: `${result.status} cannot contain evidence` });
-    if (result.nextAction.kind !== "exact_probe") context.addIssue({ code: "custom", path: ["nextAction", "kind"], message: `${result.status} requires exact_probe` });
+    if (result.status === "not_found" && result.nextAction.kind !== "exact_probe") {
+      context.addIssue({ code: "custom", path: ["nextAction", "kind"], message: "not_found requires exact_probe" });
+    }
+    if (result.status === "failed"
+      && result.nextAction.kind !== "native_exploration"
+      && !(allowLegacyFailedExactProbe && result.nextAction.kind === "exact_probe")) {
+      context.addIssue({ code: "custom", path: ["nextAction", "kind"], message: "failed requires native_exploration" });
+    }
     if (result.handoff) context.addIssue({ code: "custom", path: ["handoff"], message: `${result.status} cannot contain a handoff` });
     if (result.status !== "not_found" && result.nextAction.recovery) {
       context.addIssue({ code: "custom", path: ["nextAction", "recovery"], message: "Only not_found may expose recovery." });
@@ -508,8 +516,8 @@ function validateFreeContextResult(
 }
 
 export const LegacyFreeContextResultSchema = FreeContextResultBaseSchema.superRefine((result, context) => {
-  validateFreeContextResult(result, context, false);
-}).describe("Historical result reader: missing not_found recovery is retained as legacy and is not current-runtime valid.");
+  validateFreeContextResult(result, context, false, true);
+}).describe("Historical result reader: missing not_found recovery and failed exact_probe are retained as legacy and are not current-runtime valid.");
 
 export const HistoricalNotFoundFreeContextResultSchema = FreeContextResultBaseSchema.omit({
   status: true,
@@ -776,12 +784,14 @@ export function serializeForModel(rawResult: Readonly<FreeContextResult>): strin
   if (!result.handoff) lines.push("-");
   else lines.push(`- prior_handoff=${JSON.stringify(result.handoff)}`);
   if (result.nextAction.kind === "consume_evidence") {
-    lines.push(`Follow nextAction: consume inline Evidence and proceed to edit/check. If change-critical context is omitted, one necessary adjacent read on an Evidence path is allowed. A listed gap is not replay authorization; for a new gather-level child, send compact reentry with priorSessionId, one question, and a typed evidence/edit/check origin, plus parentGapId only for gap concretization. Same-fact replay remains invalid. ${result.nextAction.reason}`);
-  } else {
+    lines.push(`Follow nextAction: consume inline Evidence already read by the main Agent; do not remap the repository. Verify at most one or two necessary exact or adjacent contexts, then edit/check. A listed gap is not replay authorization; for a new gather-level child, send compact reentry with priorSessionId, one question, and a typed evidence/edit/check origin, plus parentGapId only for gap concretization. Same-fact replay remains invalid. ${result.nextAction.reason}`);
+  } else if (result.nextAction.kind === "exact_probe") {
     lines.push(`Follow nextAction: make one exact non-broad path or symbol probe and read at most one candidate path; broader discovery calls FreeContext. ${result.nextAction.reason}`);
     if (result.nextAction.recovery) {
       lines.push(`Recovery contract: after the exact probe, call gather_context with only {"recovery":{"priorSessionId":${JSON.stringify(result.nextAction.recovery.priorSessionId)},"probePath":"<workspace-relative probed path>"}}. Do not resend or rewrite taskText, workUnit, knownRefs, evidenceQuestions, or a handoff.`);
     }
+  } else {
+    lines.push(`Follow nextAction: continue normal native repository exploration after this terminal failure. Do not force an exact probe, recovery, or another FreeContext call. ${result.nextAction.reason}`);
   }
   lines.push("Gaps:");
   if (result.gaps.length === 0) lines.push("-");

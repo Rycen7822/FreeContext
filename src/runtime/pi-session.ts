@@ -47,6 +47,7 @@ import { addUsage, EMPTY_USAGE } from "./usage.js";
 // same Pi exploration session is complete.
 export const EXPLORER_MAX_TURNS = 24;
 export const EXPLORER_MAX_TOOL_CALLS = 64;
+export const PI_SOFT_FINALIZATION_MS = 180_000;
 
 export type CompactionReason = "threshold" | "overflow";
 export type FinalizationReason =
@@ -56,7 +57,8 @@ export type FinalizationReason =
   | "stagnation"
   | "turn_limit"
   | "tool_limit"
-  | "provider_probe";
+  | "provider_probe"
+  | "soft_deadline";
 
 export interface TurnEvidenceProgress {
   readonly turn: number;
@@ -157,6 +159,7 @@ export interface PiSessionMetrics {
   readonly submitSchemaTokens: number;
   readonly finalizationInjected: boolean;
   readonly finalizationReason: FinalizationReason | null;
+  readonly softFinalizationTriggered: boolean;
   readonly terminalFailureDetails: readonly TerminalFailureDetail[];
   readonly blockedToolCalls: number;
   readonly evidenceProgress: readonly Readonly<TurnEvidenceProgress>[];
@@ -202,6 +205,8 @@ export interface PiSessionOptions {
   readonly maxToolCalls?: number;
   readonly signal?: AbortSignal;
   readonly onEvent?: PiSessionEventHandler;
+  /** @internal Test seam; production callers use PI_SOFT_FINALIZATION_MS. */
+  readonly softFinalizationMs?: number;
   readonly clock?: () => number;
   readonly timestamp?: () => number;
   readonly tokenCounter?: ContextTokenCounter;
@@ -434,6 +439,7 @@ async function runPiSessionWithCounter({
   maxToolCalls = config.maxToolCalls,
   signal,
   onEvent,
+  softFinalizationMs,
   clock = performance.now.bind(performance),
   timestamp = Date.now,
   isolatedFinalization,
@@ -467,6 +473,10 @@ async function runPiSessionWithCounter({
   let finalizationInjected = isolatedPacket !== null;
   let finalizationReason: FinalizationReason | null = isolatedPacket === null ? null : "provider_probe";
   let finalizerCorrectionUsed = false;
+  let finalizationSteeringQueued = false;
+  let softFinalizationTimer: ReturnType<typeof setTimeout> | null = null;
+  let softFinalizationTriggered = false;
+  let softFinalizationPending = false;
   let blockedToolCalls = 0;
   let overflowRecovered = false;
   let finalizerStarted = false;
@@ -557,9 +567,102 @@ async function runPiSessionWithCounter({
     lastDeficitAction = fingerprint;
     return noProgressStreak >= 2;
   };
-  const requestFinalization = (reason: FinalizationReason): void => {
-    finalizationReason ??= reason;
+  const clearSoftFinalizationTimer = (): void => {
+    if (softFinalizationTimer === null) return;
+    clearTimeout(softFinalizationTimer);
+    softFinalizationTimer = null;
   };
+  const requestFinalization = (reason: FinalizationReason): void => {
+    if (finalizationReason !== null) return;
+    finalizationReason = reason;
+    clearSoftFinalizationTimer();
+  };
+  const armSoftFinalizationTimer = (): void => {
+    if (isolatedPacket !== null || finalizationReason !== null || finalizationInjected) return;
+    const timeoutMs = Math.max(0, softFinalizationMs ?? PI_SOFT_FINALIZATION_MS);
+    softFinalizationTimer = setTimeout(() => {
+      softFinalizationTimer = null;
+      if (finalizationReason !== null || finalizationInjected || finalizerStarted || submission.failureKind) return;
+      softFinalizationTriggered = true;
+      softFinalizationPending = true;
+    }, timeoutMs);
+    const timer = softFinalizationTimer as unknown as { unref?: () => void };
+    timer.unref?.();
+  };
+  let activeLoopContext: AgentContext | null = null;
+  const prepareFinalizationContext = async (context: AgentContext): Promise<AgentContext | null> => {
+    if (finalizationInjected || finalizationReason === null || submission.failureKind || submission.candidate) {
+      return null;
+    }
+    finalizationReads = retainedObservedReads(context.messages, observedReads);
+    const packet = buildFinalizationPacket(
+      finalizationRequest,
+      finalizationReads,
+      latestCompactionSummary(context.messages),
+    );
+    if (!await finalizationFits({
+      packet,
+      tool: submitTool,
+      counter: counter(),
+      contextWindow: model.contextWindow,
+      reserveTokens: config.contextReserveTokens,
+    })) {
+      submission.reject("context_budget");
+      return null;
+    }
+    finalizationInjected = true;
+    return {
+      systemPrompt: FINALIZATION_SYSTEM_PROMPT,
+      tools: [submitTool],
+      messages: [{ role: "user", content: packet, timestamp: timestamp() }],
+    };
+  };
+  const injectFinalization = async (context: AgentContext): Promise<boolean> => {
+    const prepared = await prepareFinalizationContext(context);
+    if (!prepared) return finalizationInjected;
+    context.systemPrompt = prepared.systemPrompt;
+    context.tools = prepared.tools ?? [submitTool];
+    context.messages = [...prepared.messages];
+    effectiveSystemPrompt = prepared.systemPrompt;
+    effectiveMessages = [...prepared.messages];
+    effectiveTools = [...(prepared.tools ?? [])];
+    return true;
+  };
+  type SoftFinalizationOutcome = "not_pending" | "injected" | "failed";
+  const consumeSoftFinalization = async (context: AgentContext): Promise<SoftFinalizationOutcome> => {
+    if (!softFinalizationPending || finalizationReason !== null || submission.failureKind) return "not_pending";
+    softFinalizationPending = false;
+    requestFinalization("soft_deadline");
+    return await injectFinalization(context) ? "injected" : "failed";
+  };
+  const consumeSoftFinalizationBeforeRetry = async (assistant: AssistantMessage): Promise<SoftFinalizationOutcome> => {
+    if (assistant.stopReason !== "error"
+      || !softFinalizationPending
+      || observedReads.length === 0
+      || signal?.aborted
+      || finalizationInjected
+      || submission.failureKind) {
+      return "not_pending";
+    }
+    const context: AgentContext = {
+      systemPrompt: effectiveSystemPrompt,
+      messages: [...effectiveMessages],
+      tools: [...effectiveTools],
+    };
+    const outcome = await consumeSoftFinalization(context);
+    if (outcome === "injected") {
+      activeLoopContext = context;
+      effectiveSystemPrompt = context.systemPrompt;
+      effectiveMessages = [...context.messages];
+      effectiveTools = [...(context.tools ?? [])];
+    }
+    return outcome;
+  };
+  const finalizationSteeringMessage = (): AgentMessage => ({
+    role: "user",
+    content: "Finalization phase: call submit_evidence now using the verified observations; do not call any other tool.",
+    timestamp: timestamp(),
+  });
   const requestSoftBudgetFinalization = (): void => {
     if (noProgressStreak >= 2) requestFinalization("stagnation");
     else requestFinalization(toolCallCount >= toolCallBudget ? "tool_limit" : "turn_limit");
@@ -857,6 +960,8 @@ async function runPiSessionWithCounter({
       if (toolCall.name !== SUBMIT_EVIDENCE_TOOL_NAME || isError) return undefined;
       const evaluation = await evaluateSubmission();
       if (!evaluation) return undefined;
+      if (evaluation.status === "ready") requestFinalization("coverage");
+      else if (evaluation.status === "failed") requestFinalization("protocol_retry");
       const terminal = finalizerStarted
         || evaluation.status === "ready"
         || evaluation.status === "failed";
@@ -935,36 +1040,33 @@ async function runPiSessionWithCounter({
           };
         }
       }
-      if (!submission.candidate && !finalizationInjected && finalizationReason !== null) {
-        finalizationReads = retainedObservedReads(nextContext.messages, observedReads);
-        const packet = buildFinalizationPacket(
-          finalizationRequest,
-          finalizationReads,
-          latestCompactionSummary(nextContext.messages),
-        );
-        if (await finalizationFits({
-          packet,
-          tool: submitTool,
-          counter: counter(),
-          contextWindow: model.contextWindow,
-          reserveTokens: config.contextReserveTokens,
-        })) {
-          finalizationInjected = true;
-          nextContext = {
-            systemPrompt: FINALIZATION_SYSTEM_PROMPT,
-            tools: [submitTool],
-            messages: [{ role: "user", content: packet, timestamp: timestamp() }],
-          };
-        } else {
-          submission.reject("context_budget");
-        }
+      if (softFinalizationPending && finalizationReason === null && !submission.failureKind) {
+        softFinalizationPending = false;
+        requestFinalization("soft_deadline");
       }
+      if (!submission.candidate && !finalizationInjected && finalizationReason !== null) {
+        const prepared = await prepareFinalizationContext(nextContext);
+        if (prepared) nextContext = prepared;
+      }
+      activeLoopContext = nextContext;
       effectiveMessages = [...nextContext.messages];
       effectiveSystemPrompt = nextContext.systemPrompt;
       effectiveTools = [...(nextContext.tools ?? [])];
       return nextContext === context ? undefined : { context: nextContext };
     },
-    getSteeringMessages: async () => takeContinuationFeedback(true),
+    getSteeringMessages: async () => {
+      if (activeLoopContext !== null) {
+        await consumeSoftFinalization(activeLoopContext);
+      }
+      if (isolatedPacket === null && finalizationInjected && !finalizerStarted && !submission.failureKind) {
+        if (finalizationSteeringQueued) return [];
+        const steering = finalizationSteeringMessage();
+        finalizationSteeringQueued = true;
+        effectiveMessages = [...effectiveMessages, steering];
+        return [steering];
+      }
+      return takeContinuationFeedback(true);
+    },
     getFollowUpMessages: async () => takeContinuationFeedback(false),
     shouldStopAfterTurn: async ({ context, message, toolResults }) => {
       loopReportedContext = true;
@@ -981,6 +1083,9 @@ async function runPiSessionWithCounter({
         if (submission.candidate) return true;
       }
       if (submission.failureKind) return true;
+      const softFinalization = await consumeSoftFinalization(context);
+      if (softFinalization === "injected") return false;
+      if (softFinalization === "failed") return true;
       if (finalizerStarted) {
         const calls = message.content.filter((block) => block.type === "toolCall");
         const submitCount = calls.filter((call) => call.name === SUBMIT_EVIDENCE_TOOL_NAME).length;
@@ -996,8 +1101,10 @@ async function runPiSessionWithCounter({
         else submission.reject("missing_submit");
         return true;
       }
+      if (finalizationReason !== null && !finalizationInjected && !submission.failureKind) return false;
       if (finalizationInjected && !finalizerStarted) return false;
       if (continuationFeedback !== null && finalizationReason === null) return false;
+      if (softFinalizationPending && !submission.failureKind) return false;
       if (turnCount >= EXPLORER_MAX_TURNS || toolCallCount >= EXPLORER_MAX_TOOL_CALLS) return true;
       return (turnCount >= turnBudget || toolCallCount >= toolCallBudget) && !mayExplorePastBudget();
     },
@@ -1013,13 +1120,15 @@ async function runPiSessionWithCounter({
       streamWithTerminalChoice,
     );
 
+  armSoftFinalizationTimer();
   let newMessages: AgentMessage[];
   try {
-    newMessages = await runInitialLoop();
-  } catch (error) {
-    if (error instanceof FreeContextError) throw error;
-    throw providerError(error, true);
-  }
+    try {
+      newMessages = await runInitialLoop();
+    } catch (error) {
+      if (error instanceof FreeContextError) throw error;
+      throw providerError(error, true);
+    }
   const allNewMessages = [...newMessages];
   if (!loopReportedContext) {
     effectiveMessages = [...effectiveMessages, ...newMessages];
@@ -1064,14 +1173,34 @@ async function runPiSessionWithCounter({
 
   let assistant = lastAssistant(newMessages);
   if (!assistant) throw providerError("Provider returned no assistant message.", true);
-  assistant = await recoverTransientFailure(assistant);
-  if (finalizationInjected && !finalizerStarted && !submission.failureKind) {
-    assistant = await recoverTransientFailure(await continueLoop());
+  const retryPreparation = await consumeSoftFinalizationBeforeRetry(assistant);
+  if (retryPreparation === "injected") {
+    assistant = await continueLoop();
+  } else if (retryPreparation !== "failed") {
+    assistant = await recoverTransientFailure(assistant);
+    if (finalizationInjected && !finalizerStarted && !submission.failureKind) {
+      assistant = await continueLoop();
+    }
   }
-  const overflow = isProviderContextOverflow(assistant, bindings, config, model.contextWindow);
+  let overflow = isProviderContextOverflow(assistant, bindings, config, model.contextWindow);
+  if (overflow && observedReads.length > 0 && !finalizerStarted && !submission.failureKind) {
+    const context: AgentContext = {
+      systemPrompt: effectiveSystemPrompt,
+      messages: [...effectiveMessages],
+      tools: [...effectiveTools],
+    };
+    if ((await consumeSoftFinalization(context)) === "injected") {
+      activeLoopContext = context;
+      effectiveSystemPrompt = context.systemPrompt;
+      effectiveMessages = [...context.messages];
+      effectiveTools = [...(context.tools ?? [])];
+      assistant = await continueLoop();
+      overflow = isProviderContextOverflow(assistant, bindings, config, model.contextWindow);
+    }
+  }
   if (overflow && finalizerStarted) {
     submission.reject("context_budget");
-  } else if (overflow && config.contextCompactionEnabled && !overflowRecovered) {
+  } else if (overflow && !submission.failureKind && config.contextCompactionEnabled && !overflowRecovered) {
     overflowRecovered = true;
     effectiveMessages = [...(await runCompaction(withoutAssistant(effectiveMessages, assistant), "overflow"))];
     overflowRetries = 1;
@@ -1111,6 +1240,7 @@ async function runPiSessionWithCounter({
       submitSchemaTokens,
       finalizationInjected,
       finalizationReason,
+      softFinalizationTriggered,
       terminalFailureDetails: submission.failureDetails,
       blockedToolCalls,
       evidenceProgress: Object.freeze(evidenceProgress.map((progress) => Object.freeze({
@@ -1131,6 +1261,9 @@ async function runPiSessionWithCounter({
       sessionMs: Math.max(0, clock() - sessionStartedAt),
     }),
   });
+  } finally {
+    clearSoftFinalizationTimer();
+  }
 }
 
 async function runSession(options: PiSessionExecutionOptions): Promise<Readonly<PiSessionResult>> {

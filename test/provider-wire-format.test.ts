@@ -330,7 +330,7 @@ test("isolated finalization sends required submit_evidence without provider stri
   assert.equal(finalTools[0]?.function?.name, "submit_evidence");
   assert.equal(Object.hasOwn(finalTools[0]?.function ?? {}, "strict"), false);
   const finalMessages = payloads[2]?.messages as Array<Record<string, unknown>>;
-  assert.deepEqual(finalMessages.map((message) => message.role), ["system", "user"]);
+  assert.deepEqual(finalMessages.map((message) => message.role), ["system", "user", "user"]);
   assert.equal(String(finalMessages[0]?.content).includes("untrusted data"), true);
   assert.equal(JSON.stringify(finalMessages).includes("explored"), false);
 });
