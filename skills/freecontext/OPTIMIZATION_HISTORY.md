@@ -222,3 +222,4 @@ Do not copy early task or Slice execution logs into this file. Keep only reusabl
 - 交付与预算：提示 FC 在继续工具调用时留下几句可独立使用的已核实发现，后续失败可保留普通文本；无 checkpoint 工具、额外 schema、session 继承或强制调用次数。预算调整为 16 轮/36 次工具、软期限 360 秒、总期限 600 秒，仍保留有限重试、单次请求时限和绝对上限。软期限现在也在 provider error/retry 的下一次请求前检查，不再只依赖正常轮次结束；每次根据当前 context 补充汇报提示，不跨重试丢失或重复堆积，且移除后续工具。
 - 本地验证：Root 复核后 configured 测试 77/77、0 fail/skip（含真实 Gigatoken single/batch/worker reuse），typecheck/build/static check（58 production modules）、skill 校验和 diff check 全部通过。新增两项真实 Pi 0.82.1 loop 回归覆盖连续三次失败后成功、每次截止后请求恰好一条提示且无工具，以及截止后的工具调用不执行；已有正文保留回归继续通过。报告在根仓库 `.work/orchestrator/candidate-v10/implementation-report.md`。未运行 v10 benchmark，未宣称节省 token、提高正确率或保证 provider 完全不可用时仍有答案。
 - 效果边界：这些是通用改动，不包含任何题目的专用判断。需后续新 benchmark 验证实际替代了哪些 Main 调查及是否减少返工；不能靠砍必要检查或单看 FC 调用次数判断成功。
+- 启动前兼容对齐：用户随后授权同五题各三次最新 FC 测试。Root 发现 Codex harness 的 MCP `tool_timeout_sec=300` 会截断新 600 秒 worker 预算，遂改为 660 秒，给返回留余量；不修改其它共同指令、模型、任务或评分。此修正在任何 v10 trial 启动前完成，同属 Candidate v10。
