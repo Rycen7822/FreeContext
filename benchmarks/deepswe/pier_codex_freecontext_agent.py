@@ -46,6 +46,10 @@ COMMON_TASK_EFFECT_POLICY = (
     "[Benchmark common task-effect policy]\n"
     "Solve only from the workspace and existing local caches. Do not use web search, curl, wget, raw GitHub, remote git clone/ls-remote/fetch, npm view/pack, remote module or package queries, or any other upstream source discovery for the task solution or patch. Provider, Pier, and benchmark-controller network traffic is infrastructure and does not authorize task-solution network access."
 )
+COMMON_MAIN_AGENT_WORK_GUIDANCE = (
+    "[Benchmark common main-agent work guidance]\n"
+    "For tests and checks, prefer quiet or summarized passing output when output could be large, while retaining the full raw log for detailed rereading. Always report failures and terminal exit status; never hide a failure or reduce necessary testing. Review focused local diffs or edit ranges instead of repeating whole-file dumps when sufficient. After a coherent batch of mechanical or signature edits, run the closest syntax or type check before broader propagation when useful. Track every started check to completion; on polling failure, recover or poll that same actual session and confirm the previous job ended before any restart."
+)
 COMMON_DIAGNOSTIC_CHECKPOINT = (
     "[Benchmark common FreeContext routing reference]\n"
     "When available, the tracked FreeContext skill and enabled gather_context description are the detailed phase-aware routing authority. Arm assignment does not require a FreeContext call."
@@ -70,7 +74,11 @@ EXPLICIT_NATIVE_ONLY_POLICY = (
 
 
 def _benchmark_developer_instructions(arm_policy: str) -> str:
-    return f"{COMMON_TASK_EFFECT_POLICY}\n\n{COMMON_DIAGNOSTIC_CHECKPOINT}\n\n{arm_policy}"
+    return (
+        f"{COMMON_TASK_EFFECT_POLICY}\n\n"
+        f"{COMMON_MAIN_AGENT_WORK_GUIDANCE}\n\n"
+        f"{COMMON_DIAGNOSTIC_CHECKPOINT}\n\n{arm_policy}"
+    )
 
 
 def _global_agents_content(final_route: str) -> str:

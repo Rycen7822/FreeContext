@@ -223,3 +223,14 @@ Do not copy early task or Slice execution logs into this file. Keep only reusabl
 - 本地验证：Root 复核后 configured 测试 77/77、0 fail/skip（含真实 Gigatoken single/batch/worker reuse），typecheck/build/static check（58 production modules）、skill 校验和 diff check 全部通过。新增两项真实 Pi 0.82.1 loop 回归覆盖连续三次失败后成功、每次截止后请求恰好一条提示且无工具，以及截止后的工具调用不执行；已有正文保留回归继续通过。报告在根仓库 `.work/orchestrator/candidate-v10/implementation-report.md`。未运行 v10 benchmark，未宣称节省 token、提高正确率或保证 provider 完全不可用时仍有答案。
 - 效果边界：这些是通用改动，不包含任何题目的专用判断。需后续新 benchmark 验证实际替代了哪些 Main 调查及是否减少返工；不能靠砍必要检查或单看 FC 调用次数判断成功。
 - 启动前兼容对齐：用户随后授权同五题各三次最新 FC 测试。Root 发现 Codex harness 的 MCP `tool_timeout_sec=300` 会截断新 600 秒 worker 预算，遂改为 660 秒，给返回留余量；不修改其它共同指令、模型、任务或评分。此修正在任何 v10 trial 启动前完成，同属 Candidate v10。
+
+### 2026-09-07 — Candidate v11 investigation replacement and shared work guidance
+
+- 起点/授权：从已推送的 v10 `fae45cf53338b3a112d304e73152fcc0500c0c8e` 调整。用户要求执行根因分析中的改进；两名 Luna xhigh 分别实现 FC 指令与公共 harness 指导，Root 亲自审核、本地验证并维护版本记录。没有新的 benchmark、模型调用、Docker 或 runtime 构建授权。
+- 前版实测补记：v10 固定五题、每题三次、latest-FC 单臂、最大并发 6，15/15 有效，solved 6/15；Main 2,781,451、FC 357,500、total 3,138,951。15 次调用均有完整正文与用量，全部是首次调用。相对历史无 FC Main 2,583,766 高 7.65%；两组共同指令不同，不能当作 FC 单因素因果结果。
+- 轨迹依据：30 条轨迹成本复核及五题人工对照表明，FC 被真实消费但宽问题/地图返回仍可能留下必要语义追查；总差额 +197,685 主要为 uncached input +170,306，后段编辑返工、重复大输出和验证路径差异占重要部分。Pest 需读到实际 matcher 才能判断范围上界；FastAPI 和 Pebble 的代表性差额大多出现在首个编辑后。也有 FC 更省或完成了 control 未完成任务的反例，不把所有增量视作浪费或归咎于 FC。
+- FC 通用改动：交出一个尚未解决、能替代后续调查的事实/关系问题，不要整套功能清单；worker 追到决定行为的实现，必要时给短原文片段、位置和符号，不从名称/类型/调用语法猜语义。任务中途出现未知关系即可判断是否委派，不以失败测试或新模块为前提；必要编辑读取、关键核验与局部修复仍留给主 Agent。Root 修正了初稿中可能误让主 Agent 重做 worker 追查的主语歧义。
+- 共同主 Agent 改动：`COMMON_MAIN_AGENT_WORK_GUIDANCE` 通过现有 developer-instructions 构造路径同时注入 control/treatment，指导大型检查优先简要输出并保留原始日志、报告失败及退出状态、局部 diff、成组机械编辑后的及时最小检查、已有检查进程的可靠等待。全局 AGENTS 继续只保存路由指引，不重复注入长段指导。没有自动截断、日志压缩器、shell 拦截或新的配置/工具。
+- 接口与边界：仍只用 `question` 和可选 `hints`；普通文本直接返回、无严格格式门/继承/强制调用次数/文件数门槛。模型、reasoning、16 轮/36 工具、360 秒/600 秒、provider retries、660 秒 MCP timeout 均未改变。产品指令不含任何 benchmark 题目的专用内容。
+- Root 最终本地验证：直接相关测试 11/11；configured 完整测试 77/77、0 fail/skip（含真实 Gigatoken），typecheck/build/static（58 production modules）、官方 skill validator 和 diff check 通过。以 stub 隔离 Pier 外部依赖后，实际两臂 TOML 构造路径都解析通过，共同指令逐字相同；真实 control `run()` 使用该路径。未增加只验证文案的测试。报告与原始本地输出位于根 `.work/orchestrator/candidate-v11/`。
+- 效果边界：v11 尚无性能或成功率数据；这些是提示与共同执行指导，不保证模型一定减少重读/返工。下一次效果比较需同共同指令的新 control，先人工确认具体调查是否被替代，仍保留完整任务成功率和成本检验。历史 campaign 与其原始结果不变。
