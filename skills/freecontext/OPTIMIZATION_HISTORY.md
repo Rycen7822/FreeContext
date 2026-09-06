@@ -202,3 +202,13 @@ Do not copy early task or Slice execution logs into this file. Keep only reusabl
 - 完整轨迹观察：No Candidate v8 live traces exist. The intended observable behavior is that a later call, when one is made, carries only a genuinely new gap and the worker answer is consumed as navigation context without broadly replaying exploration.
 - 结论/下一步：The current user authorization covers a new 15-trial Candidate v8 campaign, but it has not started. Before launch, require clean pushed source plus fresh same-manifest and exporter proof; do not infer a gain from the v7 diagnostic denominator.
 - 已知边界：Prompt guidance remains best-effort. The worker cannot enforce caller routing or prove that a path was actually read, and local tests cannot establish live reentry behavior or benchmark improvement.
+
+### 2026-09-06 — Candidate v9 concrete investigation and located answers
+
+- 起点/授权：从 Candidate v8 `f4940b6383dec3dd44d04221eaf40da9f71de91f` 调整。用户授权落实轨迹分析建议，并要求类似简洁 LSP 结果的路径、行号和函数信息；本轮只做本地修改与验证，不启动 benchmark。
+- 前版实测补记：v8 已完成 15 次有效运行，solved 7/15，Main 2,865,462，对历史无 FC 的 2,583,766 为 +10.90%；FC 367,644。15 次均有完整文本返回，均只有首次调用。旧无 FC 与 v8 的共同指令不同，这个差值不是严格的 FC 单因素因果效应；不改写历史结果。
+- 依据：重新核算两组 30 条轨迹，人工逐步复核五组对应案例。工具返回文本多 166,105 token，其中 FC 包装后返回只占 25,410；可见批量读取截断后的重叠补读，以及 FC 请求遗漏相关任务约束。另有缓存突降和实现路线差异，不能全部归咎于 FC 消费。完整证据在仓库根 `.work/freecontext-benchmark-baselines/reentry-five/candidate-v8-midtask-audit-20260902/analysis/trace-diagnosis-20260906/findings.md`。
+- 通用改动：以具体行为、约束、遗漏关系替代文件清单式提问；显式提醒 FC 只收到 question/hints。按还需获取的信息量判断原生读取，不再因路径已知、文件少或报错精确而自动豁免大范围调查。同一功能被测试或修改细化的新问题可以再次委派；局部修复不强制调用。消费回答时精准核验和编辑，缩小截断及重叠读取。
+- 返回：系统提示要求先给结论，再用已核实的 `path:line-line — function/symbol — relevant fact` 定位关键事实；必要时给短签名或关键分支，区分现状与建议，未知行号不编造。仍是普通文本，不增加 LSP 依赖、格式校验、参数、会话继承或硬性调用次数。
+- 本地验证：现有 focused tests 9/9 通过（最小参数、任意文本透传、worker 提示传递及失败保留等）；typecheck、build、58-module static check、skill validator、diff-check 均通过。不新增只匹配提示词的测试，也未重跑全套或 live benchmark。
+- 效果边界：v9 尚无 benchmark 数据，不能宣称节省 token 或改善成功率。未来对比应补当前共同指令下的无 FC 对照；该建议不构成启动授权。
