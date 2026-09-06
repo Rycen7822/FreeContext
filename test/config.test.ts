@@ -4,7 +4,9 @@ import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { redactSecret, redactUrl, resolveConfig } from "../src/config.js";
+import { SINGLE_CALL_DEADLINE_MS } from "../src/mcp/lifecycle.js";
 import { createModel, createRequestOptions, redactProviderError } from "../src/runtime/model.js";
+import { PI_SOFT_FINALIZATION_MS } from "../src/runtime/pi-session.js";
 import { baseConfig } from "./helpers.js";
 
 const KEYS = Object.freeze({ PRIMARY_KEY: "primary-secret", BACKUP_KEY: "backup-secret" });
@@ -103,6 +105,8 @@ test("tracked TOML examples remain loadable without embedded credentials", async
     processEnv: { ANTHROPIC_API_KEY: "example-test-key" },
   });
   assert.deepEqual(general.targets.map((target) => target.target), ["claude"]);
+  assert.equal(general.targets[0]?.maxTurns, 16);
+  assert.equal(general.targets[0]?.maxToolCalls, 36);
 
   const sensenova = await resolveConfig({
     cli: { configFile: new URL("../freecontext.sensenova.example.toml", import.meta.url).pathname },
@@ -117,6 +121,10 @@ test("tracked TOML examples remain loadable without embedded credentials", async
   assert.deepEqual(benchmark.targets.map((target) => target.target), ["primary"]);
   assert.equal(benchmark.targets[0]?.model, "glm-5.3-flash");
   assert.equal(benchmark.targets[0]?.openAICompat.useStreaming, false);
+  assert.equal(benchmark.targets[0]?.maxTurns, 16);
+  assert.equal(benchmark.targets[0]?.maxToolCalls, 36);
+  assert.equal(PI_SOFT_FINALIZATION_MS, 360_000);
+  assert.equal(SINGLE_CALL_DEADLINE_MS, 600_000);
 
 });
 
@@ -137,15 +145,15 @@ test("target and route overrides are deterministic", async () => {
   });
 });
 
-test("runtime exploration ceilings reject values above eight turns or eighteen calls", async () => {
+test("runtime exploration ceilings reject values above sixteen turns or thirty-six calls", async () => {
   await withConfig(baseToml(), async (configFile) => {
     await assert.rejects(
-      () => resolveConfig({ cli: { configFile, maxTurns: "9" }, processEnv: KEYS }),
-      /max_turns.*\[2, 8\]/u,
+      () => resolveConfig({ cli: { configFile, maxTurns: "17" }, processEnv: KEYS }),
+      /max_turns.*\[2, 16\]/u,
     );
     await assert.rejects(
-      () => resolveConfig({ cli: { configFile, maxToolCalls: "19" }, processEnv: KEYS }),
-      /max_tool_calls.*\[1, 18\]/u,
+      () => resolveConfig({ cli: { configFile, maxToolCalls: "37" }, processEnv: KEYS }),
+      /max_tool_calls.*\[1, 36\]/u,
     );
   });
 });

@@ -23,7 +23,7 @@ import { addUsage, EMPTY_USAGE } from "./usage.js";
 
 export const EXPLORER_MAX_TURNS = 24;
 export const EXPLORER_MAX_TOOL_CALLS = 64;
-export const PI_SOFT_FINALIZATION_MS = 180_000;
+export const PI_SOFT_FINALIZATION_MS = 360_000;
 
 export type FinalizationReason = "turn_limit" | "tool_limit" | "soft_deadline";
 
@@ -249,13 +249,25 @@ async function runPiSessionWithCounter({
     if (timer !== null) clearTimeout(timer);
     timer = null;
   };
+  const softDeadlineDurationMs = Math.max(0, softFinalizationMs ?? PI_SOFT_FINALIZATION_MS);
+  const softDeadlineDue = (): boolean => softFinalizationPending || clock() - startedAt >= softDeadlineDurationMs;
   timer = setTimeout(() => {
     timer = null;
     if (finalizationReason === null) {
       softFinalizationPending = true;
     }
-  }, Math.max(0, softFinalizationMs ?? PI_SOFT_FINALIZATION_MS));
+  }, softDeadlineDurationMs);
   (timer as unknown as { unref?: () => void }).unref?.();
+
+  const finalizationText = "Soft deadline: stop using repository tools. Answer now from current findings. Keep paths, symbols, numbers, commands, and errors exact; omit filler.";
+  const applySoftFinalization = (): void => {
+    if (finalizationReason !== null) return;
+    softFinalizationPending = false;
+    stopTools = true;
+    finalizationReason = "soft_deadline";
+    effectiveSystemPrompt = `${systemPrompt}\n\n${FINALIZATION_SYSTEM_PROMPT}`;
+    effectiveTools = [];
+  };
 
   const compact = async (messages: readonly AgentMessage[]): Promise<readonly AgentMessage[]> => {
     if (!counter || !config.contextCompactionEnabled) return messages;
@@ -305,7 +317,7 @@ async function runPiSessionWithCounter({
 
   const finalizationMessage = (): AgentMessage => ({
     role: "user",
-    content: "Soft deadline: stop using repository tools. Answer now from current findings. Keep paths, symbols, numbers, commands, and errors exact; omit filler.",
+    content: finalizationText,
     timestamp: timestamp(),
   });
   const loopConfig: AgentLoopConfig = {
@@ -314,7 +326,8 @@ async function runPiSessionWithCounter({
     convertToLlm: bindings.convertToLlm,
     toolExecution: "parallel",
     beforeToolCall: async () => {
-      if (stopTools || softFinalizationPending) {
+      if (stopTools || softDeadlineDue()) {
+        if (finalizationReason === null) applySoftFinalization();
         blockedToolCalls += 1;
         return { block: true, reason: "Stop using repository tools and answer from current findings." };
       }
@@ -328,13 +341,16 @@ async function runPiSessionWithCounter({
       return undefined;
     },
     prepareNextTurn: async ({ context }) => {
-      if (softFinalizationPending) {
-        softFinalizationPending = false;
-        stopTools = true;
-        finalizationReason = "soft_deadline";
-        effectiveSystemPrompt = `${systemPrompt}\n\n${FINALIZATION_SYSTEM_PROMPT}`;
+      if (finalizationReason === null && softDeadlineDue()) applySoftFinalization();
+      if (finalizationReason === "soft_deadline") {
         context.systemPrompt = effectiveSystemPrompt;
-        context.messages = [...context.messages, finalizationMessage()];
+        context.tools = [];
+        const alreadyInjected = context.messages.some((message) => (
+          message.role === "user" && typeof message.content === "string" && message.content === finalizationText
+        ));
+        if (!alreadyInjected) {
+          context.messages = [...context.messages, finalizationMessage()];
+        }
         return { context };
       }
       if (config.contextCompactionEnabled && counter && !stopTools) {
@@ -364,7 +380,26 @@ async function runPiSessionWithCounter({
 
   await prepareContext();
   const prompt: AgentMessage = { role: "user", content: promptText, timestamp: timestamp() };
-  const stream = (target: Parameters<PiBindings["streamSimple"]>[0], context: Parameters<PiBindings["streamSimple"]>[1], options: Parameters<PiBindings["streamSimple"]>[2]) => bindings.streamSimple(target, context, options);
+  const stream = (
+    target: Parameters<PiBindings["streamSimple"]>[0],
+    providerContext: Parameters<PiBindings["streamSimple"]>[1],
+    options: Parameters<PiBindings["streamSimple"]>[2],
+  ) => {
+    if (finalizationReason === null && softDeadlineDue()) applySoftFinalization();
+    if (finalizationReason !== "soft_deadline") return bindings.streamSimple(target, providerContext, options);
+    const alreadyInjected = providerContext.messages.some((message) => (
+      message.role === "user" && typeof message.content === "string" && message.content === finalizationText
+    ));
+    const messages = alreadyInjected
+      ? providerContext.messages
+      : [...providerContext.messages, { role: "user" as const, content: finalizationText, timestamp: timestamp() }];
+    return bindings.streamSimple(target, {
+      ...providerContext,
+      systemPrompt: effectiveSystemPrompt,
+      messages,
+      tools: [],
+    }, options);
+  };
   const context: AgentContext = { systemPrompt: effectiveSystemPrompt, messages: [...effectiveMessages], tools: [...effectiveTools] };
   let terminalFailure: PiSessionResult["terminalFailure"] = null;
   let assistant: AssistantMessage | undefined;

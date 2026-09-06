@@ -2,6 +2,9 @@ import assert from "node:assert/strict";
 import { mkdir, mkdtemp, readFile, readdir, rm } from "node:fs/promises";
 import path from "node:path";
 import test from "node:test";
+import { runAgentLoop, runAgentLoopContinue } from "@earendil-works/pi-agent-core";
+import type { AgentTool } from "@earendil-works/pi-agent-core";
+import { createAssistantMessageEventStream, Type } from "@earendil-works/pi-ai";
 import type { FreeContextResult } from "../src/mcp/contracts.js";
 import { FreeContextCallerRequestSchema, SERVER_INSTRUCTIONS, TOOL_DESCRIPTION } from "../src/mcp/contracts.js";
 import { createTerminalStore, type DeadlineClock } from "../src/mcp/lifecycle.js";
@@ -39,7 +42,6 @@ test("the tracked skill and tool keep the phase-aware minimal request contract",
   assert.doesNotMatch(skill, /sessionId|continuation/iu);
   assert.match(skill, /ordinary assistant text/iu);
   assert.match(`${skill}\n${TOOL_DESCRIPTION}\n${SERVER_INSTRUCTIONS}`, /any phase/iu);
-  assert.match(TOOL_DESCRIPTION, /whole source-understanding question/iu);
   assert.doesNotMatch(`${TOOL_DESCRIPTION}\n${SERVER_INSTRUCTIONS}`, /sessionId|continuation|typed reentry/iu);
   assert.match(metadata, /FreeContext/iu);
 });
@@ -164,8 +166,6 @@ test("hints and previously checked findings reach the worker without relabeling 
     assert.match(receivedPrompt, /Hints: Previously checked fact: parser behavior was read/iu);
     assert.doesNotMatch(receivedPrompt, /already-known findings|\bconfirmed:\b|\bverified:\b/iu);
     assert.match(receivedPrompt, /src\/parser\.ts.*src\/lexer\.ts/iu);
-    assert.match(receivedSystemPrompt, /differential audit/iu);
-    assert.match(receivedSystemPrompt, /untouched consumers/iu);
   } finally {
     await rm(testRoot, { recursive: true, force: true });
   }
@@ -195,6 +195,118 @@ test("soft finalization is a prompt and provider errors preserve useful text", a
   });
   assert.equal(result.text, "useful answer");
   assert.equal(result.terminalFailure, "provider");
+});
+
+test("provider retry checks soft finalization before its next request", async () => {
+  let now = 0;
+  let calls = 0;
+  const contexts: Array<{ systemPrompt: string | undefined; messages: readonly unknown[]; tools: readonly unknown[] }> = [];
+  const tool: AgentTool = {
+    name: "read",
+    label: "Read",
+    description: "Read one bounded fact.",
+    parameters: Type.Object({}),
+    execute: async () => ({ content: [{ type: "text", text: "fact" }], details: {} }),
+  };
+  const config = baseConfig({ contextCompactionEnabled: false, providerRetryDelaysMs: [1, 1, 1] });
+  const bindings = fakeBindings(runAgentLoop, {
+    runAgentLoopContinue,
+    streamSimple: (_model, context) => {
+      calls += 1;
+      contexts.push({ systemPrompt: context.systemPrompt, messages: context.messages, tools: context.tools ?? [] });
+      const stream = createAssistantMessageEventStream();
+      if (calls <= 3) {
+        if (calls === 1) now = 100;
+        stream.end(assistantText("", { stopReason: "error", errorMessage: "Connection error" }));
+      } else {
+        stream.end(assistantText("concise current findings"));
+      }
+      return stream;
+    },
+  });
+  const result = await runPiSession({
+    bindings,
+    model: createModel(config),
+    requestOptions: createRequestOptions(config),
+    config,
+    systemPrompt: "system",
+    promptText: "question",
+    tools: [tool],
+    tokenCounter: { countBatch: async (texts) => texts.map((text) => text.length) },
+    softFinalizationMs: 50,
+    clock: () => now,
+  });
+  assert.equal(calls, 4);
+  assert.equal(result.text, "concise current findings");
+  assert.equal(result.metrics.finalizationReason, "soft_deadline");
+  assert.equal(contexts[0]?.systemPrompt, "system");
+  assert.equal(contexts[0]?.tools.length, 1);
+  assert.match(contexts[1]?.systemPrompt ?? "", /stop using repository tools/iu);
+  for (const context of contexts.slice(1)) {
+    assert.equal(context.tools.length, 0);
+    assert.equal(context.messages.filter((message) => (
+      typeof message === "object" && message !== null && "content" in message &&
+      typeof (message as { content?: unknown }).content === "string" &&
+      (message as { content: string }).content.startsWith("Soft deadline:")
+    )).length, 1);
+  }
+});
+
+test("soft finalization clears tools once and does not dispatch another tool", async () => {
+  let now = 0;
+  let calls = 0;
+  let executed = 0;
+  const contexts: Array<{ messages: readonly unknown[]; tools: readonly unknown[] }> = [];
+  const tool: AgentTool = {
+    name: "read",
+    label: "Read",
+    description: "Read one bounded fact.",
+    parameters: Type.Object({}),
+    execute: async () => {
+      executed += 1;
+      return { content: [{ type: "text", text: "fact" }], details: {} };
+    },
+  };
+  const config = baseConfig({ contextCompactionEnabled: false, providerRetryDelaysMs: [] });
+  const bindings = fakeBindings(runAgentLoop, {
+    runAgentLoopContinue,
+    streamSimple: (_model, context) => {
+      calls += 1;
+      contexts.push({ messages: context.messages, tools: context.tools ?? [] });
+      const stream = createAssistantMessageEventStream();
+      if (calls === 1) {
+        now = 100;
+        stream.end(assistantText("", {
+          stopReason: "toolUse",
+          content: [{ type: "toolCall", id: "call-1", name: "read", arguments: {} }],
+        }));
+      } else {
+        stream.end(assistantText("final findings"));
+      }
+      return stream;
+    },
+  });
+  const result = await runPiSession({
+    bindings,
+    model: createModel(config),
+    requestOptions: createRequestOptions(config),
+    config,
+    systemPrompt: "system",
+    promptText: "question",
+    tools: [tool],
+    tokenCounter: { countBatch: async (texts) => texts.map((text) => text.length) },
+    softFinalizationMs: 50,
+    clock: () => now,
+  });
+  assert.equal(calls, 2);
+  assert.equal(executed, 0);
+  assert.equal(result.text, "final findings");
+  assert.equal(result.metrics.finalizationReason, "soft_deadline");
+  assert.equal(contexts[0]?.tools.length, 1);
+  assert.equal(contexts[1]?.tools.length, 0);
+  assert.equal(contexts[1]?.messages.filter((message) => (
+    typeof message === "object" && message !== null && "role" in message && (message as { role?: unknown }).role === "user"
+  )).length, 2);
 });
 
 test("the outer hard deadline keeps text already streamed by the worker", async () => {

@@ -102,14 +102,14 @@ function resolveRuntime(
 ): Readonly<RuntimeConfig> {
   const runtime = document.runtime;
   return Object.freeze({
-    maxTurns: parseInteger(cli.maxTurns ?? env.FREECONTEXT_MAX_TURNS ?? runtime.maxTurns, 8, {
+    maxTurns: parseInteger(cli.maxTurns ?? env.FREECONTEXT_MAX_TURNS ?? runtime.maxTurns, 16, {
       min: 2,
-      max: 8,
+      max: 16,
       name: "max_turns",
     }),
-    maxToolCalls: parseInteger(cli.maxToolCalls ?? env.FREECONTEXT_MAX_TOOL_CALLS ?? runtime.maxToolCalls, 18, {
+    maxToolCalls: parseInteger(cli.maxToolCalls ?? env.FREECONTEXT_MAX_TOOL_CALLS ?? runtime.maxToolCalls, 36, {
       min: 1,
-      max: 18,
+      max: 36,
       name: "max_tool_calls",
     }),
     requestTimeoutMs: parseInteger(

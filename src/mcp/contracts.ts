@@ -57,19 +57,18 @@ export type FreeContextResult = z.infer<typeof FreeContextResultSchema>;
 
 export const TOOL_DESCRIPTION = [
   "Read-only repository investigator. Send {question, hints?}.",
-  "At any phase, judge the new information needed for the whole source-understanding question. Delegate a concrete behavior, constraint, or missing relationship that requires substantial reading, not just a file inventory.",
+  "At any phase, delegate one bounded code-fact or relationship question that requires substantial new reading: a definition, caller, value flow, or specific behavior. Keep architecture decisions and the overall diagnosis or fix yourself; do not ask FC to design the feature or certify the whole implementation.",
   "Stay native when the answer is already in context or needs only a small direct check. Known paths, one or two files, and an exact error location do not by themselves make an investigation small. Do not call merely because a task starts.",
-  "FC sees only question and hints, not your original task or conversation. Include relevant task constraints and checked facts; distinguish them from unverified paths or symbols. Do not forward the whole conversation.",
-  "Use returned facts as already-read investigation context, not automatically correct. Read precise edit locations, verify decisive claims or unresolved uncertainty, and avoid replaying the full map. Narrow truncated or overlapping reads to relevant functions, branches, or local diffs; delegate remaining investigation.",
-  "A test or edit can expose a narrower new question about the same feature: include that evidence and earlier findings rather than repeating a resolved question. Obvious local fixes do not require another call.",
-  "Use a differential audit only when hints describe prior reads or edits; with no prior findings, answer normally.",
+  "FC sees only question and hints, not your original task or conversation. Include the relevant requirements, checked facts, and specific error when useful; distinguish unverified leads. Do not forward the whole conversation or a long checklist to audit.",
+  "Use supported findings as already-read context, not proof of correctness or completeness. Read precise edit locations and verify decisive claims or uncertainty without replaying the full map. Narrow further reads to the relevant function, branch, or local diff.",
+  "When an edit or test contradicts your understanding and resolving it needs substantial new reading, delegate one specific relationship with the relevant change and failure. Do not request a full re-audit, repeat a resolved question, or call for an obvious local fix.",
   "The worker returns ordinary assistant text: a conclusion with verified path:line-line, function or symbol, and relevant fact. Wording is not schema-validated or quota-fitted.",
   "Call it alone; begin the first gather code-mode cell with `// @exec: {\"yield_time_ms\": 300000, \"max_output_tokens\": 12000}`. If it returns a cell, call the outer wait tool with its cell_id, yield_time_ms 300000, and max_tokens 12000; on failure continue natively.",
 ].join(" ");
 
 export const SERVER_INSTRUCTIONS = [
-  "FreeContext accepts one question and optional hints; at any phase delegate a concrete investigation that needs substantial new reading, not a small direct check.",
+  "FreeContext accepts one question and optional hints; delegate a bounded code-fact or relationship investigation that needs substantial new reading, not a whole-feature design or correctness audit.",
   "It is read-only. The worker's assistant text is returned directly.",
   "The worker sees only the request: include relevant task constraints and checked findings. Use its located facts as already-read context, not automatically correct. On failure continue natively and do not repeat the unchanged question.",
-  "Use a differential audit only when hints describe prior reads or edits; with no prior findings, answer normally.",
+  "Keep design decisions, edits, and tests in the main agent. After an edit or test, a specific new uncertainty can justify another bounded investigation; small direct fixes remain native.",
 ].join(" ");

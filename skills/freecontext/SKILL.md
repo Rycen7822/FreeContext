@@ -1,11 +1,11 @@
 ---
 name: freecontext
-description: Delegate a concrete repository investigation at any phase when answering it requires substantial new reading or tracing relationships. Small direct checks remain native.
+description: Delegate a bounded code-fact or relationship question at any phase when it needs substantial new reading. Keep design decisions, edits, tests, and small direct checks in the main agent.
 ---
 
 # FreeContext routing
 
-At any phase, judge how much new information the whole source-understanding question needs—not just the next file. Call `tools.mcp__freecontext__gather_context` to resolve a concrete behavior, constraint, or missing relationship when it requires substantial reading. Stay native when the answer is already in context or only a small direct check is needed. Known paths, one or two files, or an exact error location do not by themselves make an investigation small. Do not call merely because a task starts. FreeContext is read-only.
+At any phase, judge how much new reading the current question needs—not just the next file. Call `tools.mcp__freecontext__gather_context` for a bounded factual investigation such as tracing one value or checking a caller/consumer relationship. Keep architecture decisions and the overall diagnosis or fix yourself; do not ask FC to design the feature or certify the whole implementation. Stay native when the answer is already in context or needs only a small direct check. Known paths or an exact error do not by themselves make an investigation small. Do not call merely because a task starts. FreeContext is read-only.
 
 ## Request
 
@@ -13,18 +13,16 @@ Send one small object:
 
 ```js
 {
-  question: "Does cancellation reach every resource cleanup path? Identify gaps and exact code locations.",
-  hints: "Requirement: release each resource once. Already checked: the route forwards the signal; worker cleanup is unverified."
+  question: "How is the request timeout passed to the worker, including its default?",
+  hints: "Requirement: a request override wins over the default. Checked: the route reads request.timeout; worker setup is unverified."
 }
 ```
 
-Delegate the question that would otherwise cost you substantial reading, not just a file inventory. FC sees only `question` and optional `hints`, not your original task or conversation. Include the relevant task constraints and checked facts, distinguishing them from unverified leads; do not forward the whole conversation.
+Delegate one concrete question that would otherwise cost you substantial reading, not a file inventory or a long checklist of requirements to audit. For a complex problem, choose the next uncertain code fact you need to decide what to do. FC sees only `question` and optional `hints`, not your original task or conversation. Include the relevant requirements, checked facts, and specific error when useful; distinguish unverified leads and do not forward the whole conversation.
 
-The worker returns ordinary assistant text: a conclusion with concise `path:line-line — function or symbol — relevant fact` locations where verified. Use it as already-read investigation context, not automatically correct. Open precise edit locations and verify decisive claims or unresolved uncertainty without replaying the full map. If reads are truncated or overlapping, narrow to the needed function, branch, or local diff; delegate remaining investigation rather than repeatedly expanding whole files. Keep edits and checks in the main agent.
+The worker returns ordinary assistant text with located findings and important unknowns. Use supported facts as already-read context, not automatic proof of correctness or completeness. Open precise edit locations and verify decisive claims or uncertainty without replaying the full map. If you still need context, read the relevant function, branch, or local diff instead of reloading whole files. Keep edits and checks in the main agent.
 
-Use a differential audit only when hints actually describe prior reads or edits. An initial call or a call with no prior findings should answer the question normally.
-
-A test or edit can expose a narrower new question about the same feature; that is not repeating a resolved question. Include the new evidence and relevant earlier findings in `question` or `hints`. Do not ask an unchanged question again or force another call for an obvious local fix.
+A test or edit can contradict your current understanding. If resolving that contradiction needs substantial new reading, delegate one specific relationship to investigate, with the relevant change and failure; this can concern the same feature as an earlier call. Do not ask for a full re-audit, repeat a resolved question, or call for an obvious local fix.
 
 ## Dispatch
 

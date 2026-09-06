@@ -3,7 +3,7 @@ import type { FreeContextInvocationContext, FreeContextResult } from "./contract
 import { captureError } from "../runtime/session-capture.js";
 import { commitSessionFile, reserveSessionFile } from "../session/store.js";
 
-export const SINGLE_CALL_DEADLINE_MS = 285_000;
+export const SINGLE_CALL_DEADLINE_MS = 600_000;
 
 export interface DeadlineLease {
   readonly signal: AbortSignal;

@@ -212,3 +212,13 @@ Do not copy early task or Slice execution logs into this file. Keep only reusabl
 - 返回：系统提示要求先给结论，再用已核实的 `path:line-line — function/symbol — relevant fact` 定位关键事实；必要时给短签名或关键分支，区分现状与建议，未知行号不编造。仍是普通文本，不增加 LSP 依赖、格式校验、参数、会话继承或硬性调用次数。
 - 本地验证：现有 focused tests 9/9 通过（最小参数、任意文本透传、worker 提示传递及失败保留等）；typecheck、build、58-module static check、skill validator、diff-check 均通过。不新增只匹配提示词的测试，也未重跑全套或 live benchmark。
 - 效果边界：v9 尚无 benchmark 数据，不能宣称节省 token 或改善成功率。未来对比应补当前共同指令下的无 FC 对照；该建议不构成启动授权。
+
+### 2026-09-06 — Candidate v10 bounded factual investigation and retry-aware finalization
+
+- 起点/授权：从 v9 `7fbe907cc8c6fdbbe8ca53cba79cad63dbc49113` 调整。用户授权按轨迹分析改进，并强调小模型只接有界调查、增加必要约束、适度放宽时间和步数。本轮限产品修改与本地验证，不启动新 benchmark。
+- 前版实测补记：v9 已完成 15 次 Main/评分有效运行，solved 8/15，Main 3,013,199；历史无 FC 为 2,583,766（+16.62%），v8 为 2,865,462（+5.16%）。FC 16 次调用中 12 次 complete、3 次 deadline、1 次 retry-exhausted；已知 FC token 262,057 仅为部分用量，完整 FC/total-system 仍不可得。不能把历史共同指令不同的差额归因于一个提示词变化。
+- 依据：45 条轨迹算术和九条人工顺序复核，发现地图后大段重读、未经核实的影响范围排除结论、并发关系返工，以及唯一中途 FC 调用失败。三个 deadline 已有 14/16/17 条工具结果但无可交付正文；另一次 error-tail 连续连接失败，270 秒后 finalizationReason 仍为空。分析在根仓库 `.work/freecontext-benchmark-baselines/reentry-five/candidate-v9-located-investigation-20260906/analysis/deep-diagnosis/README.md`。
+- 指令改动：主 Agent 只委托一个需要大量阅读的代码事实/关系，保留总体设计、诊断与修复；不交完整功能设计或全面正确性审查。带上相关需求和当前事实；复杂失败只委托其中一个未明关系，局部修复不强制调用。FC 先核实关键定义和调用/消费点，未知即未知，不从局部搜索推导“无影响、唯一入口、设计正确”；仍输出简洁路径/行号/函数和必要短片段。
+- 交付与预算：提示 FC 在继续工具调用时留下几句可独立使用的已核实发现，后续失败可保留普通文本；无 checkpoint 工具、额外 schema、session 继承或强制调用次数。预算调整为 16 轮/36 次工具、软期限 360 秒、总期限 600 秒，仍保留有限重试、单次请求时限和绝对上限。软期限现在也在 provider error/retry 的下一次请求前检查，不再只依赖正常轮次结束；每次根据当前 context 补充汇报提示，不跨重试丢失或重复堆积，且移除后续工具。
+- 本地验证：Root 复核后 configured 测试 77/77、0 fail/skip（含真实 Gigatoken single/batch/worker reuse），typecheck/build/static check（58 production modules）、skill 校验和 diff check 全部通过。新增两项真实 Pi 0.82.1 loop 回归覆盖连续三次失败后成功、每次截止后请求恰好一条提示且无工具，以及截止后的工具调用不执行；已有正文保留回归继续通过。报告在根仓库 `.work/orchestrator/candidate-v10/implementation-report.md`。未运行 v10 benchmark，未宣称节省 token、提高正确率或保证 provider 完全不可用时仍有答案。
+- 效果边界：这些是通用改动，不包含任何题目的专用判断。需后续新 benchmark 验证实际替代了哪些 Main 调查及是否减少返工；不能靠砍必要检查或单看 FC 调用次数判断成功。
