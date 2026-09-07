@@ -1,11 +1,11 @@
 ---
 name: freecontext
-description: Delegate one unresolved code-fact or relationship when answering it needs substantial new reading beyond context already available, after accounting for the small edit-context read Main is about to need. Keep edit-context reads, design decisions, edits, tests, and small syntax/type/patch checks in the main agent.
+description: Delegate an unresolved repository fact or relationship that would otherwise require substantial new reading. Keep local reads, design, edits, and tests in the main agent.
 ---
 
 # FreeContext routing
 
-At any phase, call `tools.mcp__freecontext__gather_context` for one unresolved code fact or relationship when resolving it would replace substantial additional repository reading beyond context already seen, after accounting for the small exact edit-context read Main must make anyway. Keep that local read, along with architecture decisions and the overall diagnosis or fix, in Main. If a local read will likely settle the question, stay native; if an unfamiliar specific cross-boundary relationship still needs that substantial additional reading, it can be delegated immediately. Do not trace everything first just to decide or call merely because a task starts. FreeContext is read-only.
+At any phase, use read-only `tools.mcp__freecontext__gather_context` for one unresolved fact or relationship when its answer can replace substantial new reading. If the small edit-context read Main needs anyway can settle it, stay native. Delegate a useful cross-boundary question as it emerges; do not finish the investigation first, request a recap of already-read code, or call routinely at task start. Keep overall diagnosis, design, edits, tests, and local fixes in Main.
 
 ## Request
 
@@ -13,18 +13,16 @@ Send one small object:
 
 ```js
 {
-  question: "How is the request timeout passed to the worker, including its default?",
-  hints: "Requirement: a request override wins over the default. Checked: the route reads request.timeout; worker setup is unverified."
+  question: "How does the import pipeline handle duplicate rows on the way to storage?",
+  hints: "Replacing per-row writes with a batch must preserve last-row-wins behavior. Checked: parseRows preserves input order. Unknown: where deduplication occurs; batch equivalence is unverified."
 }
 ```
 
-Delegate one concrete unresolved question whose answer would replace substantial further reading beyond context already available, after accounting for the small edit-context read Main is about to need. Do not request a file inventory or a checklist of requirements to audit. For a complex problem, choose the next uncertain code fact or relationship needed to decide what to do. FC sees only `question` and optional `hints`, not your original task or conversation. Include relevant requirements, checked facts, and a specific error when useful; distinguish unverified leads and do not forward the whole conversation.
+FC sees only `question` and optional `hints`, not the original task or conversation. Include the original operation and semantics to preserve, relevant checked facts, and the remaining unknown; label proposed changes and unverified assumptions. Ask for the next needed relationship, not a feature design, file inventory, or full audit.
 
-Expect the worker to trace the implementation or relationship that decides the requested behavior and return ordinary assistant text with a decisive factual conclusion and exact observed locations. When needed to establish the conclusion, it should add a short useful source excerpt and the relevant condition or scope. If the question mixes factual uncertainty with design, the worker should report factual constraints and leave choices to the parent; it should omit unsolicited design menus, new fields, and recommendations.
+Expect ordinary assistant text with supported facts, observed `path:line` locations plus function or symbol, and conditions that affect their use, plus a short source excerpt when needed. Design choices remain with Main.
 
-Use supported located facts as read context. Main opens exact edit locations and checks missing or contradictory facts, or the new assumption introduced when applying a fact to a design or test, using already-seen evidence first. Do not re-walk source merely because FC provided it; verify as needed. Keep exact edit-context reads, edits, and checks in the main agent.
-
-Native work can reveal an unresolved relationship at any point. If resolving an unfamiliar cross-boundary relationship needs substantial additional reading beyond that local edit-context read, the question can be delegated with checked facts and any relevant change or failure; this can concern the same feature as an earlier call, and does not require a failed test or a new module. Do not ask for a full re-audit, repeat a resolved question, or call for an obvious local fix.
+Treat supported located facts as already-read context. Read exact edit locations and narrowly check missing or contradictory evidence or a new design/test premise, using existing evidence first. New cross-boundary questions can be delegated during work, including on the same feature; no failed test, new module, or call count is required.
 
 ## Dispatch
 

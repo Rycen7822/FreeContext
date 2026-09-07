@@ -256,3 +256,11 @@ Do not copy early task or Slice execution logs into this file. Keep only reusabl
 - 前版基线补记：v12 Pebble 三组各三次，9/9有效；Astra noFC/FC 的 Main 均值92,309/65,497（−29.05%）、均3/3解对；Luna FC 为293,663、2/3。Astra 可见输入+9.82%、峰值+8.21%，provider失败仍保留；这些差异不是 v13 收益或模型普适结论。逐次数据见根 `.work/freecontext-benchmark-baselines/reentry-five/candidate-v12-pebble-codex01534-20260907/analysis/`。
 - Root 最终验证：从仓库根运行 feature 的真实测试文件，configured 81/81、0 fail/skip（含 Gigatoken）；typecheck、build、static58、skill validator 通过，原始输出在根 `.work/orchestrator/candidate-v13/root-proof/`。独立审查发现的 Main 看不到 partial 状态已用简短前缀和真实 MCP handler 回归闭合；其余正文与失败回退不变。未新增严格内容校验或主 Agent 决策流程。
 - Root 审查闭合：内部 partial 原本未进入 MCP 可见正文，Main 无法区分未完成笔记；`callResult` 现仅对 partial 前置一句未完成说明，保持原正文、Session 与既有 `isError` 语义，complete 不变。真实 handler 回归先证明标识缺失，再验证 partial 标识和原文同时可见、complete 无标识。24 轮仅指探索/最终答复调度上限；既有 provider 重试另按有限策略执行，全部仍受 600 秒总 deadline 约束。
+
+### 2026-09-08 — Candidate v14 concise routing and non-interactive test guidance
+
+- 起点/授权：从 v13 `cf602dce8e3afb9457d4d906e7ec02d62257ee0a` 实施用户授权的通用小改与本地验证；Astra medium 实现、Root 审核。本轮不启动 benchmark、provider、Pier 或 Docker，不修改模型、provider、预算或历史结果。
+- v13 实测补记：同轮五题、四臂、每题每臂三次，共60条 Main；Sol high 无FC/有FC Main 为2,034,749/2,073,741（+1.92%），Astra medium 为840,903/882,310（+4.92%）。21次FC均交付完整文本、独立等待到终态，全部在首次编辑前；Main 首次编辑前/后差额分别为Sol −24,434/+63,426，Astra +51,710/−10,303。缓存、必要验证、方案与返工差异均参与，不能按阶段精确归因或把少验证当收益。实测和逐条正确性反例见根 `.work/freecontext-benchmark-baselines/reentry-five/candidate-v13-flagship-four-arm-20260907/analysis/main-token-diagnosis/00-synthesis.md`。
+- 共同Main指导：测试使用非TTY，支持时关闭动态进度；长输出落本地日志，只带回路径、真实退出码、总结和相关失败，保留完整日志查阅及必要验证。沿同一session追到终态，补丁失败先读当前位置，格式化前检查范围与预期diff。两臂经同一builder注入；adapter没有本地Main工具TTY默认入口，此处是指导，不声称强制执行或已经节省token。
+- FC指导：精简skill、工具描述及重复MCP initialize说明；一个尚未解决、能替代新阅读的关系即可委派，小型必要编辑读取能解决则native，不先做完整调查或例行开局调用。通用导入例保留原操作、必须保持的语义、已确认事实和未知；不把新方案假设当事实。已支持事实作为已读上下文，允许缺口、矛盾和新应用前提的窄核对，也允许任务中自然出现的新跨边界问题。Worker不从局部原语推全设计、唯一方案或全仓无其他consumer，未知简短说明；请求、普通文本返回、时间/工具预算、steering/finalization、长等待与失败native均保持。
+- 本地候选边界：本轮无v14 benchmark数字；不增加复杂schema、解析拒绝器、调用计数、session继承或题目特化。最小现有测试14/14、typecheck、Conda test skill校验与Python源码compile、diff check通过；实现与验证报告见根 `.work/orchestrator/candidate-v14/implementation-report.md`。提示词是否减少重读、动态输出和返工仍待另行授权的新同时对照验证；旧v13 noFC不再是共同指令完全相同的对照。
