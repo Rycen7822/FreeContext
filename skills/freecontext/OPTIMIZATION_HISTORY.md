@@ -243,3 +243,16 @@ Do not copy early task or Slice execution logs into this file. Keep only reusabl
 - 本地验证：`node --import tsx --test test/mcp-surface.test.ts test/minimal-contract-v7.test.ts` 通过 11/11、0 fail/skip；Conda `test` 环境的 `quick_validate.py` 输出 `Skill is valid!`；在同一环境以 `/home/xu/miniconda3/envs/test/bin/python3 -B -c 'from pathlib import Path; p=Path("benchmarks/deepswe/pier_codex_freecontext_agent.py"); compile(p.read_bytes(), str(p), "exec")'` 完成无写入的 source syntax compile，且精确 task-generated `.pyc` 已移除后仍不存在；复用 `.work/orchestrator/candidate-v11/common_guidance_proof.py` 输出 shared builder proof passed、两臂 TOML 解析并共享 guidance、global AGENTS routes distinct and non-contradictory。
 - 已知边界：这些本地证明只覆盖合同、技能结构、Python 语法和共同注入路径，不测量模型行为或节省效果；不改变 v11 历史证据，不构成 benchmark、merge、release 或 publication 授权。
 - Root 最终核对：Astra medium 复核六文件实际 diff 并确认两项文字问题已闭合；Root 修正后重新执行 configured 77/77、0 fail/skip（含 Gigatoken）、typecheck/build/static58、skill validator、无写入 Python compile 与真实两臂 TOML builder，全部通过。未增加只匹配文案的测试或新的运行逻辑。报告与实际输出在根 `.work/orchestrator/candidate-v12/implementation-report.md`、`verification/root/`；新 Codex exporter 兼容问题仍单独待修，不把它或共同 Main 指导的改变当作 FC 已测得收益。
+
+### 2026-09-07 — Candidate v13 bounded final answers and scoped facts
+
+- 起点/授权：从 `f4120cfd07ea65602d1a572a7e6d9e7cc5b1549a` 实施用户要求的本地 v13 修复。用户本轮指定 Astra medium 实现；另一名 Astra medium 独立审查，Root 最终复验并按既有许可提交、推送 feature。实现与验证不启动 benchmark、live provider 或 Docker，不重建 runtime 归档，不改冻结结果。
+- 真实 v12 依据：Luna Pebble r3 的 FC session `24eaf530-bcda-40cb-ba60-845b867e307e` 在约 112.6 秒以 17 turns、30 tools、`turn_limit` 和 3 blocked tools 结束；最后消息为 `toolUse` 及未来搜索计划，却因非空文字被判 complete。Astra r3 的事实回包还把 queued completion 扩展为所有 Sync commit 的保证。证据来自根 `.work/orchestrator/v12-flagship-readiness/conclusion.md`，不代表 v13 行为测量。
+- 通用改动：轮数、工具数和 soft deadline 共用无工具最终答复路径。默认保留 16 次探索、36 次工具调用，最多追加一次最终回答；更高轮数请求在绝对 24 轮内预留回答位置。真正发出该无工具请求后不再因模型继续调用工具而循环；现有有限 provider 重试、360/600/660 秒边界和 `glm-5.3-flash` high 配置不变。按消息生命周期判定完成：正常停止、无工具调用且非空的最终消息才能 complete；未形成最终答复时，已产生的文字保留为 partial。无新增公开 schema、错误码或语义/格式评分。
+- Worker 指导：只补 question/hints 尚未解决的关系，用精确位置、必要短原文和成立条件支持事实；一条分支或成功路径不能推广成全调用方、失败路径或整个生命周期。Main skill 与 tool description 不变，保留普通文本、无继承、必要核对、中途按需调用及失败后原生调查。
+- 本地证明：新增真实 Pi loop 回归先失败，再验证默认/绝对轮数、工具预算与 soft 收尾不会把携工具旁白当最终答复；空答复、仍调用工具、截断、provider error、abort 均保留已有文字为 partial。执行者 focused 5/5、typecheck 和 static check 通过，原始日志在根 `.work/orchestrator/candidate-v13/implementation-proof/`；Root 将补充最终 configured 验证。
+- 已知边界：本轮尚无 v13 benchmark、模型事实准确性或 token/wall 效益证据；生命周期完成不证明结论语义正确，provider 未返回有效文字或总 deadline 已到时不能保证交付答案。历史 v12 指标不回写为 v13 成效。
+
+- 前版基线补记：v12 Pebble 三组各三次，9/9有效；Astra noFC/FC 的 Main 均值92,309/65,497（−29.05%）、均3/3解对；Luna FC 为293,663、2/3。Astra 可见输入+9.82%、峰值+8.21%，provider失败仍保留；这些差异不是 v13 收益或模型普适结论。逐次数据见根 `.work/freecontext-benchmark-baselines/reentry-five/candidate-v12-pebble-codex01534-20260907/analysis/`。
+- Root 最终验证：从仓库根运行 feature 的真实测试文件，configured 81/81、0 fail/skip（含 Gigatoken）；typecheck、build、static58、skill validator 通过，原始输出在根 `.work/orchestrator/candidate-v13/root-proof/`。独立审查发现的 Main 看不到 partial 状态已用简短前缀和真实 MCP handler 回归闭合；其余正文与失败回退不变。未新增严格内容校验或主 Agent 决策流程。
+- Root 审查闭合：内部 partial 原本未进入 MCP 可见正文，Main 无法区分未完成笔记；`callResult` 现仅对 partial 前置一句未完成说明，保持原正文、Session 与既有 `isError` 语义，complete 不变。真实 handler 回归先证明标识缺失，再验证 partial 标识和原文同时可见、complete 无标识。24 轮仅指探索/最终答复调度上限；既有 provider 重试另按有限策略执行，全部仍受 600 秒总 deadline 约束。

@@ -89,7 +89,10 @@ async function runExplorerWithCounter(
     : routed.primary.terminalFailure === "provider"
       ? { errorCode: "PROVIDER_RETRY_EXHAUSTED" as const, reason: "The provider remained unavailable after the configured retries." }
       : { errorCode: null };
-  const result = await compileFreeContextResult(request, invocation, routed.primary.text, terminal);
+  const result = await compileFreeContextResult(request, invocation, routed.primary.text, {
+    ...terminal,
+    completed: routed.primary.completed,
+  });
   if (onSessionCapture) {
     await onSessionCapture(Object.freeze({
       schemaVersion: "freecontext-explorer-capture-v4",

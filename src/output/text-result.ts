@@ -8,6 +8,7 @@ import type {
 export interface FreeContextTerminal {
   readonly errorCode: FreeContextErrorCode | null;
   readonly reason?: string;
+  readonly completed?: boolean;
 }
 
 /** Build the transport envelope around opaque worker text. */
@@ -21,7 +22,7 @@ export async function compileFreeContextResult(
   return Object.freeze({
     status: terminal.errorCode
       ? hasAnswer ? "partial" : "failed"
-      : hasAnswer ? "complete" : "partial",
+      : hasAnswer && terminal.completed !== false ? "complete" : "partial",
     text: hasAnswer ? text : terminal.reason || "No answer was returned.",
     errorCode: terminal.errorCode,
     sessionId: invocation.sessionId,

@@ -98,6 +98,7 @@ export interface PiSessionMetrics {
 
 export interface PiSessionResult {
   readonly text: string;
+  readonly completed: boolean;
   readonly messages: readonly AgentMessage[];
   readonly explorationTools: readonly AgentTool[];
   readonly terminalFailure: "provider" | "aborted" | null;
@@ -193,7 +194,8 @@ async function runPiSessionWithCounter({
   clock = performance.now.bind(performance),
   timestamp = Date.now,
 }: PiSessionOptions, counter: ContextTokenCounter | null): Promise<Readonly<PiSessionResult>> {
-  const turnBudget = Math.min(maxTurns, EXPLORER_MAX_TURNS);
+  // Reserve a final answer turn even when callers request the absolute ceiling.
+  const turnBudget = Math.min(maxTurns, EXPLORER_MAX_TURNS - 1);
   const toolCallBudget = Math.min(maxToolCalls, EXPLORER_MAX_TOOL_CALLS);
   const startedAt = clock();
   const effectiveMessages = [...initialMessages];
@@ -215,6 +217,7 @@ async function runPiSessionWithCounter({
   let finalizationReason: FinalizationReason | null = null;
   let softFinalizationPending = false;
   let stopTools = false;
+  let finalizationRequested = false;
   let timer: ReturnType<typeof setTimeout> | null = null;
   let latestStreamText = "";
   const toolStarts = new Map<string, number>();
@@ -259,14 +262,20 @@ async function runPiSessionWithCounter({
   }, softDeadlineDurationMs);
   (timer as unknown as { unref?: () => void }).unref?.();
 
-  const finalizationText = "Soft deadline: stop using repository tools. Answer now from current findings. Keep paths, symbols, numbers, commands, and errors exact; omit filler.";
-  const applySoftFinalization = (): void => {
+  const finalizationText = "Exploration budget reached: stop using repository tools. Answer now from current findings. Keep paths, symbols, numbers, commands, and errors exact; omit filler.";
+  const applyFinalization = (reason: FinalizationReason): void => {
     if (finalizationReason !== null) return;
     softFinalizationPending = false;
     stopTools = true;
-    finalizationReason = "soft_deadline";
+    finalizationReason = reason;
     effectiveSystemPrompt = `${systemPrompt}\n\n${FINALIZATION_SYSTEM_PROMPT}`;
     effectiveTools = [];
+  };
+  const checkFinalization = (): void => {
+    if (finalizationReason !== null) return;
+    if (softDeadlineDue()) applyFinalization("soft_deadline");
+    else if (toolCalls >= toolCallBudget) applyFinalization("tool_limit");
+    else if (turns >= turnBudget) applyFinalization("turn_limit");
   };
 
   const compact = async (messages: readonly AgentMessage[]): Promise<readonly AgentMessage[]> => {
@@ -326,23 +335,17 @@ async function runPiSessionWithCounter({
     convertToLlm: bindings.convertToLlm,
     toolExecution: "parallel",
     beforeToolCall: async () => {
-      if (stopTools || softDeadlineDue()) {
-        if (finalizationReason === null) applySoftFinalization();
+      checkFinalization();
+      if (stopTools) {
         blockedToolCalls += 1;
         return { block: true, reason: "Stop using repository tools and answer from current findings." };
-      }
-      if (turns >= EXPLORER_MAX_TURNS || toolCalls >= EXPLORER_MAX_TOOL_CALLS || turns >= turnBudget || toolCalls >= toolCallBudget) {
-        blockedToolCalls += 1;
-        finalizationReason = toolCalls >= toolCallBudget ? "tool_limit" : "turn_limit";
-        stopTools = true;
-        return { block: true, reason: "Exploration budget reached. Answer from current findings." };
       }
       toolCalls += 1;
       return undefined;
     },
     prepareNextTurn: async ({ context }) => {
-      if (finalizationReason === null && softDeadlineDue()) applySoftFinalization();
-      if (finalizationReason === "soft_deadline") {
+      checkFinalization();
+      if (finalizationReason !== null) {
         context.systemPrompt = effectiveSystemPrompt;
         context.tools = [];
         const alreadyInjected = context.messages.some((message) => (
@@ -369,12 +372,11 @@ async function runPiSessionWithCounter({
       }
       return undefined;
     },
-    shouldStopAfterTurn: async ({ message, toolResults }) => {
-      const text = visibleAssistantText(message);
+    shouldStopAfterTurn: async ({ message }) => {
       const calls = message.content.some((block) => block.type === "toolCall");
-      if (text && (!calls || stopTools)) return true;
-      if (toolResults.length === 0 && stopTools) return true;
-      return turns >= EXPLORER_MAX_TURNS || toolCalls >= EXPLORER_MAX_TOOL_CALLS;
+      // A tool-bearing message is still exploration, even when its tools were blocked.
+      // Stop after the one tool-free answer request, including a provider that ignores it.
+      return !calls || finalizationRequested;
     },
   };
 
@@ -385,8 +387,9 @@ async function runPiSessionWithCounter({
     providerContext: Parameters<PiBindings["streamSimple"]>[1],
     options: Parameters<PiBindings["streamSimple"]>[2],
   ) => {
-    if (finalizationReason === null && softDeadlineDue()) applySoftFinalization();
-    if (finalizationReason !== "soft_deadline") return bindings.streamSimple(target, providerContext, options);
+    checkFinalization();
+    if (finalizationReason === null) return bindings.streamSimple(target, providerContext, options);
+    finalizationRequested = true;
     const alreadyInjected = providerContext.messages.some((message) => (
       message.role === "user" && typeof message.content === "string" && message.content === finalizationText
     ));
@@ -406,6 +409,9 @@ async function runPiSessionWithCounter({
   let retryUsage = EMPTY_USAGE;
   const makeResult = (text: string): Readonly<PiSessionResult> => Object.freeze({
     text,
+    completed: terminalFailure === null && assistant?.stopReason === "stop"
+      && !assistant.content.some((block) => block.type === "toolCall")
+      && visibleAssistantText(assistant).trim().length > 0,
     messages: Object.freeze(allMessages),
     explorationTools: Object.freeze([...tools]),
     terminalFailure,
@@ -487,7 +493,7 @@ async function runPiSessionWithCounter({
       retryUsage = recovered.message.usage;
       terminalFailure = assistant.stopReason === "error" ? "provider" : assistant.stopReason === "aborted" ? "aborted" : null;
     } else {
-      terminalFailure = "provider";
+      terminalFailure = assistant.stopReason === "aborted" ? "aborted" : "provider";
     }
   }
   const text = latestText() || visibleAssistantText(assistant);

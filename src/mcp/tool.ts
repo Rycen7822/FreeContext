@@ -68,8 +68,11 @@ function appendVisibleSessionId(text: string, sessionId: string): string {
 function callResult(
   result: Readonly<{ status: "complete" | "partial" | "failed"; text: string; sessionId: string; sessionFile: string | null }>,
 ): CallToolResult {
+  const text = result.status === "partial"
+    ? `FreeContext did not finish; partial notes follow.\n\n${result.text}`
+    : result.text;
   return {
-    content: [{ type: "text", text: result.sessionFile ? appendVisibleSessionId(result.text, result.sessionId) : result.text }],
+    content: [{ type: "text", text: result.sessionFile ? appendVisibleSessionId(text, result.sessionId) : text }],
     ...(result.status === "failed" ? { isError: true } : {}),
     ...(result.sessionFile ? { _meta: { freecontext: { sessionId: result.sessionId } } } : {}),
   };

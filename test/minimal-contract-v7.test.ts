@@ -171,6 +171,38 @@ test("hints and previously checked findings reach the worker without relabeling 
   }
 });
 
+test("MCP makes partial findings visibly incomplete while keeping complete answers unchanged", async () => {
+  const testRoot = await mkdtemp(path.join(process.cwd(), ".work", "fc-v13-partial-"));
+  const workspaceRoot = path.join(testRoot, "workspace");
+  await mkdir(workspaceRoot);
+  try {
+    for (const status of ["partial", "complete"] as const) {
+      const handler = createGatherContextHandler({
+        tokenCounter: { countBatch: async (texts) => texts.map((text) => text.length) },
+        sessionDirectory: path.join(testRoot, "sessions"),
+        invocationContextProvider: () => ({
+          invocationId: `visible-${status}`, callId: `call-${status}`,
+          workspaceRoot, workspaceRevision: "revision-v13",
+        }),
+        runExplorer: async ({ invocation }) => ({
+          status, text: "src/file.ts:10 — confirmed fact.", errorCode: null,
+          sessionId: invocation.sessionId, sessionFile: invocation.sessionFile,
+        }),
+      });
+      const result = await handler({ question: "Trace this fact" }, {});
+      const content = result.content[0];
+      assert.equal(result.isError, undefined);
+      assert.equal(content?.type, "text");
+      if (content?.type !== "text") assert.fail("expected visible MCP text");
+      assert.match(content.text, /src\/file\.ts:10 — confirmed fact\.\n\nSession: [^\n]+$/u);
+      if (status === "partial") assert.match(content.text, /^FreeContext did not finish; partial notes follow\.\n\n/u);
+      else assert.match(content.text, /^src\/file\.ts:10 — confirmed fact\./u);
+    }
+  } finally {
+    await rm(testRoot, { recursive: true, force: true });
+  }
+});
+
 test("soft finalization is a prompt and provider errors preserve useful text", async () => {
   assert.match(FINALIZATION_SYSTEM_PROMPT, /stop using repository tools/);
   assert.match(FINALIZATION_SYSTEM_PROMPT, /ordinary assistant text/);
@@ -247,7 +279,7 @@ test("provider retry checks soft finalization before its next request", async ()
     assert.equal(context.messages.filter((message) => (
       typeof message === "object" && message !== null && "content" in message &&
       typeof (message as { content?: unknown }).content === "string" &&
-      (message as { content: string }).content.startsWith("Soft deadline:")
+      (message as { content: string }).content.startsWith("Exploration budget reached:")
     )).length, 1);
   }
 });
@@ -278,7 +310,10 @@ test("soft finalization clears tools once and does not dispatch another tool", a
         now = 100;
         stream.end(assistantText("", {
           stopReason: "toolUse",
-          content: [{ type: "toolCall", id: "call-1", name: "read", arguments: {} }],
+          content: [
+            { type: "text", text: "Let me verify one more path." },
+            { type: "toolCall", id: "call-1", name: "read", arguments: {} },
+          ],
         }));
       } else {
         stream.end(assistantText("final findings"));
@@ -307,6 +342,94 @@ test("soft finalization clears tools once and does not dispatch another tool", a
   assert.equal(contexts[1]?.messages.filter((message) => (
     typeof message === "object" && message !== null && "role" in message && (message as { role?: unknown }).role === "user"
   )).length, 2);
+});
+
+test("exploration limits give tool commentary one bounded tool-free answer turn", async () => {
+  for (const budget of [
+    { maxTurns: 2, maxToolCalls: 10, reason: "turn_limit", requests: 3, executed: 4 },
+    { maxTurns: 10, maxToolCalls: 3, reason: "tool_limit", requests: 3, executed: 3 },
+    { maxTurns: 100, maxToolCalls: 100, reason: "turn_limit", requests: 24, executed: 46 },
+  ]) {
+    let requests = 0;
+    let executed = 0;
+    const config = baseConfig({ contextCompactionEnabled: false, providerRetryDelaysMs: [] });
+    const result = await runPiSession({
+      bindings: fakeBindings(runAgentLoop, {
+        runAgentLoopContinue,
+        streamSimple: (_model, context) => {
+          requests += 1;
+          assert.ok(requests <= budget.requests, "finalization must stay bounded");
+          const stream = createAssistantMessageEventStream();
+          if (requests < budget.requests) {
+            stream.end(assistantText("", { stopReason: "toolUse", content: [
+              { type: "text", text: "Let me verify the remaining paths." },
+              ...[1, 2].map((index) => ({ type: "toolCall" as const, id: `${requests}-${index}`, name: "read", arguments: {} })),
+            ] }));
+          } else {
+            assert.equal(context.tools?.length, 0);
+            assert.match(context.systemPrompt ?? "", /stop using repository tools/iu);
+            stream.end(assistantText("src/file.ts:10 — verified finding, limited to the queued path."));
+          }
+          return stream;
+        },
+      }),
+      model: createModel(config), requestOptions: createRequestOptions(config), config,
+      systemPrompt: "system", promptText: "question",
+      tools: [{ name: "read", label: "Read", description: "Read a fact", parameters: Type.Object({}),
+        execute: async () => { executed += 1; return { content: [{ type: "text", text: "fact" }], details: {} }; } }],
+      tokenCounter: { countBatch: async (texts) => texts.map((text) => text.length) },
+      maxTurns: budget.maxTurns, maxToolCalls: budget.maxToolCalls,
+    });
+    assert.equal(requests, budget.requests);
+    assert.equal(executed, budget.executed);
+    assert.equal(result.metrics.finalizationReason, budget.reason);
+    assert.match(result.text, /verified finding/);
+    assert.equal(result.completed, true);
+  }
+});
+
+test("unsuccessful final answers preserve prior findings as partial without restarting exploration", async () => {
+  for (const stopReason of ["toolUse", "length", "error", "aborted", "stop"] as const) {
+    let requests = 0;
+    const config = baseConfig({ contextCompactionEnabled: false, providerRetryDelaysMs: [1] });
+    const result = await runPiSession({
+      bindings: fakeBindings(runAgentLoop, {
+        runAgentLoopContinue,
+        streamSimple: (_model, context) => {
+          requests += 1;
+          assert.ok(requests <= 2, "no extra finalization or retry after preserved findings");
+          const stream = createAssistantMessageEventStream();
+          if (requests === 1) {
+            stream.end(assistantText("", { stopReason: "toolUse", content: [
+              { type: "text", text: "src/file.ts:10 — confirmed fact for the queued path." },
+              { type: "toolCall", id: "read-1", name: "read", arguments: {} },
+            ] }));
+          } else {
+            assert.equal(context.tools?.length, 0);
+            stream.end(assistantText("", { stopReason, ...(stopReason === "toolUse" ? {
+              content: [{ type: "toolCall", id: "read-2", name: "read", arguments: {} }],
+            } : {}) }));
+          }
+          return stream;
+        },
+      }),
+      model: createModel(config), requestOptions: createRequestOptions(config), config,
+      systemPrompt: "system", promptText: "question", maxTurns: 1,
+      tools: [{ name: "read", label: "Read", description: "Read a fact", parameters: Type.Object({}),
+        execute: async () => ({ content: [{ type: "text", text: "fact" }], details: {} }) }],
+      tokenCounter: { countBatch: async (texts) => texts.map((text) => text.length) },
+    });
+    assert.equal(requests, 2);
+    assert.equal(result.metrics.toolCalls, 1);
+    assert.equal(result.completed, false);
+    assert.match(result.text, /confirmed fact/);
+    assert.equal(result.terminalFailure, stopReason === "error" ? "provider" : stopReason === "aborted" ? "aborted" : null);
+    const compiled = await compileFreeContextResult({ question: "question" }, invocation, result.text, {
+      errorCode: null, completed: result.completed,
+    });
+    assert.equal(compiled.status, "partial");
+    assert.equal(compiled.text, result.text);
+  }
 });
 
 test("the outer hard deadline keeps text already streamed by the worker", async () => {
