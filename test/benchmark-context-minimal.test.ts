@@ -50,6 +50,39 @@ function currentCodexMcpCallEnd({
   });
 }
 
+function completedNativeCodexMcpToolCall({
+  rawCallId,
+  request,
+  sessionId,
+  text,
+}: Readonly<{
+  rawCallId: string;
+  request: Readonly<Record<string, unknown>>;
+  sessionId: string;
+  text: string;
+}>): string {
+  return JSON.stringify({
+    type: "event_msg",
+    payload: {
+      type: "item_completed",
+      item: {
+        type: "McpToolCall",
+        id: rawCallId,
+        server: "freecontext",
+        tool: "gather_context",
+        arguments: request,
+        result: {
+          content: [{ type: "text", text }],
+          _meta: { freecontext: { sessionId } },
+          structured_content: null,
+        },
+        status: "completed",
+        duration: 4,
+      },
+    },
+  });
+}
+
 async function commitCompleteSession({
   workspaceRoot,
   sessionDirectory,
@@ -365,6 +398,46 @@ test("benchmark context correlates current Codex call-end records by delivered s
       () => exportMasterAgentContext({ agentDir: root, taskName: "current-call-end" }),
       /Conflicting structured FreeContext delivered session IDs/u,
     );
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("benchmark context correlates Codex 0.153.4 completed native MCP items", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "freecontext-native-mcp-item-"));
+  const workspaceRoot = path.join(root, "workspace");
+  const sessionDirectory = path.join(root, "freecontext-sessions");
+  await mkdir(workspaceRoot);
+  await mkdir(path.join(root, "sessions"));
+  try {
+    const reservation = await commitCompleteSession({
+      workspaceRoot,
+      sessionDirectory,
+      callId: "fc-internal-call",
+      question: "redacted question",
+    });
+    const text = `redacted answer\n\nSession: ${reservation.invocation.sessionId}`;
+    const completedCall = completedNativeCodexMcpToolCall({
+      rawCallId: "exec-native-call",
+      request: { question: "redacted question" },
+      sessionId: reservation.invocation.sessionId,
+      text,
+    });
+    const startedCall = JSON.parse(completedCall) as {
+      payload: { type: string; item: { status: string; result: unknown } };
+    };
+    startedCall.payload.type = "item_started";
+    startedCall.payload.item.status = "in_progress";
+    startedCall.payload.item.result = null;
+    await writeFile(path.join(root, "sessions", "master.jsonl"), `${JSON.stringify(startedCall)}\n${completedCall}\n`, "utf8");
+
+    const outputPath = await exportMasterAgentContext({ agentDir: root, taskName: "native-mcp-item" });
+    const exported = JSON.parse(await readFile(outputPath, "utf8")) as {
+      freeContextCalls: Array<Record<string, unknown>>;
+    };
+    assert.equal(exported.freeContextCalls.length, 1);
+    assert.equal(exported.freeContextCalls[0]?.callId, "exec-native-call");
+    assert.equal(exported.freeContextCalls[0]?.outputToMasterAgent, text);
   } finally {
     await rm(root, { recursive: true, force: true });
   }

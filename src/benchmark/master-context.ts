@@ -99,15 +99,15 @@ function textBlocks(value: unknown, depth = 0): string[] {
   return candidates.flatMap((candidate) => textBlocks(candidate, depth + 1));
 }
 
-function walk(value: unknown, visitor: (record: RecordValue) => void, depth = 0): void {
+function walk(value: unknown, visitor: (record: RecordValue, parent: RecordValue | null) => void, depth = 0, parent: RecordValue | null = null): void {
   if (depth > 7 || value === null || value === undefined) return;
   if (Array.isArray(value)) {
-    for (const item of value) walk(item, visitor, depth + 1);
+    for (const item of value) walk(item, visitor, depth + 1, parent);
     return;
   }
   if (!isRecord(value)) return;
-  visitor(value);
-  for (const child of [value.payload, value.event, value.item]) walk(child, visitor, depth + 1);
+  visitor(value, parent);
+  for (const child of [value.payload, value.event, value.item]) walk(child, visitor, depth + 1, value);
 }
 
 function sameRecordOutput(record: RecordValue): string | null {
@@ -160,11 +160,15 @@ function collectRawCalls(rawJsonl: string): readonly RawCall[] {
     if (!line.trim()) continue;
     let parsed: unknown;
     try { parsed = JSON.parse(line); } catch { continue; }
-    walk(parsed, (record) => {
+    walk(parsed, (record, parent) => {
       const invocation = isRecord(record.invocation) ? record.invocation : null;
       const name = record.name ?? record.tool ?? invocation?.tool;
       const server = record.server ?? invocation?.server;
-      const currentCallEnd = record.type === "mcp_tool_call_end";
+      const nativeCompletedMcpToolCall = (parent?.type === "item_completed" || parent?.type === "item.completed") &&
+        (record.type === "McpToolCall" || record.type === "mcp_tool_call");
+      const modernMcpToolCall = record.type === "McpToolCall" || record.type === "mcp_tool_call";
+      const currentCallEnd = record.type === "mcp_tool_call_end" || nativeCompletedMcpToolCall;
+      if (modernMcpToolCall && !nativeCompletedMcpToolCall) return;
       if (typeof record.type === "string" && record.type.startsWith("mcp_tool_call_") && !currentCallEnd) return;
       if (currentCallEnd && server !== "freecontext") return;
       if (!currentCallEnd && server !== undefined && server !== "freecontext") return;
