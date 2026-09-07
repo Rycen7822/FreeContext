@@ -1,11 +1,11 @@
 ---
 name: freecontext
-description: Delegate one unresolved code-fact or relationship question at any phase when answering it needs substantial new reading. Keep edit-context reads, design decisions, edits, tests, and small syntax/type/patch checks in the main agent.
+description: Delegate one unresolved code-fact or relationship when answering it needs substantial new reading beyond context already available, after accounting for the small edit-context read Main is about to need. Keep edit-context reads, design decisions, edits, tests, and small syntax/type/patch checks in the main agent.
 ---
 
 # FreeContext routing
 
-At any phase, call `tools.mcp__freecontext__gather_context` for one unresolved code fact or relationship when answering it needs substantial new reading, such as tracing one value or checking a caller/consumer relationship. Keep architecture decisions and the overall diagnosis or fix yourself; do not ask FC to design the feature or certify the whole implementation. Stay native when the answer is already in context or needs only a small direct check. Known paths or an exact error do not by themselves make an investigation small. Midtask native work can reveal an eligible unknown. FreeContext is read-only.
+At any phase, call `tools.mcp__freecontext__gather_context` for one unresolved code fact or relationship when resolving it would replace substantial additional repository reading beyond context already seen, after accounting for the small exact edit-context read Main must make anyway. Keep that local read, along with architecture decisions and the overall diagnosis or fix, in Main. If a local read will likely settle the question, stay native; if an unfamiliar specific cross-boundary relationship still needs that substantial additional reading, it can be delegated immediately. Do not trace everything first just to decide or call merely because a task starts. FreeContext is read-only.
 
 ## Request
 
@@ -18,11 +18,13 @@ Send one small object:
 }
 ```
 
-Delegate one concrete unresolved question whose answer would replace substantial further reading, not a file inventory or a long checklist of requirements to audit. For a complex problem, choose the next uncertain code fact or relationship needed to decide what to do. FC sees only `question` and optional `hints`, not your original task or conversation. Include relevant requirements, checked facts, and a specific error when useful; distinguish unverified leads and do not forward the whole conversation.
+Delegate one concrete unresolved question whose answer would replace substantial further reading beyond context already available, after accounting for the small edit-context read Main is about to need. Do not request a file inventory or a checklist of requirements to audit. For a complex problem, choose the next uncertain code fact or relationship needed to decide what to do. FC sees only `question` and optional `hints`, not your original task or conversation. Include relevant requirements, checked facts, and a specific error when useful; distinguish unverified leads and do not forward the whole conversation.
 
-Expect the worker to trace the implementation or relationship that decides the requested behavior and return ordinary assistant text with a conclusion, located findings, and important unknowns. It should include a short decisive source excerpt, location, or symbol when needed so the caller can stop tracing rather than infer semantics from names, types, or call syntax. Use supported facts as already-read context, not automatic proof of correctness or completeness. Open precise edit locations and verify decisive claims or uncertainty without replaying the full map. If you still need context, read the relevant function, branch, or local diff instead of reloading whole files. Keep exact edit-context reads, edits, and checks in the main agent.
+Expect the worker to trace the implementation or relationship that decides the requested behavior and return ordinary assistant text with a decisive factual conclusion and exact observed locations. When needed to establish the conclusion, it should add a short useful source excerpt and the relevant condition or scope. If the question mixes factual uncertainty with design, the worker should report factual constraints and leave choices to the parent; it should omit unsolicited design menus, new fields, and recommendations.
 
-Native work can reveal an unresolved relationship at any point. If resolving it needs substantial new reading, delegate that question with checked facts and any relevant change or failure; this can concern the same feature as an earlier call, and does not require a failed test or a new module. Do not ask for a full re-audit, repeat a resolved question, or call for an obvious local fix.
+Use supported located facts as read context. Main opens exact edit locations and checks missing or contradictory facts, or the new assumption introduced when applying a fact to a design or test, using already-seen evidence first. Do not re-walk source merely because FC provided it; verify as needed. Keep exact edit-context reads, edits, and checks in the main agent.
+
+Native work can reveal an unresolved relationship at any point. If resolving an unfamiliar cross-boundary relationship needs substantial additional reading beyond that local edit-context read, the question can be delegated with checked facts and any relevant change or failure; this can concern the same feature as an earlier call, and does not require a failed test or a new module. Do not ask for a full re-audit, repeat a resolved question, or call for an obvious local fix.
 
 ## Dispatch
 

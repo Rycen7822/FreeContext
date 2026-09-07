@@ -48,7 +48,7 @@ COMMON_TASK_EFFECT_POLICY = (
 )
 COMMON_MAIN_AGENT_WORK_GUIDANCE = (
     "[Benchmark common main-agent work guidance]\n"
-    "For tests and checks, prefer quiet or summarized passing output when output could be large, while retaining the full raw log for detailed rereading. Always report failures and terminal exit status; never hide a failure or reduce necessary testing. Review focused local diffs or edit ranges instead of repeating whole-file dumps when sufficient. After a coherent batch of mechanical or signature edits, run the closest syntax or type check before broader propagation when useful. Track every started check to completion; on polling failure, recover or poll that same actual session and confirm the previous job ended before any restart."
+    "Ground code and test doubles in the actual path and precondition supported by available evidence. After coherent changes, run focused verification; broaden it for task requirements or concrete failures and risk, and report failures rather than hiding or waving them away. Long-running checks use generous waits and backoff on the same actual session, not repetitive short polls or restarts. Track each started check to terminal exit status; after a tool or poll failure, recover that same actual session and establish it ended before any restart. Retain quiet or summarized output with the full raw log, terminal failures, focused diffs, and necessary testing."
 )
 COMMON_DIAGNOSTIC_CHECKPOINT = (
     "[Benchmark common FreeContext routing reference]\n"
