@@ -264,3 +264,13 @@ Do not copy early task or Slice execution logs into this file. Keep only reusabl
 - 共同Main指导：测试使用非TTY，支持时关闭动态进度；长输出落本地日志，只带回路径、真实退出码、总结和相关失败，保留完整日志查阅及必要验证。沿同一session追到终态，补丁失败先读当前位置，格式化前检查范围与预期diff。两臂经同一builder注入；adapter没有本地Main工具TTY默认入口，此处是指导，不声称强制执行或已经节省token。
 - FC指导：精简skill、工具描述及重复MCP initialize说明；一个尚未解决、能替代新阅读的关系即可委派，小型必要编辑读取能解决则native，不先做完整调查或例行开局调用。通用导入例保留原操作、必须保持的语义、已确认事实和未知；不把新方案假设当事实。已支持事实作为已读上下文，允许缺口、矛盾和新应用前提的窄核对，也允许任务中自然出现的新跨边界问题。Worker不从局部原语推全设计、唯一方案或全仓无其他consumer，未知简短说明；请求、普通文本返回、时间/工具预算、steering/finalization、长等待与失败native均保持。
 - 本地候选边界：本轮无v14 benchmark数字；不增加复杂schema、解析拒绝器、调用计数、session继承或题目特化。最小现有测试14/14、typecheck、Conda test skill校验与Python源码compile、diff check通过；实现与验证报告见根 `.work/orchestrator/candidate-v14/implementation-report.md`。提示词是否减少重读、动态输出和返工仍待另行授权的新同时对照验证；旧v13 noFC不再是共同指令完全相同的对照。
+
+### 2026-09-08 — Candidate v15 factual investigation without implementation prescriptions
+
+- 起点/授权：从v14 `68c22f0fceb6a054fc95f0c3001a5c152dd9c689` 实施用户要求的通用改进，尤其强化FC事实与实现建议之间的边界。Astra medium实现，Root审核与configured复验；沿用已有feature提交/推送许可，不合并main、不发布release、不启动新benchmark。
+- v14实测补记：五题、Sol high和Astra medium两个FC臂、各三次，共30/30有效。Sol Main2,329,807、解决11/15，比v13 FC+12.35%；Astra875,295、12/15，比v13 FC−0.80%。相对历史无FC分别+14.50%/+4.09%，不是相同新版共同指导下的因果对照。26次FC均在首产品修改前并等待到返回；完整动作序列对照覆盖90条Main及47次FC问答，长源码/patch与重复日志选择性展开。阅读替代不足、具体返工和缓存计量分开记录，不能将全部增量归因FC；证据在根 `.work/freecontext-benchmark-baselines/reentry-five/candidate-v14-flagship-fc-only-20260908/analysis/main-token-diagnosis/README.md`。
+- Worker改动：即使被问实现方案，也只调查当前源码支持的行为、关系、成立条件与未知。明确不提供建议补丁、新字段、架构/算法/挂钩选择或实施计划；允许有依据且限域的推理、事实反例和现有源码短摘录。局部原语、近似指标或单一路径不得推导替换等价、全设计保证或其他消费者不存在。不新增模型输出语义/格式拒绝器。
+- Main改动：委派应替代下一轮尚未进行的大范围调查；已支持事实及条件视为已读，不把返回的所有文件再次读取来确认。保留精确编辑位置、缺口、矛盾及新前提的必要局部核查，不把FC设计建议当已验证结论。不增加开局、中途或最低调用次数要求，request仍为question与可选hints，普通文本返回、独立等待和失败native回退不变。
+- 共同执行指导：两臂均复用稳定代码上下文、检查受影响位置与diff hunks，失败补丁按当前精确锚点重建；格式化先预览并限制范围，不先污染全文件再恢复重做。必要focused/整体验证、真实失败报告、非TTY日志及同session终态等待均保留；模型、provider、时间/工具预算与缓存逻辑不变。
+- 本地验证：执行者13/13现有合同测试通过；Root configured全套81/81、0 fail/skip（含Gigatoken），typecheck、build、static58、skill validator、双臂真实TOML builder共同指导一致与diff check通过。复用现有integration seam，证明repository系统提示经workspace/tools/overview渲染后完整到达worker；未新增措辞匹配“行为证明”。报告与日志在根 `.work/orchestrator/candidate-v15/`。
+- 已知边界/下一步：这是提示边界和本地传递证明，不证明小模型服从、事实正确率提高或Main token下降。v14原成绩/轨迹不变；v13 Pest Astra FC r1首改步骤在新的派生分析中由S11纠正为S10，不改原总量。后续性能比较需要新授权及相同共同指导下的新有/无FC对照，不能把旧数字写成v15收益。

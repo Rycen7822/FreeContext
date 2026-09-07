@@ -5,7 +5,7 @@ description: Delegate an unresolved repository fact or relationship that would o
 
 # FreeContext routing
 
-At any phase, use read-only `tools.mcp__freecontext__gather_context` for one unresolved fact or relationship when its answer can replace substantial new reading. If the small edit-context read Main needs anyway can settle it, stay native. Delegate a useful cross-boundary question as it emerges; do not finish the investigation first, request a recap of already-read code, or call routinely at task start. Keep overall diagnosis, design, edits, tests, and local fixes in Main.
+At any phase, use read-only `tools.mcp__freecontext__gather_context` for one unresolved fact or relationship to replace the next substantial investigation you would otherwise do. If the small edit-context read Main needs anyway can settle it, stay native. Delegate as the unknown emerges; do not finish the investigation first, request a recap of already-read code, or call routinely at task start. Keep overall diagnosis, design, edits, tests, and local fixes in Main.
 
 ## Request
 
@@ -22,7 +22,7 @@ FC sees only `question` and optional `hints`, not the original task or conversat
 
 Expect ordinary assistant text with supported facts, observed `path:line` locations plus function or symbol, and conditions that affect their use, plus a short source excerpt when needed. Design choices remain with Main.
 
-Treat supported located facts as already-read context. Read exact edit locations and narrowly check missing or contradictory evidence or a new design/test premise, using existing evidence first. New cross-boundary questions can be delegated during work, including on the same feature; no failed test, new module, or call count is required.
+Treat supported located facts and their conditions as already-read context; do not reread every listed file to confirm the answer. Read exact edit locations and narrowly check gaps, contradictions, or new design/test premises using existing evidence first. Any FC design suggestion is not a verified conclusion. Delegate a new substantial unknown when useful during work; no failed test, new module, or call count is required.
 
 ## Dispatch
 

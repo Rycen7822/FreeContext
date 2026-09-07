@@ -131,7 +131,7 @@ test("the router and explorer run one ordinary-text success path", async () => {
   }
 });
 
-test("hints and previously checked findings reach the worker without relabeling leads", async () => {
+test("the repository system prompt and hints reach the worker without relabeling leads", async () => {
   const testRoot = await mkdtemp(path.join(process.cwd(), ".work", "fc-v8-hints-"));
   const workspace = await createWorkspace(testRoot);
   const request = FreeContextCallerRequestSchema.parse({
@@ -162,6 +162,12 @@ test("hints and previously checked findings reach the worker without relabeling 
       },
     });
     assert.equal(result.status, "complete");
+    const systemTemplate = await readFile(new URL("../prompts/explorer.md", import.meta.url), "utf8");
+    assert.equal(receivedSystemPrompt, systemTemplate
+      .replaceAll("{{WORKSPACE}}", workspace.root)
+      .replaceAll("{{TOOLS}}", "")
+      .replaceAll("{{OVERVIEW}}", "[empty workspace]")
+      .trim());
     assert.equal(receivedPrompt, buildUserPrompt(request));
     assert.match(receivedPrompt, /Hints: Previously checked fact: parser behavior was read/iu);
     assert.doesNotMatch(receivedPrompt, /already-known findings|\bconfirmed:\b|\bverified:\b/iu);
