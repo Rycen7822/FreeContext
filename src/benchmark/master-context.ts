@@ -27,6 +27,7 @@ export interface FreeContextCallReference {
   readonly completedAt: string | null;
   readonly latencyMs: number | null;
   readonly summaryBypassed?: true;
+  readonly deliveryStatus?: "unmatched";
 }
 
 export interface FreeContextTransportObservation {
@@ -259,7 +260,7 @@ function parseSession(value: unknown): McpSessionDocument | null {
 export async function exportMasterAgentContext({
   agentDir,
   taskName,
-  allowUnreferencedSessions = false,
+  allowUnreferencedSessions = true,
   now = () => new Date(),
 }: Readonly<{
   agentDir: string;
@@ -310,7 +311,10 @@ export async function exportMasterAgentContext({
       throw new Error(`Committed FreeContext session is not referenced by a master-agent gather_context call: ${filePath}`);
     }
     const timing = sessionTiming(session);
-    const output = matchingCall?.outputText ?? outputForSession(rawJsonl, session.invocation.sessionId);
+    // A committed session is cost evidence, not proof that the master received it.
+    const output = matchingCall
+      ? matchingCall.outputText ?? outputForSession(rawJsonl, session.invocation.sessionId)
+      : null;
     const sessionPath = relative(root, filePath);
     freeContextCalls.push(Object.freeze({
       callId: matchingCall?.callId ?? null,
@@ -323,6 +327,7 @@ export async function exportMasterAgentContext({
       completedAt: session.finishedAt,
       latencyMs: timing.latencyMs,
       ...(session.result.summaryBypassed === true ? { summaryBypassed: true as const } : {}),
+      ...(!matchingCall ? { deliveryStatus: "unmatched" as const } : {}),
     }));
     freeContextTransport.push(Object.freeze({
       schemaVersion: "freecontext-transport-observation-v1",

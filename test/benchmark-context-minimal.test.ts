@@ -241,12 +241,19 @@ test("benchmark context exports ordinary delivery and basic session timing", asy
       now: () => new Date("2026-09-02T00:00:02.000Z"),
     });
     await assert.rejects(
-      () => exportMasterAgentContext({ agentDir: root, taskName: "task-context" }),
+      () => exportMasterAgentContext({ agentDir: root, taskName: "task-context", allowUnreferencedSessions: false }),
       /not referenced by a master-agent gather_context call/u,
     );
-    const allowedPath = await exportMasterAgentContext({ agentDir: root, taskName: "task-context", allowUnreferencedSessions: true });
-    const allowed = JSON.parse(await readFile(allowedPath, "utf8")) as { freeContextCalls: unknown[] };
+    const allowedPath = await exportMasterAgentContext({ agentDir: root, taskName: "task-context" });
+    const allowed = JSON.parse(await readFile(allowedPath, "utf8")) as { freeContextCalls: Array<Record<string, unknown>> };
     assert.equal(allowed.freeContextCalls.length, 2);
+    const orphan = allowed.freeContextCalls.find((call) => call.deliveryStatus === "unmatched");
+    assert.equal(orphan?.fullSessionFile, `freecontext-sessions/${unreferenced.invocation.sessionId}.json`);
+    assert.equal(orphan?.callId, null);
+    assert.equal(orphan?.outputToMasterAgent, null);
+    const withOrphan = await loadCostTrial({ taskId: "task-context", success: true, agentDir: root });
+    assert.equal(withOrphan.freeContextCalls, 2);
+    assert.deepEqual(withOrphan.subagentDelivered, trial.subagentDelivered);
 
     await unlink(allowedPath);
     await writeFile(path.join(root, "sessions", "master.jsonl"), [
@@ -364,6 +371,8 @@ test("benchmark context correlates current Codex call-end records by delivered s
         };
         const firstNegative = negativeExported.freeContextCalls.find((call) => call.fullSessionFile === `freecontext-sessions/${first.invocation.sessionId}.json`);
         assert.equal(firstNegative?.callId, null);
+        assert.equal(firstNegative?.deliveryStatus, "unmatched");
+        assert.equal(firstNegative?.outputToMasterAgent, null);
         await unlink(negativeOutputPath);
       } else {
         await assert.rejects(

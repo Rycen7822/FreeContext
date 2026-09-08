@@ -12,6 +12,7 @@ export async function runBenchmarkContextCli(
   argv: readonly string[] = process.argv.slice(2),
 ): Promise<void> {
   const allowFlag = "--allow-unreferenced-sessions";
+  // Retained for existing callers; unmatched committed sessions are now exported by default.
   const allowUnreferencedSessions = argv.includes(allowFlag);
   const agentDir = option(argv, "--agent-dir");
   const taskName = option(argv, "--task-name");
@@ -29,7 +30,6 @@ export async function runBenchmarkContextCli(
   const outputPath = await exportMasterAgentContext({
     agentDir,
     taskName,
-    allowUnreferencedSessions,
   });
   process.stdout.write(`${outputPath}\n`);
 }
