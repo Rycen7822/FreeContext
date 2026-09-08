@@ -63,6 +63,8 @@ CONTROL_DIAGNOSTIC_ROUTE = (
 CONDITIONAL_FC_TREATMENT_POLICY = (
     "[Benchmark arm policy: conditional_fc_treatment]\n"
     "FreeContext is available in this treatment. Main chooses an authorized local read/search command and intent. In one code-mode cell, execute the native command into a variable, pass its captured output with command and status metadata to gather_context as {intent, output}, and emit only the summary response. Use discovered tool methods and existing native execution permissions. Collect ongoing command output through terminal status inside code mode before summarizing. FC has no tools or inherited conversation and does not execute commands. Reading raw output into Main first does not save its initial context cost. On summary failure use the saved capture reference; do not rerun the command merely to retry summarization."
+    " Choose FC when filtering can replace most reading, not by length alone; read core exact-edit code and small dense output natively. Ask only for observable facts, paths, source lines, errors and excerpts from the capture, not global absence judgments or design review. Reuse supported facts; retain necessary targeted verification and tests."
+    " Use a long initial code-mode yield and long outer waits on the same running cell (Codex: yield_time_ms 300000; otherwise use host-supported values) until FC succeeds or actually fails, with no arbitrary wait-count limit. While FC is pending, do not explore natively, edit or reread captured material. Intermediate yields or empty output do not justify cancellation or one-second polling. Actual provider/FC deadlines and user cancellation still apply."
     "\n"
     + TREATMENT_DIAGNOSTIC_ROUTE
 )

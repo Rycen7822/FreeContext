@@ -293,3 +293,12 @@ Do not copy early task or Slice execution logs into this file. Keep only reusabl
 - 调用计量：至多2048个JavaScript字符串代码单元的短capture直接返回，明确`summaryBypassed:true`，没有模型请求；其他调用保留既有有界provider瞬态重试，不宣称绝对一次HTTP。exporter保留bypass标记，MCP调用和实际模型调用必须区分。
 - Root本地验证：focused7/7；配置Conda test的全套80/80、0fail/skip，typecheck/build/static/skill校验及真实本地stdio MCP schema smoke通过。证明完整长输入尾部到达mock、初始上下文超限在provider前停止、单回复无工具、失败原文可准确回读、短输出bypass、CLI与exporter关联。不安装依赖、不调用真实模型、不启动benchmark；未用本地压缩率代替真实任务收益。
 - 待验证：Main是否实际遵守同cell隐藏原输出、摘要证据是否足够、是否减少回读/返工和整场Main token，均需后续授权的同共同指导对照。当前没有v17准确率或性能结论，不能用v13–v16历史成绩替代。
+
+### 2026-09-08 — Candidate v18 waiting and reading replacement
+
+- 起点/授权：从v17及导出修复基线`9a8076`按用户直接授权做通用小改；Astra low实现、本地验证，Root审核与后续同五题Astra medium FC各三次的执行。实现者不启动benchmark，不修改共同Main指导、control、模型/provider、超时预算或评分。
+- v17实测补记：15次Astra medium FC的Main总量876,206，历史noFC为840,903；请求289→414。轨迹存在摘要后重读及FC等待期间原生探索重叠；这些是本轮修改动机，不是v18收益。完整分析见根`.work/freecontext-benchmark-baselines/reentry-five/candidate-v17-astra-medium-fc-only-20260908/analysis/main-token-diagnosis/README.md`。
+- 通用改动：恢复host支持的长初始yield及同cell长wait直至FC真实成功/失败；中间yield或空输出不取消、不用一秒轮询，等待期间不原生探索、编辑或重读。保留provider/FC实际期限和用户取消。调用按摘要能替代多少阅读选择，核心精确编辑代码和小而密集输出原生读取，必要核验与测试保留；不强制调用。
+- 摘要边界：intent和worker只围绕捕获中可观察的事实、路径、行号、错误与原文；局部捕获不能支持全局缺失实现或设计审查，缺口交给Main。仍为intent/output双字符串、capture-only、普通文本，无新schema、格式校验、工具、继承或配置。
+- 验证边界：本地检查证明指导可加载及现有合同保持，不证明Astra会遵守等待、摘要事实准确率或Main token改善；v18收益须由后续真实轨迹检验。
+- Root审核补充：同Codex 0.153.4的v16 FastAPI Astra medium r1真实轨迹已有成功使用300000 ms初始yield的证据；skill示例明确该pragma及同cell的300000 ms outer wait，running则继续，不设人为次数上限，其他host服从暴露接口范围。此项只修复指导可操作性，仍保留实际deadline与用户中断，不是v18行为实证。
