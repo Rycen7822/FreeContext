@@ -7,9 +7,27 @@ import { createAssistantMessageEventStream } from "@earendil-works/pi-ai";
 import { FreeContextCallerRequestSchema } from "../src/mcp/contracts.js";
 import { createGatherContextHandler } from "../src/mcp/tool.js";
 import { runExplorer } from "../src/runtime/run.js";
+import { compileFreeContextResult } from "../src/output/text-result.js";
 import { assistantText, baseConfig, baseRouteConfig, fakeBindings } from "./helpers.js";
 
 const counter = { countBatch: async (texts: readonly string[]) => texts.map((text) => Math.ceil(text.length / 4)) };
+
+test("explicit capture status survives an incomplete summary without conflating commands or parsing logs", async () => {
+  const invocation = { invocationId: "i", callId: "c", workspaceRoot: "/unused", workspaceRevision: "r", sessionId: "s", sessionFile: "/unused/session.json" };
+  const capture = { command: "cat test.log", exit_code: 2, testStatus: { exit_code: 0, timedOut: false, timeout: 300000 }, results: [{ exit_code: 1, truncated: false }], output: '{"exit_code": 99}', payload: { exit_code: 88 } };
+  const result = await compileFreeContextResult({ intent: "test result", output: JSON.stringify(capture) }, invocation, "Log unavailable.");
+  assert.match(result.text, /\$\["exit_code"\] = 2/);
+  assert.match(result.text, /\$\["testStatus"\]\["exit_code"\] = 0/);
+  assert.match(result.text, /\$\["testStatus"\]\["timedOut"\] = false/);
+  assert.match(result.text, /\$\["testStatus"\]\["timeout"\] = 300000/);
+  assert.match(result.text, /\$\["results"\]\[0\]\["exit_code"\] = 1/);
+  assert.match(result.text, /\$\["results"\]\[0\]\["truncated"\] = false/);
+  assert.doesNotMatch(result.text, /99|88/);
+  const plain = await compileFreeContextResult({ intent: "status", output: 'log exit_code: 0' }, invocation, "Original answer", { errorCode: "PROVIDER_FATAL" });
+  assert.equal(plain.text, "Original answer");
+  assert.equal(plain.status, "partial");
+  assert.equal(plain.errorCode, "PROVIDER_FATAL");
+});
 
 test("complete capture including a large tail reaches the tool-free model and is recoverable after success or failure", async () => {
   const root = await realpath(await mkdtemp(path.join(process.cwd(), ".work", "command-summary-")));

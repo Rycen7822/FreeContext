@@ -302,3 +302,13 @@ Do not copy early task or Slice execution logs into this file. Keep only reusabl
 - 摘要边界：intent和worker只围绕捕获中可观察的事实、路径、行号、错误与原文；局部捕获不能支持全局缺失实现或设计审查，缺口交给Main。仍为intent/output双字符串、capture-only、普通文本，无新schema、格式校验、工具、继承或配置。
 - 验证边界：本地检查证明指导可加载及现有合同保持，不证明Astra会遵守等待、摘要事实准确率或Main token改善；v18收益须由后续真实轨迹检验。
 - Root审核补充：同Codex 0.153.4的v16 FastAPI Astra medium r1真实轨迹已有成功使用300000 ms初始yield的证据；skill示例明确该pragma及同cell的300000 ms outer wait，running则继续，不设人为次数上限，其他host服从暴露接口范围。此项只修复指导可操作性，仍保留实际deadline与用户中断，不是v18行为实证。
+
+### 2026-09-08 — Candidate v19 evidence extraction and explicit captured status
+
+- 起点/授权：用户直接要求执行v18调查建议，FC system prompt要详细、具体、结构化，输出参考Caveman简洁原则，并测试原五题Astra medium+新FC各三次。此提交是v19候选实现；Root持有启动审核，实施者仅做本地修改和验证。
+- v18实测与动机：Main总量876,206→994,027（+117,821），非缓存输入734,836→844,978；本地工具文本295,863→430,427。成功非旁路FC捕获237,436→62,472，v18摘要12,378；13次FC均在初始cell返回，outer wait 60→1。等待改善同时宽源码阅读回Main，不能把不同token口径差额当因果损益。具体testStatus.exit_code=0已在捕获内但摘要说不存在，导致回读。证据：根`.work/freecontext-benchmark-baselines/reentry-five/candidate-v18-astra-medium-fc-only-20260908/analysis/main-token-diagnosis/{README.md,40-root-review.md}`。
+- 通用改动：原生例外收窄到已定位编辑函数/小窗口和小而密集结果，核心文件宽初读与跨文件搜索可交FC；无强制次数。保留300000长yield/wait、pending无原生穿插、必要测试。明确成功终态足以回答时可只保留短状态，不必摘要长成功列表。
+- FC指导：长system prompt按输入辨识、源码证据、日志/执行状态、简洁输出分段，要求完整检查capture与独立testStatus、保留原文/实际位置/否定条件/反例，区分源码断言与实际执行，缺口只限确实未提供的材料。参考Caveman的压缩解释但保持代码/路径/错误精确原则，不安装、不强制电报体、不加返回schema或实施建议。
+- 确定性保留：结果编译浅层复制JSON捕获外层、直接结果对象/命令数组的明确标量执行字段，保留原JSON路径和值；不解析日志字符串、不深入payload、不推断成功/缺失，timeout数值不转换为超时判断。原intent/output双字符串与FC失败状态保持。短输出原文旁路保持。
+- 本地验证：合并状态回归覆盖testStatus零退出码与外层读取失败区分、false与数值timeout、命令数组、日志/payload不解析、非JSON和provider失败保留；focused14/14通过。其余本地检查见根`.work/orchestrator/candidate-v19/implementation/`交接报告。
+- 边界：确定性复制不保证模型正文没有矛盾，也不支持任意深度/非JSON日志状态解析。当前无v19真实性能结论；后续独立15次保持既有FC模型/provider/预算/评分，对历史三次波动与缓存变化只作描述比较。

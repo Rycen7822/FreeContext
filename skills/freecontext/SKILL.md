@@ -1,11 +1,11 @@
 ---
 name: freecontext
-description: Summarize captured local read or search output when filtering can replace most reading. Keep core exact-edit code and small dense output native; Main retains diagnosis, edits, and verification.
+description: Extract relevant evidence from captured local reads, cross-file searches, and logs. Read already-located edit functions or small dense output natively; Main retains diagnosis, edits, and verification.
 ---
 
 # FreeContext
 
-Use `gather_context` when filtering the next authorized local read/search can replace reading most of its output, such as a broad search result or log with a few relevant facts. Choose by reading replaced, not length alone: read core code needed for precise edits and small, dense output natively. No call is required. Main chooses the command and asks for observable facts, paths, source lines, errors or excerpts in that capture, not a design review or a judgment about globally missing implementation. FC has no tools or inherited conversation.
+Use `gather_context` when selecting relevant evidence can replace substantial reading of an authorized local capture: broad initial source reads, cross-file searches, or logs. Core files are eligible too. Read an already-located function or small window natively when its exact text is needed for an edit; small, dense results can also stay native. No call count is required. Main chooses the command and asks for facts, paths, actual source lines, guards and original excerpts, not design review or globally missing implementation. FC has no tools or inherited conversation. When an explicit successful terminal status already answers the verification question, retain that short status without summarizing a long list of successful tests; inspect failures and anomalies as needed.
 
 Discover the actual FC and native execution tool methods available in the host. In one code-mode cell, capture the native result in a variable, send it to FC, and emit only the FC response. For hosts exposing the following methods, the shape is:
 
