@@ -274,3 +274,12 @@ Do not copy early task or Slice execution logs into this file. Keep only reusabl
 - 共同执行指导：两臂均复用稳定代码上下文、检查受影响位置与diff hunks，失败补丁按当前精确锚点重建；格式化先预览并限制范围，不先污染全文件再恢复重做。必要focused/整体验证、真实失败报告、非TTY日志及同session终态等待均保留；模型、provider、时间/工具预算与缓存逻辑不变。
 - 本地验证：执行者13/13现有合同测试通过；Root configured全套81/81、0 fail/skip（含Gigatoken），typecheck、build、static58、skill validator、双臂真实TOML builder共同指导一致与diff check通过。复用现有integration seam，证明repository系统提示经workspace/tools/overview渲染后完整到达worker；未新增措辞匹配“行为证明”。报告与日志在根 `.work/orchestrator/candidate-v15/`。
 - 已知边界/下一步：这是提示边界和本地传递证明，不证明小模型服从、事实正确率提高或Main token下降。v14原成绩/轨迹不变；v13 Pest Astra FC r1首改步骤在新的派生分析中由S11纠正为S10，不改原总量。后续性能比较需要新授权及相同共同指导下的新有/无FC对照，不能把旧数字写成v15收益。
+
+### 2026-09-08 — Candidate v16 decisive code and contract-aligned work
+
+- 起点/授权：从v15 `12642906f7e751ffb2817dcc74e8ec0264d64326` 按用户要求小范围改进，并授权同五题、Sol high FC与Astra medium FC各三次，共30次、总并发6。此条所在提交定位v16；Astra medium实现、Root审核/提交/启动监督，main及历史证据不变。
+- v15实测与分析：30/30有效；Sol Main1,957,868、成功10/15，较v14 Main−15.96%、可见输入−12.37%；Astra915,774、12/15，Main+4.62%但可见输入−6.65%、请求323→315。28次FC全部交付；Pebble Sol r3有一次实际编辑后调查调用，回答后直接验证。Astra ofetch三次FC0；原session确认相邻请求prompt仅增1,195而cache命中减18,560，不能把未缓存输入当新增阅读。各题手读范围、返工、反例和计量限制见根`.work/freecontext-benchmark-baselines/reentry-five/candidate-v15-flagship-fc-only-20260908/analysis/token-improvement/README.md`。
+- FC改动：替换既有示例与措辞，问题聚焦一个现有关系及成立条件，返回决定性的短代码/签名/分支与准确位置、相邻条件。保持明确不提供新字段/API/架构/实施步骤，即使被问方案也只报告事实和限域推理；不做全面修改地图。不增加schema、格式门、调用频率或原生读取禁令；必要编辑、矛盾和应用前提核查保留。
+- 共同Main指导：保留用户明确指定的接口/参数/单位/语义；代表性fixture与原要求和实际路径前提一致后再扩展覆盖，避免按自写实现倒推预期。格式化先于相关验证；长预览/日志落盘，只返回概要/退出状态/必要片段，不全量cat回灌；同文件写完再验证，复用已知可选工具缺失结论。保留必要测试、宽读与风险审查。这些属于指导而非强制工具行为。
+- 本地验证：原13项focused通过；Root配置Conda test的81/81全套、0失败/跳过，typecheck/build/static check、skill validator与双臂真实TOML builder共同指导相等通过。没有新增只匹配措辞的测试。Root复核四个提示面的完整diff并保留事实/设计明确边界；报告在根`.work/orchestrator/candidate-v16/`。
+- 边界：缓存独立核查未找到真实outgoing request证据，原因未知，不猜改缓存选项或排除高值。模型/provider、预算、等待/fallback、计分均不变。当前没有v16性能结果；后续已授权30次只有两个FC臂，与历史noFC比较须注明共同指导不同，不能据旧结果宣称v16收益。

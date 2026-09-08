@@ -13,14 +13,14 @@ Send one small object:
 
 ```js
 {
-  question: "How does the import pipeline handle duplicate rows on the way to storage?",
-  hints: "Replacing per-row writes with a batch must preserve last-row-wins behavior. Checked: parseRows preserves input order. Unknown: where deduplication occurs; batch equivalence is unverified."
+  question: "When parseRows emits two rows with the same key, which value reaches writeRow, and what condition can change that?",
+  hints: "Current operation: per-row imports; last-row-wins semantics must be preserved. Checked: parseRows preserves input order. Unknown: whether a caller filters or reorders duplicates before writeRow. Batching is only a proposal; equivalence is unverified."
 }
 ```
 
-FC sees only `question` and optional `hints`, not the original task or conversation. Include the original operation and semantics to preserve, relevant checked facts, and the remaining unknown; label proposed changes and unverified assumptions. Ask for the next needed relationship, not a feature design, file inventory, or full audit.
+FC sees only `question` and optional `hints`, not the original task or conversation. Include the original operation and semantics to preserve, relevant checked facts, and the remaining unknown; label proposed changes and unverified assumptions. Ask how the uncertain existing relationship works and under which conditions, rather than how to build the feature.
 
-Expect ordinary assistant text with supported facts, observed `path:line` locations plus function or symbol, and conditions that affect their use, plus a short source excerpt when needed. Design choices remain with Main.
+Expect ordinary assistant text resolving that uncertainty with the decisive short code excerpt, signature, or branch, observed `path:line` and symbol, and adjacent conditions that affect the conclusion. Source-grounded inferences should state their assumptions; design choices remain with Main.
 
 Treat supported located facts and their conditions as already-read context; do not reread every listed file to confirm the answer. Read exact edit locations and narrowly check gaps, contradictions, or new design/test premises using existing evidence first. Any FC design suggestion is not a verified conclusion. Delegate a new substantial unknown when useful during work; no failed test, new module, or call count is required.
 
