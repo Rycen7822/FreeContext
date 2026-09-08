@@ -306,7 +306,7 @@ async function runPiSessionWithCounter({
   };
 
   const prepareContext = async (): Promise<void> => {
-    if (!counter || !config.contextCompactionEnabled) return;
+    if (!counter || (!config.contextCompactionEnabled && tools.length > 0)) return;
     const snapshot = await estimateInitialRequestTokens({
       systemPrompt: effectiveSystemPrompt,
       promptText,
@@ -317,6 +317,7 @@ async function runPiSessionWithCounter({
       reserveTokens: config.contextReserveTokens,
     });
     if (snapshot.totalTokens > snapshot.availableTokens) {
+      if (tools.length === 0) throw new ContextBudgetError("Captured summary input exceeds the configured model context window and reserve. Submit a smaller capture segment; the saved capture remains available.");
       const compacted = await compact(effectiveMessages);
       effectiveMessages.splice(0, effectiveMessages.length, ...compacted);
       const after = await estimateEffectiveContextTokens(effectiveMessages, counter);
@@ -335,6 +336,7 @@ async function runPiSessionWithCounter({
     convertToLlm: bindings.convertToLlm,
     toolExecution: "parallel",
     beforeToolCall: async () => {
+      if (tools.length === 0) return { block: true, reason: "This session only summarizes supplied output and cannot use tools." };
       checkFinalization();
       if (stopTools) {
         blockedToolCalls += 1;
@@ -344,6 +346,7 @@ async function runPiSessionWithCounter({
       return undefined;
     },
     prepareNextTurn: async ({ context }) => {
+      if (tools.length === 0) return undefined;
       checkFinalization();
       if (finalizationReason !== null) {
         context.systemPrompt = effectiveSystemPrompt;
@@ -373,6 +376,7 @@ async function runPiSessionWithCounter({
       return undefined;
     },
     shouldStopAfterTurn: async ({ message }) => {
+      if (tools.length === 0) return true;
       const calls = message.content.some((block) => block.type === "toolCall");
       // A tool-bearing message is still exploration, even when its tools were blocked.
       // Stop after the one tool-free answer request, including a provider that ignores it.

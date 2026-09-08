@@ -3,7 +3,6 @@ import { resolveConfig } from "../config.js";
 import { ProviderError } from "../errors.js";
 import { loadSystemPrompt } from "../prompt.js";
 import type { RepositoryToolSet, ToolExecutables, Workspace } from "../tools/contracts.js";
-import { createRepositoryTools } from "../tools/index.js";
 import type { FreeContextModel, FreeContextRequestOptions } from "./model.js";
 import { createModel, createRequestOptions } from "./model.js";
 import type { ContextTokenCounter } from "./context-budget.js";
@@ -79,12 +78,7 @@ export async function runPrimaryRoute({
     const config = route.targets[index];
     if (!config) continue;
     const bindings = dependencies.bindings ?? (await loadPiBindings(config.api, null, config.openAICompat.useStreaming));
-    const repositoryTools = dependencies.repositoryTools ?? (await createRepositoryTools({
-      Type: bindings.Type,
-      workspace,
-      config,
-      executables: dependencies.executables ?? null,
-    }));
+    const repositoryTools: RepositoryToolSet = { tools: [], names: [], executables: { rg: null, jq: null, bat: null } };
     cachedSystemPrompt ??= await loadSystemPrompt({
       promptPath: config.promptPath,
       workspace,

@@ -1,6 +1,6 @@
 import { createHash, randomUUID } from "node:crypto";
 import { constants as fsConstants } from "node:fs";
-import { lstat, mkdir, open, realpath, rename, stat, unlink } from "node:fs/promises";
+import { lstat, mkdir, open, realpath, rename, stat, unlink, writeFile } from "node:fs/promises";
 import type { FileHandle } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -26,6 +26,12 @@ interface ReservationState {
 }
 
 const reservations = new WeakMap<SessionFileReservation, ReservationState>();
+
+/** Save exactly the supplied capture beside an already authorized session. */
+export async function writeCapturedOutput(reservation: Readonly<SessionFileReservation>, output: string): Promise<void> {
+  if (!reservations.has(reservation)) throw new SessionPersistenceError("write");
+  await writeFile(`${reservation.path}.output.txt`, output, { encoding: "utf8", flag: "wx", mode: 0o600 });
+}
 
 function isWithin(root: string, target: string): boolean {
   const relative = path.relative(root, target);

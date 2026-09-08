@@ -87,15 +87,17 @@ async function commitCompleteSession({
   workspaceRoot,
   sessionDirectory,
   callId,
-  question,
+  intent,
+  summaryBypassed,
 }: Readonly<{
   workspaceRoot: string;
   sessionDirectory: string;
   callId: string;
-  question: string;
+  intent: string;
+  summaryBypassed?: true;
 }>) {
   const reservation = await reserveMcpSession({
-    request: FreeContextCallerRequestSchema.parse({ question }),
+    request: FreeContextCallerRequestSchema.parse({ intent, output: "captured command output" }),
     invocationId: `invocation-${callId}`,
     callId,
     workspaceRoot,
@@ -116,10 +118,11 @@ async function commitCompleteSession({
     runtimeEvents: [],
     result: {
       status: "complete",
-      text: "ordinary answer",
+      text: summaryBypassed ? "captured command output" : "ordinary answer",
       errorCode: null,
       sessionId: reservation.invocation.sessionId,
       sessionFile: reservation.invocation.sessionFile,
+      ...(summaryBypassed === true ? { summaryBypassed } : {}),
     },
     terminalDecision: decision,
     terminalError: null,
@@ -136,7 +139,7 @@ test("benchmark context exports ordinary delivery and basic session timing", asy
   await mkdir(path.join(root, "sessions"));
   try {
     const reservation = await reserveMcpSession({
-      request: FreeContextCallerRequestSchema.parse({ question: "trace the route" }),
+      request: FreeContextCallerRequestSchema.parse({ intent: "trace the route", output: "captured command output" }),
       invocationId: "invocation-context",
       callId: "call-context",
       workspaceRoot,
@@ -167,8 +170,8 @@ test("benchmark context exports ordinary delivery and basic session timing", asy
       now: () => new Date("2026-09-02T00:00:02.000Z"),
     });
     await writeFile(path.join(root, "sessions", "master.jsonl"), [
-      JSON.stringify({ type: "function_call", name: "gather_context", call_id: "call-context", arguments: JSON.stringify({ question: "trace the route" }) }),
-      JSON.stringify({ type: "function_call", name: "gather_context", call_id: "call-context", arguments: JSON.stringify({ question: "trace the route" }) }),
+      JSON.stringify({ type: "function_call", name: "gather_context", call_id: "call-context", arguments: JSON.stringify({ intent: "trace the route", output: "captured command output" }) }),
+      JSON.stringify({ type: "function_call", name: "gather_context", call_id: "call-context", arguments: JSON.stringify({ intent: "trace the route", output: "captured command output" }) }),
       JSON.stringify({ type: "function_call_output", call_id: "call-context", output: `ordinary answer\n\nSession: ${reservation.invocation.sessionId}` }),
       "",
     ].join("\n"), "utf8");
@@ -207,7 +210,7 @@ test("benchmark context exports ordinary delivery and basic session timing", asy
 
     await unlink(outputPath);
     const unreferenced = await reserveMcpSession({
-      request: FreeContextCallerRequestSchema.parse({ question: "unreferenced" }),
+      request: FreeContextCallerRequestSchema.parse({ intent: "unreferenced", output: "captured command output" }),
       invocationId: "invocation-unreferenced",
       callId: "call-unreferenced",
       workspaceRoot,
@@ -247,7 +250,7 @@ test("benchmark context exports ordinary delivery and basic session timing", asy
 
     await unlink(allowedPath);
     await writeFile(path.join(root, "sessions", "master.jsonl"), [
-      JSON.stringify({ type: "function_call", name: "gather_context", call_id: "call-context", arguments: JSON.stringify({ question: "different request" }) }),
+      JSON.stringify({ type: "function_call", name: "gather_context", call_id: "call-context", arguments: JSON.stringify({ intent: "different request", output: "captured command output" }) }),
       "",
     ].join("\n"), "utf8");
     const mismatchOutputPath = await exportMasterAgentContext({ agentDir: root, taskName: "task-context", allowUnreferencedSessions: true });
@@ -260,8 +263,8 @@ test("benchmark context exports ordinary delivery and basic session timing", asy
     await unlink(mismatchOutputPath);
 
     await writeFile(path.join(root, "sessions", "master.jsonl"), [
-      JSON.stringify({ type: "function_call", name: "gather_context", call_id: "call-context", arguments: JSON.stringify({ question: "trace the route" }) }),
-      JSON.stringify({ type: "function_call", name: "gather_context", call_id: "call-context", arguments: JSON.stringify({ question: "different request" }) }),
+      JSON.stringify({ type: "function_call", name: "gather_context", call_id: "call-context", arguments: JSON.stringify({ intent: "trace the route", output: "captured command output" }) }),
+      JSON.stringify({ type: "function_call", name: "gather_context", call_id: "call-context", arguments: JSON.stringify({ intent: "different request", output: "captured command output" }) }),
       "",
     ].join("\n"), "utf8");
     await assert.rejects(
@@ -280,26 +283,26 @@ test("benchmark context correlates current Codex call-end records by delivered s
   await mkdir(workspaceRoot);
   await mkdir(path.join(root, "sessions"));
   try {
-    const first = await commitCompleteSession({ workspaceRoot, sessionDirectory, callId: "2", question: "same request" });
-    const second = await commitCompleteSession({ workspaceRoot, sessionDirectory, callId: "3", question: "same request" });
+    const first = await commitCompleteSession({ workspaceRoot, sessionDirectory, callId: "2", intent: "same request" });
+    const second = await commitCompleteSession({ workspaceRoot, sessionDirectory, callId: "3", intent: "same request", summaryBypassed: true });
     const firstText = `first answer\n\nSession: ${first.invocation.sessionId}`;
-    const secondText = `second answer\n\nSession: ${second.invocation.sessionId}`;
+    const secondText = `captured command output\n\nSession: ${second.invocation.sessionId}`;
     const masterFile = path.join(root, "sessions", "master.jsonl");
     const firstCall = currentCodexMcpCallEnd({
       rawCallId: "exec-raw-1",
-      request: { question: "same request" },
+      request: { intent: "same request", output: "captured command output" },
       sessionId: first.invocation.sessionId,
       text: firstText,
     });
     const secondCall = currentCodexMcpCallEnd({
       rawCallId: "exec-raw-2",
-      request: { question: "same request" },
+      request: { intent: "same request", output: "captured command output" },
       sessionId: second.invocation.sessionId,
       text: secondText,
     });
     const beginCall = currentCodexMcpCallEnd({
       rawCallId: "exec-raw-1",
-      request: { question: "same request" },
+      request: { intent: "same request", output: "captured command output" },
       sessionId: first.invocation.sessionId,
       text: firstText,
       eventType: "mcp_tool_call_begin",
@@ -315,8 +318,14 @@ test("benchmark context correlates current Codex call-end records by delivered s
     const secondExport = exported.freeContextCalls.find((call) => call.fullSessionFile === `freecontext-sessions/${second.invocation.sessionId}.json`);
     assert.equal(firstExport?.callId, "exec-raw-1");
     assert.equal(firstExport?.outputToMasterAgent, firstText);
+    assert.equal(firstExport?.summaryBypassed, undefined);
     assert.equal(secondExport?.callId, "exec-raw-2");
     assert.equal(secondExport?.outputToMasterAgent, secondText);
+    assert.equal(secondExport?.summaryBypassed, true);
+    assert.deepEqual(JSON.parse(secondExport?.promptToFreeContext as string), {
+      intent: "same request",
+      output: "captured command output",
+    });
 
     const currentNegativeCases = [
       {
@@ -343,7 +352,7 @@ test("benchmark context correlates current Codex call-end records by delivered s
       await unlink(outputPath).catch(() => undefined);
       await writeFile(masterFile, `${currentCodexMcpCallEnd({
         rawCallId: currentNegative.rawCallId,
-        request: { question: "same request" },
+        request: { intent: "same request", output: "captured command output" },
         sessionId: first.invocation.sessionId,
         text: currentNegative.text,
         ...currentNegative.options,
@@ -367,7 +376,7 @@ test("benchmark context correlates current Codex call-end records by delivered s
     await unlink(outputPath).catch(() => undefined);
     await writeFile(masterFile, `${firstCall}\n${secondCall}\n${currentCodexMcpCallEnd({
       rawCallId: "exec-raw-duplicate",
-      request: { question: "same request" },
+      request: { intent: "same request", output: "captured command output" },
       sessionId: first.invocation.sessionId,
       text: firstText,
     })}\n`, "utf8");
@@ -378,7 +387,7 @@ test("benchmark context correlates current Codex call-end records by delivered s
 
     await writeFile(masterFile, `${firstCall}\n${currentCodexMcpCallEnd({
       rawCallId: "exec-raw-1",
-      request: { question: "same request" },
+      request: { intent: "same request", output: "captured command output" },
       sessionId: first.invocation.sessionId,
       text: `conflicting answer\n\nSession: ${first.invocation.sessionId}`,
     })}\n`, "utf8");
@@ -389,7 +398,7 @@ test("benchmark context correlates current Codex call-end records by delivered s
 
     await writeFile(masterFile, `${currentCodexMcpCallEnd({
       rawCallId: "exec-raw-meta-conflict",
-      request: { question: "same request" },
+      request: { intent: "same request", output: "captured command output" },
       sessionId: first.invocation.sessionId,
       conflictingSessionId: second.invocation.sessionId,
       text: firstText,
@@ -414,12 +423,12 @@ test("benchmark context correlates Codex 0.153.4 completed native MCP items", as
       workspaceRoot,
       sessionDirectory,
       callId: "fc-internal-call",
-      question: "redacted question",
+      intent: "redacted intent",
     });
     const text = `redacted answer\n\nSession: ${reservation.invocation.sessionId}`;
     const completedCall = completedNativeCodexMcpToolCall({
       rawCallId: "exec-native-call",
-      request: { question: "redacted question" },
+      request: { intent: "redacted intent", output: "captured command output" },
       sessionId: reservation.invocation.sessionId,
       text,
     });

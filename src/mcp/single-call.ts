@@ -168,13 +168,15 @@ export async function executeSingleCall(
       return { result, terminalError: captureError(new FreeContextError(errorReason(code), { code })), decision };
     });
     const outcome = await Promise.race([workerOutcome, abortOutcome]);
+    const captureReference = `Captured output: ${reservation.invocation.sessionFile}.output.txt (UTF-8, ${Buffer.byteLength(request.output)} bytes; exact supplied capture, not a guarantee of complete command output). Read a needed line range directly, or use byte offsets for a single long line.`;
+    const referencedResult = Object.freeze({ ...outcome.result, text: `${outcome.result.text}\n\n${captureReference}` });
     try {
-      const committed = await commit({ reservation, capture, runtimeEvents: capture ? [] : runtimeEvents, result: outcome.result, terminalDecision: outcome.decision, terminalError: outcome.terminalError, now });
+      const committed = await commit({ reservation, capture, runtimeEvents: capture ? [] : runtimeEvents, result: referencedResult, terminalDecision: outcome.decision, terminalError: outcome.terminalError, now });
       if (committed.sessionFile !== reservation.invocation.sessionFile) throw new SessionPersistenceError("close");
     } catch (error) {
-      return execution(failedResult({ code: "SESSION_PERSISTENCE_FAILED", reason: errorReason("SESSION_PERSISTENCE_FAILED"), sessionId: reservation.invocation.sessionId, sessionFile: null }));
+      return execution(failedResult({ code: "SESSION_PERSISTENCE_FAILED", reason: `${errorReason("SESSION_PERSISTENCE_FAILED")}\n\n${captureReference}`, sessionId: reservation.invocation.sessionId, sessionFile: null }));
     }
-    return execution(outcome.result);
+    return execution(referencedResult);
   } finally {
     abortGate.dispose();
     deadline.dispose();

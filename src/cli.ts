@@ -40,7 +40,7 @@ async function readStdin(stream: CliIo["stdin"]): Promise<string> {
   if (stream.isTTY) return "";
   const chunks = [];
   for await (const chunk of stream) chunks.push(Buffer.from(chunk));
-  return Buffer.concat(chunks).toString("utf8").trim();
+  return Buffer.concat(chunks).toString("utf8");
 }
 
 function createEventReporter(stderr: CliIo["stderr"]): PiSessionEventHandler {
@@ -65,8 +65,8 @@ function createEventReporter(stderr: CliIo["stderr"]): PiSessionEventHandler {
   };
 }
 
-function canonicalCliRequest(questionText: string): Readonly<FreeContextCallerRequest> {
-  return FreeContextCallerRequestSchema.parse({ question: questionText });
+function canonicalCliRequest(intent: string, output: string): Readonly<FreeContextCallerRequest> {
+  return FreeContextCallerRequestSchema.parse({ intent, output });
 }
 
 function renderDoctor(report: DoctorReport): string {
@@ -95,11 +95,11 @@ export async function main(
     return report.ok ? 0 : 1;
   }
 
-  const questionText = cli.query || (await readStdin(io.stdin));
-  if (!questionText) {
-    io.stderr.write("freecontext: CONFIGURATION_ERROR: an exploration query is required\n");
+  if (!cli.intent?.trim()) {
+    io.stderr.write("freecontext: CONFIGURATION_ERROR: --intent is required\n");
     return 2;
   }
+  const output = cli.outputFile ? await readFile(path.resolve(cli.outputFile), "utf8") : await readStdin(io.stdin);
 
   const controller = new AbortController();
   const abort = () => controller.abort(new Error("Interrupted"));
@@ -128,7 +128,7 @@ export async function main(
       }),
     });
     const call = await handler(
-      canonicalCliRequest(questionText),
+      canonicalCliRequest(cli.intent, output),
       {
         invocationId: `manual-invocation-${randomUUID()}`,
         callId: `manual-call-${randomUUID()}`,

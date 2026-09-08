@@ -2,16 +2,18 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { HELP_TEXT, parseArgs } from "../src/cli/args.js";
 
-test("argument parser accepts command, aliases, equals form, and positional query", () => {
-  const parsed = parseArgs(["explore", "-C", "/repo", "--format=json", "find", "the", "router"]);
+test("argument parser accepts intent and an output file", () => {
+  const parsed = parseArgs(["explore", "-C", "/repo", "--format=json", "--intent", "find the router", "--output-file", "/capture.txt"]);
   assert.equal(parsed.command, "explore");
   assert.equal(parsed.cwd, "/repo");
   assert.equal(parsed.format, "json");
-  assert.equal(parsed.query, "find the router");
+  assert.equal(parsed.intent, "find the router");
+  assert.equal(parsed.outputFile, "/capture.txt");
 });
 
 test("argument parser rejects ambiguity and unknown flags", () => {
-  assert.throws(() => parseArgs(["--query", "x", "y"]), /either with --query/u);
+  assert.throws(() => parseArgs(["--query", "x", "y"]), /Unknown option/u);
+  assert.throws(() => parseArgs(["question"]), /Use --intent/u);
   assert.throws(() => parseArgs(["--does-not-exist"]), /Unknown option/u);
   assert.throws(() => parseArgs(["--headers-json", '{"Authorization":"secret"}']), /Unknown option/u);
   assert.throws(() => parseArgs(["--format", "xml"]), /text or json/u);
@@ -24,21 +26,21 @@ test("argument parser accepts TOML routing and context controls", () => {
     "--route=fast",
     "--provider-retry-delays-ms=3000,6000,12000",
     "--no-context-compaction",
-    "query",
+    "--intent", "query",
   ]);
   assert.equal(parsed.configFile, "/tmp/freecontext.toml");
   assert.equal(parsed.route, "fast");
   assert.equal(parsed.providerRetryDelaysMs, "3000,6000,12000");
   assert.equal(parsed.contextCompactionEnabled, false);
-  assert.equal(parsed.query, "query");
+  assert.equal(parsed.intent, "query");
 
-  const direct = parseArgs(["--target", "backup", "query"]);
+  const direct = parseArgs(["--target", "backup", "--intent", "query"]);
   assert.equal(direct.target, "backup");
   assert.throws(() => parseArgs(["--context-reserve-tokens", "12000"]), /Unknown option/u);
 });
 
 test("argument parser scopes benchmark session capture to exploration", () => {
-  const parsed = parseArgs(["explore", "--benchmark-session-file", "/logs/session.json", "query"]);
+  const parsed = parseArgs(["explore", "--benchmark-session-file", "/logs/session.json", "--intent", "query"]);
   assert.equal(parsed.benchmarkSessionFile, "/logs/session.json");
   assert.throws(
     () => parseArgs(["doctor", "--benchmark-session-file", "/logs/session.json"]),

@@ -2,43 +2,27 @@
 
 ## Scope
 
-FreeContext performs one operation: read-only repository exploration for a parent coding agent. The public boundary accepts `{question, hints?}`. The worker's ordinary assistant text is returned directly; no result schema sits between worker and parent.
+FreeContext summarizes caller-captured output. The public boundary accepts exactly `{intent: string, output: string}`. Main owns command selection and native execution; FC has no repository exploration tools, shell execution, or inherited Main context.
 
 ## Runtime layers
 
-1. **Codex skill**
-   - Routes one concrete cross-module or cross-document question to `gather_context`.
-   - Keeps exact local reads, edits, tests, Git, and direct failures in the main agent.
-   - Passes optional paths, symbols, or prior findings as `hints`.
-
-2. **MCP and CLI boundary**
-   - Validates only the small request object.
-   - Resolves one workspace and binds each call to a private invocation/session.
-   - Emits one text content item ending with a visible `Session: <id>` handle and may repeat the id in metadata. Failed calls use the MCP error bit; worker wording is not parsed.
-
-3. **Pi worker**
-   - Resolves the configured provider route, model, request options, and bounded read-only tools.
-   - Uses `runAgentLoop` for exploration and the same loop context for soft finalization.
-   - Enforces turn/tool budgets, records useful reads privately, and retries provider failures only when no useful answer exists.
-
-4. **Read-only tool layer**
-   - `read` and `bat` return bounded line ranges; `rg` searches repository text; `glob` discovers paths; `jq` queries one JSON file.
-   - Native subprocess execution remains confined to `src/tools/process.ts` with `shell: false`.
+1. **Main and routing skill** capture an already-authorized native command result into a variable inside code mode, including command, exit status, and truncation information. In that same cell they call `gather_context` with the intent and captured output, emitting only the FC response.
+2. **MCP and CLI boundary** validate the request and bind it to a private invocation/session. CLI obtains output from `--output-file` or stdin and requires `--intent`.
+3. **Summary runtime** returns short captures directly with `result.summaryBypassed: true`; otherwise it reuses the configured Pi/provider route for a single tool-free summary. Existing transient retry and deadline policies still apply.
+4. **Result transport** returns ordinary text, the session handle, and a captured-output artifact reference. The host does not parse the model's prose into an answer schema.
 
 ## Configuration and routing
 
-The default catalog is `$XDG_CONFIG_HOME/freecontext/config.toml`, falling back to `~/.config/freecontext/config.toml`. `--config` overrides `FREECONTEXT_CONFIG`, which overrides that default. TOML separates providers, models, routes, and shared runtime limits. Credentials and sensitive headers never enter prompts or private captures.
+The default catalog is `$XDG_CONFIG_HOME/freecontext/config.toml`, falling back to `~/.config/freecontext/config.toml`. `--config` overrides `FREECONTEXT_CONFIG`, which overrides that default. TOML separates providers, models, routes, and shared runtime limits. Configured authentication material is not added to model prompts or captures. Caller-supplied output may itself contain sensitive text; the caller selects what may be submitted.
 
-The route resolver may try a later target only for an allowed transient provider failure before useful text or accepted tool work exists. Provider errors are redacted before they leave the runtime. Model context compaction is an internal optimization, not a result-format stage.
+Existing provider adapters, request options, transient retries, and route fallback remain in use. Removing repository tools does not replace the configured model route.
 
 ## Context and session records
 
-The worker receives its own search transcript and tool outputs. The parent receives only the final text. A committed private session keeps the request, invocation identity, result text, and diagnostic capture for transport, debugging, and benchmark association. If earlier findings matter, the parent places them directly in a new question or hints.
+FC receives only the intent and supplied output. Before a provider request, the full capture must fit the configured model context window with its response reserve; an oversized capture fails with its artifact reference so Main can select a smaller portion. FC does not silently truncate the capture or recursively summarize it. The exact submitted output is retained in a plain UTF-8 artifact beside the private session for targeted line/byte reads. This is a capture of the caller's returned text, not proof that upstream output was complete. Session records associate the invocation, result, artifact, and diagnostics.
 
-## Soft finalization and failure
+## Failure and metrics
 
-When the soft deadline fires, the active batch finishes, then the same worker receives a prompt to stop using tools and answer from current findings. The prompt requires exact paths/symbols/numbers/commands/errors and compact prose, but the returned text is accepted as-is. If a later provider error follows useful streamed assistant text, that latest useful text is retained and delivered as partial output; it is never replaced by an empty failure.
+Summary failure retains the capture reference for recovery without placing a large raw capture into Main's response. Main can reread the relevant range or retry summarization without repeating command execution.
 
-## Runtime metrics
-
-Private metrics cover route/session timings, provider attempts, tool calls, compaction, and aggregate token usage. They do not define or validate the public answer. Public MCP output remains one ordinary text item plus an optional session handle.
+Private metrics retain provider attempts, timing, and usage. A short-output bypass records `result.summaryBypassed: true` and makes no provider request, so MCP invocation counts and provider request counts are distinct.

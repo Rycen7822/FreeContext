@@ -1,9 +1,9 @@
 import { z } from "zod";
 
-/** Public request: one question and optional hints. */
+/** Captured native output; command execution remains with the caller. */
 export const FreeContextCallerRequestSchema = z.object({
-  question: z.string().trim().min(1).max(16_000),
-  hints: z.string().trim().max(4_000).optional(),
+  intent: z.string().trim().min(1).max(16_000),
+  output: z.string(),
 }).strict();
 
 export const FreeContextRequestSchema = FreeContextCallerRequestSchema;
@@ -17,6 +17,7 @@ export const FreeContextErrorCodeSchema = z.enum([
   "PROVIDER_RETRY_EXHAUSTED",
   "PROVIDER_FATAL",
   "SESSION_PERSISTENCE_FAILED",
+  "CONTEXT_BUDGET_EXCEEDED",
   "INTERNAL_ERROR",
 ]);
 
@@ -51,18 +52,17 @@ export const FreeContextResultSchema = z.object({
   errorCode: FreeContextErrorCodeSchema.nullable(),
   sessionId: z.string().trim().min(1),
   sessionFile: z.string().trim().min(1).nullable(),
+  summaryBypassed: z.literal(true).optional(),
 }).strict();
 
 export type FreeContextResult = z.infer<typeof FreeContextResultSchema>;
 
 export const TOOL_DESCRIPTION = [
-  "Read-only repository investigator. Send {question, hints?}.",
-  "At any phase, delegate one unresolved fact or relationship to replace the next substantial investigation you would otherwise do. Stay native if the small edit-context read Main needs anyway can settle it. Do not finish the investigation before delegating, request a recap of already-read code, or call routinely at task start. Keep overall diagnosis, design, edits, tests, and local fixes in Main.",
-  "FC sees only question and hints: include the original operation and semantics to preserve, checked facts, and the unknown; label proposals and unverified assumptions. Ask how a concrete existing relationship works and under which conditions, such as which value reaches a consumer and which branch changes it, rather than how to build the feature.",
-  "Returns ordinary assistant text resolving that uncertainty with decisive short code, a signature, or a branch, observed path:line and symbol, and adjacent conditions that affect the conclusion. Treat supported facts and conditions as already-read context; do not reread every listed file to confirm the answer. Check exact edit locations, gaps, contradictions, and new design/test premises narrowly. Source-grounded inferences must state their assumptions; design choices remain with Main. Delegate a new substantial unknown when useful during work; no failed test, new module, or call count is required.",
-  "Call it alone; begin the first gather code-mode cell with `// @exec: {\"yield_time_ms\": 300000, \"max_output_tokens\": 12000}`. Await the terminal result; if it returns a cell, call the outer wait tool with its cell_id, yield_time_ms 300000, and max_tokens 12000, with no native work during the wait. On failure continue natively and do not repeat the same question.",
+  "Summarize captured local read/search output. Send {intent, output}; both are strings. Main selects and executes its already-authorized native command, and passes the captured result including command and exit/truncation metadata without first emitting it into Main's context.",
+  "In one code-mode cell, await the native tool into a variable, pass JSON.stringify({command, ...result}) as output to this tool, and emit only this tool's response. If the native command is still running, collect its terminal output inside code mode before summarizing. This tool never executes commands or searches, has no tools or inherited conversation, and only extracts evidence from the supplied output.",
+  "Returns concise ordinary text with relevant original excerpts, observed paths/symbols/line numbers, conditions, exceptions and gaps. Captured text is saved with the session for exact targeted rereads. Short output bypasses the model; the complete capture must fit the configured model context and reserve, otherwise the call fails with the capture reference for segmentation. Main retains diagnosis, design, edits, verification and targeted native reads. On summary failure use the saved capture; do not rerun the command merely to retry a summary.",
 ].join(" ");
 
 export const SERVER_INSTRUCTIONS = [
-  "FreeContext is read-only and returns ordinary assistant text. Use gather_context's description for routing and dispatch; it accepts one question and optional hints, with no parent conversation inherited.",
+  "FreeContext summarizes caller-captured output with no tools or inherited conversation. Use gather_context with intent and output inside the same code-mode cell as the native command and emit only its response.",
 ].join(" ");

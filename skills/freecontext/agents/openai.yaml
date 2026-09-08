@@ -1,10 +1,10 @@
 interface:
   display_name: "FreeContext"
-  short_description: "Route phase-aware cross-module repository questions to a concise read-only worker"
+  short_description: "Summarize captured command output before Main sees it"
 policy:
   allow_implicit_invocation: true
 dependencies:
   tools:
     - type: "mcp"
       value: "freecontext"
-      description: "Read-only gather_context tool returning ordinary assistant text"
+      description: "Tool-free gather_context output summarizer returning ordinary text"

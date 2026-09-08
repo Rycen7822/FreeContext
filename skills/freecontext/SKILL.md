@@ -1,29 +1,26 @@
 ---
 name: freecontext
-description: Delegate an unresolved repository fact or relationship that would otherwise require substantial new reading. Keep local reads, design, edits, and tests in the main agent.
+description: Summarize substantial captured local read or search output before it enters Main's context. Main selects the command and retains diagnosis, edits, and verification.
 ---
 
-# FreeContext routing
+# FreeContext
 
-At any phase, use read-only `tools.mcp__freecontext__gather_context` for one unresolved fact or relationship to replace the next substantial investigation you would otherwise do. If the small edit-context read Main needs anyway can settle it, stay native. Delegate as the unknown emerges; do not finish the investigation first, request a recap of already-read code, or call routinely at task start. Keep overall diagnosis, design, edits, tests, and local fixes in Main.
+Use `gather_context` when the next authorized local read/search is likely to return substantial output. Main chooses the command and its intent; FC only extracts evidence from the captured result, without tools or inherited conversation. A small targeted edit-context read can stay native.
 
-## Request
-
-Send one small object:
+Discover the actual FC and native execution tool methods available in the host. In one code-mode cell, capture the native result in a variable, send it to FC, and emit only the FC response. For hosts exposing the following methods, the shape is:
 
 ```js
-{
-  question: "When parseRows emits two rows with the same key, which value reaches writeRow, and what condition can change that?",
-  hints: "Current operation: per-row imports; last-row-wins semantics must be preserved. Checked: parseRows preserves input order. Unknown: whether a caller filters or reorders duplicates before writeRow. Batching is only a proposal; equivalence is unverified."
-}
+const command = "rg -n -C 3 'parseRows|writeRow' src/import.ts";
+const result = await tools.exec_command({ cmd: command });
+const summary = await tools.mcp__freecontext__gather_context({
+  intent: "Extract the row ordering and duplicate-key behavior, with guards and exceptions.",
+  output: JSON.stringify({ command, ...result })
+});
+text(summary);
 ```
 
-FC sees only `question` and optional `hints`, not the original task or conversation. Include the original operation and semantics to preserve, relevant checked facts, and the remaining unknown; label proposed changes and unverified assumptions. Ask how the uncertain existing relationship works and under which conditions, rather than how to build the feature.
+Use the discovered method names, not an assumed namespace. Keep native command permissions, workspace, timeout and output limits as configured. If execution returns an ongoing session, collect its terminal output inside code mode before summarizing; preserve all captured chunks and status metadata. Never emit the native result or manually copy it through Main. Without code mode, use a host mechanism that captures output outside the model context before calling FC; reading the output first and summarizing later cannot save its first context cost.
 
-Expect ordinary assistant text resolving that uncertainty with the decisive short code excerpt, signature, or branch, observed `path:line` and symbol, and adjacent conditions that affect the conclusion. Source-grounded inferences should state their assumptions; design choices remain with Main.
+The two required strings are `intent` and `output`. Include the original command and native exit/status/truncation metadata in the captured string when available; no nested schema is required. Do not rerun a command because summarization failed. FC saves the supplied capture with its session and returns a reference for precise line-range or byte-range rereads; the capture may itself have been truncated upstream. Short output is returned directly without a model request. Larger captures are sent in full if they fit the configured model context and reserve; otherwise FC fails with the saved capture reference so a smaller segment can be submitted. Provider transient retries remain configured, but FC never starts further investigation.
 
-Treat supported located facts and their conditions as already-read context; do not reread every listed file to confirm the answer. Read exact edit locations and narrowly check gaps, contradictions, or new design/test premises using existing evidence first. Any FC design suggestion is not a verified conclusion. Delegate a new substantial unknown when useful during work; no failed test, new module, or call count is required.
-
-## Dispatch
-
-Call the exact method directly and alone. In the first gather code-mode cell, begin with `// @exec: {"yield_time_ms": 300000, "max_output_tokens": 12000}`. Await the terminal result; if it still returns a cell, call the outer `wait` tool with its returned `cell_id`, `yield_time_ms: 300000`, and `max_tokens: 12000`, with no native tools during the wait. If the call fails, continue directly with native exploration and do not repeat the same question.
+Expect ordinary assistant text containing relevant original evidence, observed locations, conditions, exceptions and gaps. Main owns interpretation, design, edits and verification, and reads exact edit locations or missing evidence narrowly as needed.

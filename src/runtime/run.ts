@@ -55,13 +55,20 @@ async function runExplorerWithCounter(
 ): Promise<Readonly<FreeContextResult>> {
   const request = rawRequest;
   const invocation = FreeContextInvocationContextSchema.parse(rawInvocation);
+  if (request.output.length <= 2048) {
+    return Object.freeze({
+      status: "complete", text: `Short capture (summary model bypassed):\n${request.output || "[empty captured output]"}`,
+      errorCode: null, sessionId: invocation.sessionId, sessionFile: invocation.sessionFile, summaryBypassed: true,
+    });
+  }
   const clock = dependencies.clock ?? performance.now.bind(performance);
   const startedAt = clock();
   const workspace = dependencies.workspace ?? (await createWorkspace(invocation.workspaceRoot));
   if (workspace.root !== invocation.workspaceRoot) {
     throw new Error("Invocation workspaceRoot must be the resolved workspace root.");
   }
-  const primaryPrompt = buildUserPrompt(request);
+  const range = `Summary input: all ${Buffer.byteLength(request.output)} supplied UTF-8 capture bytes. Upstream command truncation/completeness is only as reported in the capture.`;
+  const primaryPrompt = `${range}\n\n${buildUserPrompt(request)}`;
   const routed = await runPrimaryRoute({
     cli,
     workspace,
@@ -113,7 +120,7 @@ async function runExplorerWithCounter(
       }),
     }));
   }
-  return result;
+  return Object.freeze({ ...result, text: `${result.text}\n\n${range}` });
 }
 
 export async function runExplorer(options: RunExplorerOptions): Promise<Readonly<FreeContextResult>> {

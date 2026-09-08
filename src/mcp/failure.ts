@@ -1,4 +1,4 @@
-import { ProviderError } from "../errors.js";
+import { ContextBudgetError, ProviderError } from "../errors.js";
 import type { FreeContextErrorCode, FreeContextResult } from "./contracts.js";
 
 export function failedResult({
@@ -23,6 +23,7 @@ export function failedResult({
 
 export function classifyExplorerError(error: unknown, signal?: AbortSignal): FreeContextErrorCode {
   if (signal?.aborted) return "DEADLINE_EXCEEDED";
+  if (error instanceof ContextBudgetError) return "CONTEXT_BUDGET_EXCEEDED";
   if (error instanceof ProviderError) {
     return error.category === "other" ? "PROVIDER_FATAL" : "PROVIDER_RETRY_EXHAUSTED";
   }
@@ -30,6 +31,7 @@ export function classifyExplorerError(error: unknown, signal?: AbortSignal): Fre
 }
 
 export function errorReason(code: FreeContextErrorCode): string {
+  if (code === "CONTEXT_BUDGET_EXCEEDED") return "The complete capture could not be admitted within the configured model context and reserve. Submit a smaller capture segment; do not rerun the command.";
   if (code === "DEADLINE_EXCEEDED") return "FreeContext reached its total deadline before returning an answer.";
   if (code === "PROVIDER_RETRY_EXHAUSTED") return "The provider remained unavailable after the configured retries.";
   if (code === "PROVIDER_FATAL") return "The provider rejected the request with a non-retryable failure.";

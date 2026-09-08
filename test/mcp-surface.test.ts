@@ -27,7 +27,8 @@ test("MCP registers one minimal tool and rejects invalid requests", async () => 
     await Promise.all([client.connect(clientTransport), runtime.server.connect(serverTransport)]);
     const tools = await client.listTools();
     assert.deepEqual(tools.tools.map((tool) => tool.name), ["gather_context"]);
-    const invalid = await client.callTool({ name: "gather_context", arguments: { question: "" } });
+    assert.deepEqual(tools.tools[0]?.inputSchema.required, ["intent", "output"]);
+    const invalid = await client.callTool({ name: "gather_context", arguments: { intent: "", output: "" } });
     assert.equal(invalid.isError, true);
     const block = Array.isArray(invalid.content) ? invalid.content[0] : undefined;
     assert.equal(block?.type, "text");

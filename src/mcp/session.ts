@@ -11,7 +11,7 @@ import type {
 } from "./contracts.js";
 import type { ExplorerCapturedError, ExplorerSessionCapture } from "../runtime/session-capture.js";
 import type { PiSessionEventState } from "../runtime/pi-session.js";
-import { cancelSessionFile, commitSessionFile, reserveSessionFile } from "../session/store.js";
+import { cancelSessionFile, commitSessionFile, reserveSessionFile, writeCapturedOutput } from "../session/store.js";
 import type { SessionFileReservation } from "../session/store.js";
 import type { TerminalDecision } from "./lifecycle.js";
 
@@ -65,6 +65,12 @@ export async function reserveMcpSession({
   now?: () => Date;
 }>): Promise<Readonly<McpSessionReservation>> {
   const file = await reserveSessionFile({ workspaceRoot, ...(sessionDirectory ? { sessionDirectory } : {}), ...(sessionFile ? { filePath: sessionFile } : {}) });
+  try {
+    await writeCapturedOutput(file, request.output);
+  } catch (error) {
+    await cancelSessionFile(file);
+    throw error;
+  }
   const sessionId = path.basename(file.path, path.extname(file.path));
   const invocation: Readonly<FreeContextInvocationContext> = Object.freeze({ invocationId, callId, workspaceRoot, workspaceRevision, sessionId, sessionFile: file.path });
   return Object.freeze({ file, startedAt: now().toISOString(), request: FreeContextRequestSchema.parse(request), invocation });

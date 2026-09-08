@@ -26,6 +26,7 @@ export interface FreeContextCallReference {
   readonly startedAt: string | null;
   readonly completedAt: string | null;
   readonly latencyMs: number | null;
+  readonly summaryBypassed?: true;
 }
 
 export interface FreeContextTransportObservation {
@@ -321,6 +322,7 @@ export async function exportMasterAgentContext({
       startedAt: session.startedAt,
       completedAt: session.finishedAt,
       latencyMs: timing.latencyMs,
+      ...(session.result.summaryBypassed === true ? { summaryBypassed: true as const } : {}),
     }));
     freeContextTransport.push(Object.freeze({
       schemaVersion: "freecontext-transport-observation-v1",

@@ -7,7 +7,8 @@ export type CliOptions = Mutable<CliConfigOverrides> & {
   command: "explore" | "doctor";
   format: "text" | "json";
   positional: string[];
-  query?: string;
+  intent?: string;
+  outputFile?: string;
   cwd?: string;
   help?: boolean;
   version?: boolean;
@@ -18,12 +19,12 @@ export type CliOptions = Mutable<CliConfigOverrides> & {
 type ValueOptionKey = Exclude<
   keyof CliConfigOverrides,
   "apiKey" | "contextCompactionEnabled"
-> | "query" | "cwd" | "format" | "benchmarkSessionFile";
+> | "intent" | "outputFile" | "cwd" | "format" | "benchmarkSessionFile";
 type FlagOptionKey = "help" | "version" | "verbose" | "contextCompactionEnabled";
 
 const VALUE_OPTIONS = new Map<string, ValueOptionKey>([
-  ["-q", "query"],
-  ["--query", "query"],
+  ["--intent", "intent"],
+  ["--output-file", "outputFile"],
   ["-C", "cwd"],
   ["--cwd", "cwd"],
   ["--config", "configFile"],
@@ -102,32 +103,28 @@ export function parseArgs(argv: readonly string[]): CliOptions {
     index += 1;
   }
 
-  if (options.query && options.positional.length) {
-    throw new ConfigurationError("Provide the query either with --query or as positional text, not both.");
-  }
-  if (!options.query && options.positional.length) options.query = options.positional.join(" ");
+  if (options.positional.length) throw new ConfigurationError("Use --intent TEXT and supply captured output through stdin or --output-file.");
   if (options.command === "doctor" && options.benchmarkSessionFile) {
     throw new ConfigurationError("--benchmark-session-file is available only for explore.");
   }
   return options;
 }
 
-export const HELP_TEXT = `FreeContext — read-only repository exploration subagent
+export const HELP_TEXT = `FreeContext — captured command output summarizer
 
 Usage:
-  freecontext [explore] [options] [query]
+  freecontext [explore] --intent TEXT [--output-file PATH] [options]
   freecontext doctor [options]
 
 Core options:
-  -q, --query TEXT             Exploration request; stdin is used when omitted
+      --intent TEXT            What evidence to extract from captured output
+      --output-file PATH       Read captured output from this file (default: stdin)
   -C, --cwd PATH               Repository root (default: current directory)
       --config PATH            Load configuration from this TOML file
       --route NAME             Select a named model route
       --target NAME            Select one model target and disable fallback
       --prompt PATH            Load the system prompt from this Markdown file
       --format text|json        Output format (default: text)
-      --max-turns N             Safety ceiling for model turns (2-8; default 8)
-      --max-tool-calls N        Repository tool calls (1-18; default 18)
       --request-timeout-ms N    Provider request timeout in milliseconds
       --provider-retry-delays-ms LIST
                                 Comma-separated retry waits; empty disables retries

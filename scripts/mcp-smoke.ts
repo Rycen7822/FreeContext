@@ -18,9 +18,12 @@ try {
   if (JSON.stringify(names) !== JSON.stringify(["gather_context"])) {
     throw new Error(`unexpected MCP tools: ${JSON.stringify(names)}`);
   }
-  const invalid = await client.callTool({ name: "gather_context", arguments: { question: "" } });
+  if (JSON.stringify(tools.tools[0]?.inputSchema.required) !== JSON.stringify(["intent", "output"])) {
+    throw new Error("MCP smoke did not expose the intent/output contract");
+  }
+  const invalid = await client.callTool({ name: "gather_context", arguments: { intent: "", output: "" } });
   const text = Array.isArray(invalid.content) ? invalid.content[0] : undefined;
-  if (!text || typeof text !== "object" || text.type !== "text" || typeof text.text !== "string" || !text.text.includes("Invalid FreeContext request")) {
+  if (!text || typeof text !== "object" || text.type !== "text" || typeof text.text !== "string" || !text.text.includes("Input validation error")) {
     throw new Error("MCP smoke did not return the invalid-request text");
   }
   if (!invalid.isError) throw new Error("MCP smoke did not mark invalid input as an error");

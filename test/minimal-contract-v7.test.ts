@@ -6,18 +6,15 @@ import { runAgentLoop, runAgentLoopContinue } from "@earendil-works/pi-agent-cor
 import type { AgentTool } from "@earendil-works/pi-agent-core";
 import { createAssistantMessageEventStream, Type } from "@earendil-works/pi-ai";
 import type { FreeContextResult } from "../src/mcp/contracts.js";
-import { FreeContextCallerRequestSchema, SERVER_INSTRUCTIONS, TOOL_DESCRIPTION } from "../src/mcp/contracts.js";
+import { FreeContextCallerRequestSchema } from "../src/mcp/contracts.js";
 import { createTerminalStore, type DeadlineClock } from "../src/mcp/lifecycle.js";
 import { executeSingleCall } from "../src/mcp/single-call.js";
 import { createGatherContextHandler } from "../src/mcp/tool.js";
 import { compileFreeContextResult } from "../src/output/text-result.js";
-import { buildUserPrompt } from "../src/prompt.js";
 import { FINALIZATION_SYSTEM_PROMPT } from "../src/runtime/finalization.js";
 import { runPiSession } from "../src/runtime/pi-session.js";
 import { createModel, createRequestOptions } from "../src/runtime/model.js";
-import { runExplorer } from "../src/runtime/run.js";
-import { createWorkspace } from "../src/tools/workspace.js";
-import { assistantText, baseConfig, baseRouteConfig, fakeBindings } from "./helpers.js";
+import { assistantText, baseConfig, fakeBindings } from "./helpers.js";
 
 const invocation = {
   invocationId: "invocation-v7",
@@ -28,26 +25,8 @@ const invocation = {
   sessionFile: "/sessions/session-v7.json",
 } as const;
 
-test("the public request is only a question with optional hints", () => {
-  const parsed = FreeContextCallerRequestSchema.parse({ question: "Trace this behavior", hints: "src/index.ts" });
-  assert.deepEqual(Object.keys(parsed).sort(), ["hints", "question"]);
-  assert.throws(() => FreeContextCallerRequestSchema.parse({ question: "Trace this behavior", sessionId: "s1" }));
-  assert.throws(() => FreeContextCallerRequestSchema.parse({ question: "" }));
-});
-
-test("the tracked skill and tool keep the phase-aware minimal request contract", async () => {
-  const skill = await readFile(new URL("../skills/freecontext/SKILL.md", import.meta.url), "utf8");
-  const metadata = await readFile(new URL("../skills/freecontext/agents/openai.yaml", import.meta.url), "utf8");
-  assert.match(skill, /gather_context/);
-  assert.doesNotMatch(skill, /sessionId|continuation/iu);
-  assert.match(skill, /ordinary assistant text/iu);
-  assert.match(`${skill}\n${TOOL_DESCRIPTION}\n${SERVER_INSTRUCTIONS}`, /any phase/iu);
-  assert.doesNotMatch(`${TOOL_DESCRIPTION}\n${SERVER_INSTRUCTIONS}`, /sessionId|continuation|typed reentry/iu);
-  assert.match(metadata, /FreeContext/iu);
-});
-
 test("arbitrary worker text stays opaque and is not size or shape gated", async () => {
-  const request = FreeContextCallerRequestSchema.parse({ question: "Trace this behavior" });
+  const request = FreeContextCallerRequestSchema.parse({ output: "", intent: "Trace this behavior" });
   const text = "plain answer\n" + "x".repeat(12_000);
   const result = await compileFreeContextResult(request, invocation, text, { errorCode: null });
   assert.equal(result.status, "complete");
@@ -80,11 +59,11 @@ test("the session id is visible in the ordinary MCP text content", async () => {
         };
       },
     });
-    const result = await handler({ question: "answer this" }, {});
+    const result = await handler({ output: "", intent: "answer this" }, {});
     const content = result.content[0];
     assert.equal(content?.type, "text");
     if (content?.type === "text") {
-      assert.match(content.text, /answer\n\nSession: [^\n]+$/u);
+      assert.match(content.text, /^answer\n\nCaptured output:/u);
       assert.match(content.text, /Session: [^\n]+$/u);
     }
     const sessionFileName = (await readdir(path.join(testRoot, "sessions"))).find((name) => name.endsWith(".json"));
@@ -95,83 +74,10 @@ test("the session id is visible in the ordinary MCP text content", async () => {
     };
     assert.equal(sessionDocument.capture?.primary?.messages?.length, 1);
     assert.deepEqual(sessionDocument.runtimeEvents, []);
-    const invalid = await handler({ question: "" }, {});
+    const invalid = await handler({ output: "", intent: "" }, {});
     const invalidContent = invalid.content[0];
     assert.equal(invalidContent?.type, "text");
     if (invalidContent?.type === "text") assert.doesNotMatch(invalidContent.text, /Session:/u);
-  } finally {
-    await rm(testRoot, { recursive: true, force: true });
-  }
-});
-
-test("the router and explorer run one ordinary-text success path", async () => {
-  const testRoot = await mkdtemp(path.join(process.cwd(), ".work", "fc-v7-run-"));
-  const workspace = await createWorkspace(testRoot);
-  try {
-    const answer = assistantText("router answer");
-    const result = await runExplorer({
-      request: FreeContextCallerRequestSchema.parse({ question: "Trace the route" }),
-      invocation: { ...invocation, workspaceRoot: workspace.root },
-      dependencies: {
-        routeConfig: baseRouteConfig([baseConfig({ contextCompactionEnabled: false })]),
-        workspace,
-        bindings: fakeBindings(async (prompts, _context, _loopConfig, emit) => {
-          await emit({ type: "turn_end", message: answer, toolResults: [] });
-          return [...prompts, answer];
-        }),
-        repositoryTools: { tools: [], names: [], executables: { rg: null, jq: null, bat: null } },
-        systemPrompt: "terse system",
-        tokenCounter: { countBatch: async (texts) => texts.map((text) => text.length) },
-      },
-    });
-    assert.equal(result.status, "complete");
-    assert.equal(result.text, "router answer");
-  } finally {
-    await rm(testRoot, { recursive: true, force: true });
-  }
-});
-
-test("the repository system prompt and hints reach the worker without relabeling leads", async () => {
-  const testRoot = await mkdtemp(path.join(process.cwd(), ".work", "fc-v8-hints-"));
-  const workspace = await createWorkspace(testRoot);
-  const request = FreeContextCallerRequestSchema.parse({
-    question: "Find untouched consumers and alternate paths after the changed parser seam.",
-    hints: "Previously checked fact: parser behavior was read; lead path: src/parser.ts; changed path to check: src/lexer.ts.",
-  });
-  let receivedPrompt = "";
-  let receivedSystemPrompt = "";
-  try {
-    const answer = assistantText("differential audit answer");
-    const result = await runExplorer({
-      request,
-      invocation: { ...invocation, workspaceRoot: workspace.root },
-      dependencies: {
-        routeConfig: baseRouteConfig([baseConfig({ contextCompactionEnabled: false })]),
-        workspace,
-        bindings: fakeBindings(async (prompts, context, _loopConfig, emit) => {
-          const firstPrompt = prompts[0];
-          receivedPrompt = firstPrompt?.role === "user" && typeof firstPrompt.content === "string"
-            ? firstPrompt.content
-            : "";
-          receivedSystemPrompt = context.systemPrompt;
-          await emit({ type: "turn_end", message: answer, toolResults: [] });
-          return [...prompts, answer];
-        }),
-        repositoryTools: { tools: [], names: [], executables: { rg: null, jq: null, bat: null } },
-        tokenCounter: { countBatch: async (texts) => texts.map((text) => text.length) },
-      },
-    });
-    assert.equal(result.status, "complete");
-    const systemTemplate = await readFile(new URL("../prompts/explorer.md", import.meta.url), "utf8");
-    assert.equal(receivedSystemPrompt, systemTemplate
-      .replaceAll("{{WORKSPACE}}", workspace.root)
-      .replaceAll("{{TOOLS}}", "")
-      .replaceAll("{{OVERVIEW}}", "[empty workspace]")
-      .trim());
-    assert.equal(receivedPrompt, buildUserPrompt(request));
-    assert.match(receivedPrompt, /Hints: Previously checked fact: parser behavior was read/iu);
-    assert.doesNotMatch(receivedPrompt, /already-known findings|\bconfirmed:\b|\bverified:\b/iu);
-    assert.match(receivedPrompt, /src\/parser\.ts.*src\/lexer\.ts/iu);
   } finally {
     await rm(testRoot, { recursive: true, force: true });
   }
@@ -195,12 +101,12 @@ test("MCP makes partial findings visibly incomplete while keeping complete answe
           sessionId: invocation.sessionId, sessionFile: invocation.sessionFile,
         }),
       });
-      const result = await handler({ question: "Trace this fact" }, {});
+      const result = await handler({ output: "", intent: "Trace this fact" }, {});
       const content = result.content[0];
       assert.equal(result.isError, undefined);
       assert.equal(content?.type, "text");
       if (content?.type !== "text") assert.fail("expected visible MCP text");
-      assert.match(content.text, /src\/file\.ts:10 — confirmed fact\.\n\nSession: [^\n]+$/u);
+      assert.match(content.text, /src\/file\.ts:10 — confirmed fact\.\n\nCaptured output:/u);
       if (status === "partial") assert.match(content.text, /^FreeContext did not finish; partial notes follow\.\n\n/u);
       else assert.match(content.text, /^src\/file\.ts:10 — confirmed fact\./u);
     }
@@ -212,9 +118,6 @@ test("MCP makes partial findings visibly incomplete while keeping complete answe
 test("soft finalization is a prompt and provider errors preserve useful text", async () => {
   assert.match(FINALIZATION_SYSTEM_PROMPT, /stop using repository tools/);
   assert.match(FINALIZATION_SYSTEM_PROMPT, /ordinary assistant text/);
-  const explorerPrompt = await readFile(new URL("../prompts/explorer.md", import.meta.url), "utf8");
-  assert.match(explorerPrompt, /lead with the answer/iu);
-  assert.match(explorerPrompt, /remove filler/iu);
   const config = baseConfig({ contextCompactionEnabled: false });
   const useful = assistantText("useful answer");
   const bindings = fakeBindings(async (_prompts, _context, _loopConfig, emit) => {
@@ -430,7 +333,7 @@ test("unsuccessful final answers preserve prior findings as partial without rest
     assert.equal(result.completed, false);
     assert.match(result.text, /confirmed fact/);
     assert.equal(result.terminalFailure, stopReason === "error" ? "provider" : stopReason === "aborted" ? "aborted" : null);
-    const compiled = await compileFreeContextResult({ question: "question" }, invocation, result.text, {
+    const compiled = await compileFreeContextResult({ output: "", intent: "question" }, invocation, result.text, {
       errorCode: null, completed: result.completed,
     });
     assert.equal(compiled.status, "partial");
@@ -457,7 +360,7 @@ test("the outer hard deadline keeps text already streamed by the worker", async 
   };
   try {
     const result = await executeSingleCall(
-      { question: "stream an answer" },
+      { output: "", intent: "stream an answer" },
       {
         invocationId: "deadline-invocation",
         callId: "deadline-call",
@@ -479,7 +382,7 @@ test("the outer hard deadline keeps text already streamed by the worker", async 
       },
     );
     assert.equal(result.result.status, "partial");
-    assert.equal(result.result.text, "streamed before deadline");
+    assert.match(result.result.text, /^streamed before deadline\n\nCaptured output:/u);
     assert.equal(result.result.errorCode, "DEADLINE_EXCEEDED");
     assert.ok(result.result.sessionFile);
     const sessionDocument = JSON.parse(await readFile(result.result.sessionFile, "utf8")) as {

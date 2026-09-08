@@ -55,14 +55,14 @@ COMMON_DIAGNOSTIC_CHECKPOINT = (
     "When available, the tracked FreeContext skill and enabled gather_context description are the detailed phase-aware routing authority. Arm assignment does not require a FreeContext call."
 )
 TREATMENT_DIAGNOSTIC_ROUTE = (
-    "FreeContext is available in this treatment; follow the tracked phase-aware routing guidance, and arm assignment does not require a call."
+    "FreeContext is available in this treatment; follow the tracked captured-output summary guidance, and arm assignment does not require a call."
 )
 CONTROL_DIAGNOSTIC_ROUTE = (
     "FreeContext is unavailable in this control arm; use native repository tools."
 )
 CONDITIONAL_FC_TREATMENT_POLICY = (
     "[Benchmark arm policy: conditional_fc_treatment]\n"
-    "FreeContext is available in this treatment. When the tracked skill and gather_context description select it, call gather_context alone with {question, hints?}; begin the first gather code-mode cell with `// @exec: {\"yield_time_ms\": 300000, \"max_output_tokens\": 12000}`. Await the terminal result; if it still returns a cell, call the outer wait tool with its returned cell_id, yield_time_ms 300000, and max_tokens 12000, with no native work during the wait. Continue natively on failure and do not repeat the same question."
+    "FreeContext is available in this treatment. Main chooses an authorized local read/search command and intent. In one code-mode cell, execute the native command into a variable, pass its captured output with command and status metadata to gather_context as {intent, output}, and emit only the summary response. Use discovered tool methods and existing native execution permissions. Collect ongoing command output through terminal status inside code mode before summarizing. FC has no tools or inherited conversation and does not execute commands. Reading raw output into Main first does not save its initial context cost. On summary failure use the saved capture reference; do not rerun the command merely to retry summarization."
     "\n"
     + TREATMENT_DIAGNOSTIC_ROUTE
 )

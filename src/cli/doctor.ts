@@ -1,7 +1,6 @@
-import { access, readFile } from "node:fs/promises";
+import { access } from "node:fs/promises";
 import { constants as fsConstants } from "node:fs";
 import { redactUrl, resolveConfig } from "../config.js";
-import { detectToolExecutables } from "../tools/index.js";
 import { loadPiBindings } from "../runtime/pi-bindings.js";
 import type { CliConfigOverrides, ResolvedRouteConfig } from "../config.js";
 
@@ -80,22 +79,9 @@ export async function runDoctor(
     const promptPath = routeConfig.targets[0]?.promptPath;
     if (!promptPath) throw new Error("Selected route has no model targets.");
     checks.push({ name: "system-prompt", ok: await readable(promptPath), detail: promptPath });
-    if (await readable(promptPath)) {
-      const prompt = await readFile(promptPath, "utf8");
-      checks.push({
-        name: "prompt-placeholders",
-        ok: ["{{WORKSPACE}}", "{{TOOLS}}", "{{OVERVIEW}}"].every((item) => prompt.includes(item)),
-        detail: "WORKSPACE, TOOLS, OVERVIEW",
-      });
-    }
   } catch (error) {
     checks.push({ name: "configuration", ok: false, detail: errorMessage(error) });
   }
-
-  const executables = await detectToolExecutables();
-  checks.push({ name: "rg", ok: Boolean(executables.rg), detail: executables.rg || "not found" });
-  checks.push({ name: "jq", ok: Boolean(executables.jq), detail: executables.jq || "not found (optional)", advisory: true });
-  checks.push({ name: "bat", ok: Boolean(executables.bat), detail: executables.bat || "not found (optional)", advisory: true });
 
   if (includeBindings && routeConfig) {
     for (const api of new Set(routeConfig.targets.map((target) => target.api))) {

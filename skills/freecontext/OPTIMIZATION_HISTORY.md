@@ -283,3 +283,13 @@ Do not copy early task or Slice execution logs into this file. Keep only reusabl
 - 共同Main指导：保留用户明确指定的接口/参数/单位/语义；代表性fixture与原要求和实际路径前提一致后再扩展覆盖，避免按自写实现倒推预期。格式化先于相关验证；长预览/日志落盘，只返回概要/退出状态/必要片段，不全量cat回灌；同文件写完再验证，复用已知可选工具缺失结论。保留必要测试、宽读与风险审查。这些属于指导而非强制工具行为。
 - 本地验证：原13项focused通过；Root配置Conda test的81/81全套、0失败/跳过，typecheck/build/static check、skill validator与双臂真实TOML builder共同指导相等通过。没有新增只匹配措辞的测试。Root复核四个提示面的完整diff并保留事实/设计明确边界；报告在根`.work/orchestrator/candidate-v16/`。
 - 边界：缓存独立核查未找到真实outgoing request证据，原因未知，不猜改缓存选项或排除高值。模型/provider、预算、等待/fallback、计分均不变。当前没有v16性能结果；后续已授权30次只有两个FC臂，与历史noFC比较须注明共同指导不同，不能据旧结果宣称v16收益。
+
+### 2026-09-08 — Candidate v17 caller-directed command-output summary
+
+- 起点/授权：用户要求把v16合入main、删除旧分支并新开worktree开发命令输出摘要路线。main已快进并推送至`2388b9080893e675730fd1fe60f116cedf56a8c4`；新路线在`feat/fc-command-summary`独立开发，不代表v16性能达标，不把未测的v17合回main。
+- v16实测补记：同五题、每题每模型三次、30/30运行有效。Sol high Main总量2,207,420、6/15，较v15+12.75%；Astra medium881,347、12/15，较v15−3.76%。实际24次FC中21complete/3partial；两模型ofetch六次均没调用FC。Astra实际调用FC的12次平均Main从v15的61,645增至64,385，整体下降主要来自没调用的ofetch；不能把不同任务构成的调用/未调用均值当因果收益。详细数据在统一基线v16目录`analysis/comparison.md`及`fc-usage-breakdown.md`。
+- 通用改动：`gather_context`改为两个必要字符串`intent/output`。Main在同一code-mode cell用已有原生工具执行获准命令、捕获结果变量、交给FC，只向自身上下文输出FC返回；不手工传抄大输出。FC不接受自由shell执行、不搜索、不继承Main上下文，仅用既有Pi/provider配置完成无工具摘要。共用Main指导和control不变，FC专用指导/skill/CLI/doctor/smoke与文档同步。
+- 证据和回读：提示词只要求相关短原文、观察到的位置、条件、错误、反例和缺口，不给实现处方，不严格验证答案格式。捕获全文保存为session旁UTF-8文本，成功、provider摘要失败及上下文超限都返回引用。移除旧每工具输出限额对整份摘要输入的裁剪；能放入既有context/reserve则全文发送，否则provider前明确失败，保留文本供选择小段。上游已经截断的内容不能恢复或声称完整。
+- 调用计量：至多2048个JavaScript字符串代码单元的短capture直接返回，明确`summaryBypassed:true`，没有模型请求；其他调用保留既有有界provider瞬态重试，不宣称绝对一次HTTP。exporter保留bypass标记，MCP调用和实际模型调用必须区分。
+- Root本地验证：focused7/7；配置Conda test的全套80/80、0fail/skip，typecheck/build/static/skill校验及真实本地stdio MCP schema smoke通过。证明完整长输入尾部到达mock、初始上下文超限在provider前停止、单回复无工具、失败原文可准确回读、短输出bypass、CLI与exporter关联。不安装依赖、不调用真实模型、不启动benchmark；未用本地压缩率代替真实任务收益。
+- 待验证：Main是否实际遵守同cell隐藏原输出、摘要证据是否足够、是否减少回读/返工和整场Main token，均需后续授权的同共同指导对照。当前没有v17准确率或性能结论，不能用v13–v16历史成绩替代。
